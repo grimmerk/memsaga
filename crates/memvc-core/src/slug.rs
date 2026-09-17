@@ -84,7 +84,8 @@ mod tests {
 
     #[test]
     fn extract_project_reads_the_field() {
-        let line = r#"{"display":"hi","pastedContents":{},"project":"/Users/me/git","timestamp":1}"#;
+        let line =
+            r#"{"display":"hi","pastedContents":{},"project":"/Users/me/git","timestamp":1}"#;
         assert_eq!(extract_project(line).as_deref(), Some("/Users/me/git"));
         assert_eq!(extract_project(r#"{"display":"x"}"#), None);
     }

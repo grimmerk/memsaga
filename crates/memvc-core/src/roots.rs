@@ -117,15 +117,17 @@ impl<'a> Scope<'a> {
             if self.excluded_path(rel) {
                 continue;
             }
-            let mut comps = rel.components().map(|c| c.as_os_str().to_string_lossy().to_string());
+            let mut comps = rel
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().to_string());
             let first = match comps.next() {
                 Some(f) => f,
                 None => continue,
             };
-            if rel.components().count() == 1 && self.cfg.files.iter().any(|f| *f == first) {
+            if rel.components().count() == 1 && self.cfg.files.contains(&first) {
                 return Some(root);
             }
-            if self.cfg.dirs.iter().any(|d| *d == first) {
+            if self.cfg.dirs.contains(&first) {
                 return Some(root);
             }
             if self.cfg.memory && first == "projects" {
@@ -144,7 +146,10 @@ impl<'a> Scope<'a> {
 
 fn dir_has_files(dir: &Path) -> bool {
     std::fs::read_dir(dir)
-        .map(|rd| rd.filter_map(|e| e.ok()).any(|e| !e.file_name().to_string_lossy().starts_with('.')))
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .any(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        })
         .unwrap_or(false)
 }
 
@@ -163,9 +168,13 @@ mod tests {
     use super::*;
 
     fn cfg_with_root(root: &Path) -> Config {
-        let mut c = Config::default();
-        c.roots = vec![Root { path: root.to_path_buf(), label: "claude".into() }];
-        c
+        Config {
+            roots: vec![Root {
+                path: root.to_path_buf(),
+                label: "claude".into(),
+            }],
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -174,12 +183,20 @@ mod tests {
         let cfg = cfg_with_root(root);
         let s = Scope::new(&cfg);
         assert!(s.contains(Path::new("/h/.claude/CLAUDE.md")).is_some());
-        assert!(s.contains(Path::new("/h/.claude/skills/x/SKILL.md")).is_some());
-        assert!(s.contains(Path::new("/h/.claude/projects/-h-git-a/memory/MEMORY.md")).is_some());
-        assert!(s.contains(Path::new("/h/.claude/projects/-h-git-a/session.jsonl")).is_none());
+        assert!(s
+            .contains(Path::new("/h/.claude/skills/x/SKILL.md"))
+            .is_some());
+        assert!(s
+            .contains(Path::new("/h/.claude/projects/-h-git-a/memory/MEMORY.md"))
+            .is_some());
+        assert!(s
+            .contains(Path::new("/h/.claude/projects/-h-git-a/session.jsonl"))
+            .is_none());
         assert!(s.contains(Path::new("/h/.claude/settings.json")).is_none());
         assert!(s.contains(Path::new("/h/git/a/src/x.ts")).is_none());
-        assert!(s.contains(Path::new("/h/.claude/CLAUDE.md.codev-bak")).is_none());
+        assert!(s
+            .contains(Path::new("/h/.claude/CLAUDE.md.codev-bak"))
+            .is_none());
     }
 
     #[test]
@@ -188,7 +205,13 @@ mod tests {
         let mut cfg = cfg_with_root(root);
         cfg.exclude_projects = vec!["-h-git-scratch*".into()];
         let s = Scope::new(&cfg);
-        assert!(s.contains(Path::new("/h/.claude/projects/-h-git-scratch-1/memory/a.md")).is_none());
-        assert!(s.contains(Path::new("/h/.claude/projects/-h-git-a/memory/a.md")).is_some());
+        assert!(s
+            .contains(Path::new(
+                "/h/.claude/projects/-h-git-scratch-1/memory/a.md"
+            ))
+            .is_none());
+        assert!(s
+            .contains(Path::new("/h/.claude/projects/-h-git-a/memory/a.md"))
+            .is_some());
     }
 }

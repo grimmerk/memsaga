@@ -88,7 +88,11 @@ fn sync_entry(scope: &Scope, root: &Root, entry: &Entry, repo: &Path) -> Result<
     }
     if meta.is_dir() {
         // A destination that used to be a symlink must be replaced by a real dir.
-        if dst.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+        if dst
+            .symlink_metadata()
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
             fs::remove_file(&dst)?;
         }
         let prefix = match entry {
@@ -118,7 +122,10 @@ pub fn sync_dir(scope: &Scope, src: &Path, dst: &Path, prefix: &Path) -> Result<
             continue;
         }
         let rel = item.path().strip_prefix(src)?;
-        if rel.components().any(|c| scope.excluded_name(&c.as_os_str().to_string_lossy())) {
+        if rel
+            .components()
+            .any(|c| scope.excluded_name(&c.as_os_str().to_string_lossy()))
+        {
             continue;
         }
         if scope.excluded_path(&prefix.join(rel)) {
@@ -134,15 +141,21 @@ pub fn sync_dir(scope: &Scope, src: &Path, dst: &Path, prefix: &Path) -> Result<
             // one that escapes it (e.g. skills/foo -> ../../.agents/skills/foo)
             // is rewritten to the absolute target so the copy is not dangling.
             let link = fs::read_link(item.path())?;
-            let resolved = if link.is_absolute() { link.clone() } else { normalize(&item.path().parent().unwrap_or(src).join(&link)) };
-            let link = if resolved.starts_with(src) { link } else { resolved };
+            let resolved = if link.is_absolute() {
+                link.clone()
+            } else {
+                normalize(&item.path().parent().unwrap_or(src).join(&link))
+            };
+            let link = if resolved.starts_with(src) {
+                link
+            } else {
+                resolved
+            };
             if replace_symlink(&target, &link)? {
                 stats.linked += 1;
             }
-        } else if ft.is_file() {
-            if copy_if_changed(item.path(), &target)? {
-                stats.copied += 1;
-            }
+        } else if ft.is_file() && copy_if_changed(item.path(), &target)? {
+            stats.copied += 1;
         }
     }
     // Delete what is no longer in the source. Deepest first so dirs empty out.
@@ -181,7 +194,8 @@ fn copy_if_changed(src: &Path, dst: &Path) -> Result<bool> {
     if let Some(p) = dst.parent() {
         fs::create_dir_all(p)?;
     }
-    fs::copy(src, dst).with_context(|| format!("copying {} -> {}", src.display(), dst.display()))?;
+    fs::copy(src, dst)
+        .with_context(|| format!("copying {} -> {}", src.display(), dst.display()))?;
     if let Ok(t) = sm.modified() {
         let f = fs::OpenOptions::new().write(true).open(dst)?;
         let _ = f.set_modified(t);
@@ -192,8 +206,14 @@ fn copy_if_changed(src: &Path, dst: &Path) -> Result<bool> {
 fn same_second(a: Option<std::time::SystemTime>, b: Option<std::time::SystemTime>) -> bool {
     match (a, b) {
         (Some(a), Some(b)) => {
-            let sa = a.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-            let sb = b.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let sa = a
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let sb = b
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
             sa == sb
         }
         _ => false,
@@ -231,10 +251,8 @@ fn mirror_symlink(scope: &Scope, src: &Path, dst: &Path, repo: &Path) -> Result<
 /// Create or replace a symlink at `dst` pointing to `link`. Returns whether it changed.
 fn replace_symlink(dst: &Path, link: &Path) -> Result<bool> {
     if let Ok(m) = dst.symlink_metadata() {
-        if m.file_type().is_symlink() {
-            if fs::read_link(dst).map(|l| l == link).unwrap_or(false) {
-                return Ok(false);
-            }
+        if m.file_type().is_symlink() && fs::read_link(dst).map(|l| l == link).unwrap_or(false) {
+            return Ok(false);
         }
         remove_any(dst)?;
     }
@@ -299,7 +317,11 @@ pub fn normalize(p: &Path) -> PathBuf {
 pub fn relative_path(from_dir: &Path, to: &Path) -> Option<PathBuf> {
     let from: Vec<_> = from_dir.components().collect();
     let to_c: Vec<_> = to.components().collect();
-    let common = from.iter().zip(to_c.iter()).take_while(|(a, b)| a == b).count();
+    let common = from
+        .iter()
+        .zip(to_c.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
     let mut out = PathBuf::new();
     for _ in common..from.len() {
         out.push("..");
@@ -321,7 +343,11 @@ mod tests {
     #[test]
     fn relative_path_walks_up_then_down() {
         assert_eq!(
-            relative_path(Path::new("/r/claude-work"), Path::new("/r/claude/CLAUDE.md")).unwrap(),
+            relative_path(
+                Path::new("/r/claude-work"),
+                Path::new("/r/claude/CLAUDE.md")
+            )
+            .unwrap(),
             PathBuf::from("../claude/CLAUDE.md")
         );
         assert_eq!(

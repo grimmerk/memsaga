@@ -81,7 +81,10 @@ impl<'a> Git<'a> {
     }
 
     pub fn staged_shortstat(&self) -> Result<String> {
-        Ok(self.run_ok(&["diff", "--cached", "--shortstat"])?.trim().to_string())
+        Ok(self
+            .run_ok(&["diff", "--cached", "--shortstat"])?
+            .trim()
+            .to_string())
     }
 
     /// Commit the index. `date` (RFC 3339) backdates author and committer.
@@ -100,13 +103,19 @@ impl<'a> Git<'a> {
         }
         let out = child.wait_with_output()?;
         if !out.status.success() {
-            bail!("git commit failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+            bail!(
+                "git commit failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
         }
-        Ok(self.head_short()?)
+        self.head_short()
     }
 
     pub fn head_short(&self) -> Result<String> {
-        Ok(self.run_ok(&["rev-parse", "--short", "HEAD"])?.trim().to_string())
+        Ok(self
+            .run_ok(&["rev-parse", "--short", "HEAD"])?
+            .trim()
+            .to_string())
     }
 
     pub fn has_head(&self) -> bool {
@@ -141,10 +150,16 @@ impl<'a> Git<'a> {
     }
 
     pub fn push(&self, remote: &str) -> Result<()> {
-        let branch = self.run_ok(&["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
+        let branch = self
+            .run_ok(&["rev-parse", "--abbrev-ref", "HEAD"])?
+            .trim()
+            .to_string();
         let out = self.run(&["push", "-q", "-u", remote, &branch])?;
         if !out.status.success() {
-            bail!("git push failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+            bail!(
+                "git push failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
         }
         Ok(())
     }
@@ -152,6 +167,12 @@ impl<'a> Git<'a> {
     /// `git log` lines for the status view.
     pub fn recent(&self, n: usize) -> Result<String> {
         let n = n.to_string();
-        Ok(self.run_ok(&["log", "-n", &n, "--date=format:%Y-%m-%d %H:%M", "--format=%h  %ad  %s"])?)
+        self.run_ok(&[
+            "log",
+            "-n",
+            &n,
+            "--date=format:%Y-%m-%d %H:%M",
+            "--format=%h  %ad  %s",
+        ])
     }
 }

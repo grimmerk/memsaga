@@ -1,17 +1,17 @@
 //! Small state files under `<repo>/.git/memvc/`. Nothing here is versioned.
 //!
-//! - `lock`         exclusive advisory lock (flock) held during a sweep.
-//!                  Several Claude sessions fire hooks at the same moment; the
-//!                  lock serialises their sweeps. It lives on an open file
-//!                  descriptor, so a crashed process releases it automatically
-//!                  and there is no stale-lock case to handle.
-//! - `last-sweep`   empty file whose mtime is the start of the last sweep; the
-//!                  fast path compares source mtimes against it.
-//! - `dirty`        appended by the hook when an in-scope file was edited during
-//!                  the turn; the Stop sweep consumes it.
-//! - `events.jsonl` one JSON object per sweep or push; `status` reads it.
-//! - `last-push`    mtime = last successful push (throttling).
-//! - `memvc.log`    free-form log lines for debugging.
+//! - `lock`: exclusive advisory lock (flock) held during a sweep.
+//!   Several Claude sessions fire hooks at the same moment; the
+//!   lock serialises their sweeps. It lives on an open file
+//!   descriptor, so a crashed process releases it automatically
+//!   and there is no stale-lock case to handle.
+//! - `last-sweep`: empty file whose mtime is the start of the last sweep; the
+//!   fast path compares source mtimes against it.
+//! - `dirty`: appended by the hook when an in-scope file was edited during
+//!   the turn; the Stop sweep consumes it.
+//! - `events.jsonl`: one JSON object per sweep or push; `status` reads it.
+//! - `last-push`: mtime = last successful push (throttling).
+//! - `memvc.log`: free-form log lines for debugging.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -60,7 +60,8 @@ impl State {
     }
 
     pub fn ensure(&self) -> Result<()> {
-        std::fs::create_dir_all(&self.dir).with_context(|| format!("creating {}", self.dir.display()))
+        std::fs::create_dir_all(&self.dir)
+            .with_context(|| format!("creating {}", self.dir.display()))
     }
 
     /// Acquire the sweep lock, polling until `timeout`.
@@ -96,13 +97,19 @@ impl State {
     pub fn touch(&self, name: &str) -> Result<()> {
         self.ensure()?;
         let p = self.marker(name);
-        let f = OpenOptions::new().create(true).truncate(false).write(true).open(&p)?;
+        let f = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&p)?;
         f.set_modified(SystemTime::now())?;
         Ok(())
     }
 
     pub fn mtime(&self, name: &str) -> Option<SystemTime> {
-        std::fs::metadata(self.marker(name)).and_then(|m| m.modified()).ok()
+        std::fs::metadata(self.marker(name))
+            .and_then(|m| m.modified())
+            .ok()
     }
 
     pub fn remove(&self, name: &str) {
@@ -115,7 +122,10 @@ impl State {
 
     pub fn write_dirty(&self, info: &str) -> Result<()> {
         self.ensure()?;
-        let mut f = OpenOptions::new().create(true).append(true).open(self.marker("dirty"))?;
+        let mut f = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.marker("dirty"))?;
         writeln!(f, "{info}")?;
         Ok(())
     }
@@ -124,21 +134,30 @@ impl State {
         if self.ensure().is_err() {
             return;
         }
-        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(self.marker("memvc.log")) {
+        if let Ok(mut f) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.marker("memvc.log"))
+        {
             let _ = writeln!(f, "{} {}", now_rfc3339(), line);
         }
     }
 
     pub fn append_event(&self, ev: &Event) -> Result<()> {
         self.ensure()?;
-        let mut f = OpenOptions::new().create(true).append(true).open(self.marker("events.jsonl"))?;
+        let mut f = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.marker("events.jsonl"))?;
         writeln!(f, "{}", serde_json::to_string(ev)?)?;
         Ok(())
     }
 
     pub fn read_events(&self) -> Vec<Event> {
         let text = std::fs::read_to_string(self.marker("events.jsonl")).unwrap_or_default();
-        text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
+        text.lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect()
     }
 
     /// Events appended after byte offset `from`, plus the new end offset.
@@ -149,7 +168,13 @@ impl State {
             return (Vec::new(), total);
         }
         let slice = &text[from as usize..];
-        (slice.lines().filter_map(|l| serde_json::from_str(l).ok()).collect(), total)
+        (
+            slice
+                .lines()
+                .filter_map(|l| serde_json::from_str(l).ok())
+                .collect(),
+            total,
+        )
     }
 }
 

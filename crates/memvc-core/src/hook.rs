@@ -56,7 +56,11 @@ impl HookInput {
             out.push(PathBuf::from(p));
         }
         for c in &self.tool_calls {
-            if let Some(p) = c.get("tool_input").and_then(|t| t.get("file_path")).and_then(|v| v.as_str()) {
+            if let Some(p) = c
+                .get("tool_input")
+                .and_then(|t| t.get("file_path"))
+                .and_then(|v| v.as_str())
+            {
                 out.push(PathBuf::from(p));
             }
         }
@@ -65,8 +69,15 @@ impl HookInput {
 
     pub fn attribution(&self, cfg: &Config) -> Attribution {
         Attribution {
-            event: if self.hook_event_name.is_empty() { "manual".into() } else { self.hook_event_name.clone() },
-            account: cfg.current_root().map(|r| r.label.clone()).unwrap_or_default(),
+            event: if self.hook_event_name.is_empty() {
+                "manual".into()
+            } else {
+                self.hook_event_name.clone()
+            },
+            account: cfg
+                .current_root()
+                .map(|r| r.label.clone())
+                .unwrap_or_default(),
             session: self.session_id.clone(),
             cwd: self.cwd.clone(),
             agent: self.agent_type.clone(),
@@ -99,7 +110,11 @@ pub fn handle(cfg: &Config, input: &HookInput) -> Result<Action> {
                         state::now_rfc3339(),
                         input.hook_event_name,
                         input.session_id,
-                        input.paths().first().map(|p| p.display().to_string()).unwrap_or_default()
+                        input
+                            .paths()
+                            .first()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default()
                     ))?;
                     Ok(Action::MarkedDirty)
                 }
@@ -111,7 +126,9 @@ pub fn handle(cfg: &Config, input: &HookInput) -> Result<Action> {
                 action = Action::Swept(sweep::sweep(cfg, &input.attribution(cfg))?);
             }
             let session_end = input.hook_event_name == "SessionEnd";
-            if maybe_push(cfg, &state, session_end, &input.attribution(cfg))? && matches!(action, Action::Ignored) {
+            if maybe_push(cfg, &state, session_end, &input.attribution(cfg))?
+                && matches!(action, Action::Ignored)
+            {
                 action = Action::Pushed;
             }
             Ok(action)
@@ -123,7 +140,12 @@ pub fn handle(cfg: &Config, input: &HookInput) -> Result<Action> {
 /// Push when a remote exists, the branch is ahead, and either this is a
 /// SessionEnd or the throttle interval has elapsed. Failures are logged as
 /// events, never raised: the next opportunity retries.
-pub fn maybe_push(cfg: &Config, state: &State, session_end: bool, attrib: &Attribution) -> Result<bool> {
+pub fn maybe_push(
+    cfg: &Config,
+    state: &State,
+    session_end: bool,
+    attrib: &Attribution,
+) -> Result<bool> {
     let git = Git::new(&cfg.repo);
     if !git.has_remote("origin") {
         return Ok(false);
@@ -142,7 +164,12 @@ pub fn maybe_push(cfg: &Config, state: &State, session_end: bool, attrib: &Attri
             }
         }
     }
-    if git.ahead_of("origin") == 0 && git.run(&["rev-parse", "--verify", "-q", "origin/HEAD"]).map(|o| o.status.success()).unwrap_or(false) {
+    if git.ahead_of("origin") == 0
+        && git
+            .run(&["rev-parse", "--verify", "-q", "origin/HEAD"])
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    {
         return Ok(false);
     }
     let mut ev = Event {
