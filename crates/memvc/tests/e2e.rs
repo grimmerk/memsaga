@@ -31,13 +31,22 @@ fn fixture(granularity: &str, extra_toml: &str) -> Fx {
     // main account: allowlisted content
     write(&claude.join("CLAUDE.md"), "# global\n");
     write(&claude.join("skills/foo/SKILL.md"), "skill\n");
-    write(&claude.join("projects/-h-git-a/memory/MEMORY.md"), "- idx\n");
+    write(
+        &claude.join("projects/-h-git-a/memory/MEMORY.md"),
+        "- idx\n",
+    );
     write(&claude.join("projects/-h-git-a/memory/one.md"), "fact\n");
-    write(&claude.join("history.jsonl"), "{\"display\":\"x\",\"project\":\"/h/git/a\",\"timestamp\":1}\n");
+    write(
+        &claude.join("history.jsonl"),
+        "{\"display\":\"x\",\"project\":\"/h/git/a\",\"timestamp\":1}\n",
+    );
     fs::create_dir_all(claude.join("projects/-h-git-b/memory")).unwrap(); // empty: skipped
-    // noise that must never be mirrored
+                                                                          // noise that must never be mirrored
     write(&claude.join("settings.json"), "{\"a\":1}\n");
-    write(&claude.join("projects/-h-git-a/sess.jsonl"), "{\"transcript\":true}\n");
+    write(
+        &claude.join("projects/-h-git-a/sess.jsonl"),
+        "{\"transcript\":true}\n",
+    );
     write(&claude.join("file-history/s1/h@v1"), "big\n");
     write(&claude.join("plugins/p"), "plugin\n");
     write(&claude.join(".claude.json"), "{\"oauth\":\"SECRET\"}\n");
@@ -58,7 +67,13 @@ fn fixture(granularity: &str, extra_toml: &str) -> Fx {
             work.display()
         ),
     );
-    Fx { _tmp: tmp, claude, work, repo, cfg }
+    Fx {
+        _tmp: tmp,
+        claude,
+        work,
+        repo,
+        cfg,
+    }
 }
 
 fn cmd(fx: &Fx) -> Command {
@@ -74,28 +89,53 @@ fn cmd(fx: &Fx) -> Command {
 
 fn run(fx: &Fx, args: &[&str]) -> String {
     let out = cmd(fx).args(args).output().unwrap();
-    assert!(out.status.success(), "memvc {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "memvc {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
 fn hook(fx: &Fx, json: &str) -> String {
     let out = cmd(fx).arg("hook").write_stdin(json).output().unwrap();
-    assert!(out.status.success(), "hook exited non-zero: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "hook exited non-zero: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
 fn git(fx: &Fx, args: &[&str]) -> String {
-    let out = std::process::Command::new("git").arg("-C").arg(&fx.repo).args(args).output().unwrap();
-    assert!(out.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&fx.repo)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {:?}: {}",
+        args,
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
 fn commits(fx: &Fx) -> usize {
-    git(fx, &["rev-list", "--count", "HEAD"]).trim().parse().unwrap()
+    git(fx, &["rev-list", "--count", "HEAD"])
+        .trim()
+        .parse()
+        .unwrap()
 }
 
 fn head_files(fx: &Fx) -> Vec<String> {
-    git(fx, &["ls-tree", "-r", "--name-only", "HEAD"]).lines().map(|s| s.to_string()).collect()
+    git(fx, &["ls-tree", "-r", "--name-only", "HEAD"])
+        .lines()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn stop(session: &str) -> String {
@@ -127,17 +167,32 @@ fn init_imports_allowlist_and_excludes_noise() {
         "paths.json",
         ".gitattributes",
     ] {
-        assert!(files.iter().any(|f| f == want), "missing {want} in {files:?}");
+        assert!(
+            files.iter().any(|f| f == want),
+            "missing {want} in {files:?}"
+        );
     }
-    for never in ["settings.json", "sess.jsonl", "file-history", "plugins/", ".claude.json", "hooks/x.sh", "-h-git-b"] {
-        assert!(!files.iter().any(|f| f.contains(never)), "noise {never} leaked: {files:?}");
+    for never in [
+        "settings.json",
+        "sess.jsonl",
+        "file-history",
+        "plugins/",
+        ".claude.json",
+        "hooks/x.sh",
+        "-h-git-b",
+    ] {
+        assert!(
+            !files.iter().any(|f| f.contains(never)),
+            "noise {never} leaked: {files:?}"
+        );
     }
     // symlinks are kept as symlinks and rewritten relative to the repo
     let link = fs::read_link(fx.repo.join("claude-work/CLAUDE.md")).unwrap();
     assert_eq!(link, PathBuf::from("../claude/CLAUDE.md"));
     let link = fs::read_link(fx.repo.join("claude-work/skills")).unwrap();
     assert_eq!(link, PathBuf::from("../claude/skills"));
-    let paths: serde_json::Value = serde_json::from_str(&fs::read_to_string(fx.repo.join("paths.json")).unwrap()).unwrap();
+    let paths: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(fx.repo.join("paths.json")).unwrap()).unwrap();
     assert_eq!(paths["claude"]["-h-git-a"], "/h/git/a");
     assert_eq!(commits(&fx), 1);
 }
@@ -170,7 +225,14 @@ fn edit_granularity_commits_immediately_with_attribution() {
     hook(&fx, &post_tool_use(&f, "1e82bad5-aaaa"));
     assert_eq!(commits(&fx), 2);
     let msg = git(&fx, &["log", "-1", "--format=%B"]);
-    for want in ["PostToolUse: claude:memory:-h-git-a", "Event: PostToolUse", "Account: claude", "Session: 1e82bad5-aaaa", "Cwd: /h/git/b", "Agent: Explore"] {
+    for want in [
+        "PostToolUse: claude:memory:-h-git-a",
+        "Event: PostToolUse",
+        "Account: claude",
+        "Session: 1e82bad5-aaaa",
+        "Cwd: /h/git/b",
+        "Agent: Explore",
+    ] {
         assert!(msg.contains(want), "missing {want:?} in:\n{msg}");
     }
 }
@@ -190,7 +252,10 @@ fn turn_granularity_batches_a_turn_into_one_commit() {
     hook(&fx, &stop("s1"));
     assert_eq!(commits(&fx), 2, "exactly one commit at Stop");
     let files = git(&fx, &["show", "--name-only", "--format=", "HEAD"]);
-    assert!(files.contains("memory/a.md") && files.contains("memory/b.md"), "{files}");
+    assert!(
+        files.contains("memory/a.md") && files.contains("memory/b.md"),
+        "{files}"
+    );
     assert!(!fx.repo.join(".git/memvc/dirty").exists());
 }
 
@@ -199,7 +264,11 @@ fn bash_edits_and_deletions_are_caught_by_stop() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
     // an edit no hook saw (as a Bash heredoc would do)
-    fs::write(fx.claude.join("projects/-h-git-a/memory/one.md"), "fact, revised\n").unwrap();
+    fs::write(
+        fx.claude.join("projects/-h-git-a/memory/one.md"),
+        "fact, revised\n",
+    )
+    .unwrap();
     hook(&fx, &stop("s2"));
     assert_eq!(commits(&fx), 2);
     // a deletion
@@ -234,7 +303,12 @@ fn concurrent_stop_hooks_lose_nothing() {
             .spawn()
             .unwrap();
         use std::io::Write;
-        child.stdin.take().unwrap().write_all(stop(&format!("par-{i}")).as_bytes()).unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stop(&format!("par-{i}")).as_bytes())
+            .unwrap();
         children.push(child);
     }
     for mut c in children {
@@ -244,7 +318,12 @@ fn concurrent_stop_hooks_lose_nothing() {
     assert!((1..=8).contains(&added), "commits added: {added}");
     let files = head_files(&fx);
     for i in 0..8 {
-        assert!(files.iter().any(|f| f.ends_with(&format!("memory/c{i}.md"))), "c{i}.md missing");
+        assert!(
+            files
+                .iter()
+                .any(|f| f.ends_with(&format!("memory/c{i}.md"))),
+            "c{i}.md missing"
+        );
     }
     let log = fs::read_to_string(fx.repo.join(".git/memvc/memvc.log")).unwrap_or_default();
     assert!(!log.contains("error"), "errors logged:\n{log}");
@@ -256,12 +335,18 @@ fn excludes_apply_to_names_and_projects() {
     write(&fx.claude.join("CLAUDE.md.codev-bak-2026-07-10"), "old\n");
     write(&fx.claude.join("skills/foo/SKILL.md.codev-bak-x"), "old\n");
     write(&fx.claude.join("skills/.DS_Store"), "x");
-    write(&fx.claude.join("projects/-h-git-scratch-1/memory/s.md"), "scratch\n");
+    write(
+        &fx.claude.join("projects/-h-git-scratch-1/memory/s.md"),
+        "scratch\n",
+    );
     run(&fx, &["init", "--no-backfill"]);
     let files = head_files(&fx);
     assert!(!files.iter().any(|f| f.contains("codev-bak")), "{files:?}");
     assert!(!files.iter().any(|f| f.contains(".DS_Store")), "{files:?}");
-    assert!(!files.iter().any(|f| f.contains("-h-git-scratch-1")), "{files:?}");
+    assert!(
+        !files.iter().any(|f| f.contains("-h-git-scratch-1")),
+        "{files:?}"
+    );
 }
 
 #[test]
@@ -271,30 +356,62 @@ fn exclude_paths_prune_subtrees_and_outside_symlinks_become_absolute() {
     write(&fx.claude.join("skills/synced/docx/schema.xsd"), "<xsd/>");
     write(&fx.claude.join("skills/synced/docx/SKILL.md"), "vendor");
     // a skill that is a relative symlink out of the tree (~/.agents/skills/...)
-    let agents = fx.claude.parent().unwrap().join(".agents/skills/agent-browser");
+    let agents = fx
+        .claude
+        .parent()
+        .unwrap()
+        .join(".agents/skills/agent-browser");
     write(&agents.join("SKILL.md"), "outside\n");
-    std::os::unix::fs::symlink("../../.agents/skills/agent-browser", fx.claude.join("skills/agent-browser")).unwrap();
+    std::os::unix::fs::symlink(
+        "../../.agents/skills/agent-browser",
+        fx.claude.join("skills/agent-browser"),
+    )
+    .unwrap();
     // and one that stays inside the tree
     std::os::unix::fs::symlink("foo", fx.claude.join("skills/foo-alias")).unwrap();
     run(&fx, &["init", "--no-backfill"]);
     let files = head_files(&fx);
-    assert!(!files.iter().any(|f| f.contains("skills/synced")), "{files:?}");
+    assert!(
+        !files.iter().any(|f| f.contains("skills/synced")),
+        "{files:?}"
+    );
     let outside = fs::read_link(fx.repo.join("claude/skills/agent-browser")).unwrap();
-    assert!(outside.is_absolute() && outside.ends_with(".agents/skills/agent-browser"), "{outside:?}");
-    assert!(fx.repo.join("claude/skills/agent-browser/SKILL.md").exists(), "absolute link must resolve on this machine");
+    assert!(
+        outside.is_absolute() && outside.ends_with(".agents/skills/agent-browser"),
+        "{outside:?}"
+    );
+    assert!(
+        fx.repo
+            .join("claude/skills/agent-browser/SKILL.md")
+            .exists(),
+        "absolute link must resolve on this machine"
+    );
     let inside = fs::read_link(fx.repo.join("claude/skills/foo-alias")).unwrap();
     assert_eq!(inside, PathBuf::from("foo"));
     // and the hook fast path treats the excluded subtree as out of scope
-    fs::write(fx.claude.join("skills/synced/docx/SKILL.md"), "vendor update").unwrap();
-    hook(&fx, &post_tool_use(&fx.claude.join("skills/synced/docx/SKILL.md"), "s9"));
-    assert!(!fx.repo.join(".git/memvc/dirty").exists(), "excluded path must not mark dirty");
+    fs::write(
+        fx.claude.join("skills/synced/docx/SKILL.md"),
+        "vendor update",
+    )
+    .unwrap();
+    hook(
+        &fx,
+        &post_tool_use(&fx.claude.join("skills/synced/docx/SKILL.md"), "s9"),
+    );
+    assert!(
+        !fx.repo.join(".git/memvc/dirty").exists(),
+        "excluded path must not mark dirty"
+    );
 }
 
 #[test]
 fn user_owned_paths_in_the_repo_are_committed_and_kept() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
-    write(&fx.repo.join("companion/webapp/docs/x.zh-tw.md"), "translation\n");
+    write(
+        &fx.repo.join("companion/webapp/docs/x.zh-tw.md"),
+        "translation\n",
+    );
     write(&fx.repo.join("manual/note.md"), "hand-written\n");
     hook(&fx, &stop("s3"));
     assert_eq!(commits(&fx), 2);
@@ -311,17 +428,33 @@ fn user_owned_paths_in_the_repo_are_committed_and_kept() {
 fn mirror_is_one_way_and_never_touches_roots() {
     let fx = fixture("turn", "");
     let snapshot = |p: &Path| -> Vec<(PathBuf, u64)> {
-        walk(p).into_iter().map(|f| { let m = fs::symlink_metadata(&f).unwrap(); (f, m.len()) }).collect()
+        walk(p)
+            .into_iter()
+            .map(|f| {
+                let m = fs::symlink_metadata(&f).unwrap();
+                (f, m.len())
+            })
+            .collect()
     };
     let before = (snapshot(&fx.claude), snapshot(&fx.work));
     run(&fx, &["init", "--no-backfill"]);
     // a hand edit inside the tool-owned subtree is overwritten by the next sweep
     fs::write(fx.repo.join("claude/CLAUDE.md"), "# hand edited in repo\n").unwrap();
     run(&fx, &["sweep"]);
-    assert_eq!(fs::read_to_string(fx.repo.join("claude/CLAUDE.md")).unwrap(), "# global\n");
+    assert_eq!(
+        fs::read_to_string(fx.repo.join("claude/CLAUDE.md")).unwrap(),
+        "# global\n"
+    );
     hook(&fx, &stop("s4"));
-    assert_eq!((snapshot(&fx.claude), snapshot(&fx.work)), before, "a root changed");
-    assert_eq!(fs::read_to_string(fx.claude.join("CLAUDE.md")).unwrap(), "# global\n");
+    assert_eq!(
+        (snapshot(&fx.claude), snapshot(&fx.work)),
+        before,
+        "a root changed"
+    );
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("CLAUDE.md")).unwrap(),
+        "# global\n"
+    );
 }
 
 fn walk(p: &Path) -> Vec<PathBuf> {
@@ -346,10 +479,17 @@ fn reporter_prints_once_per_batch_of_commits() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
     let first = run(&fx, &["report"]); // consumes the import commit event
-    assert!(first.contains("systemMessage") && first.contains("memvc:"), "{first}");
+    assert!(
+        first.contains("systemMessage") && first.contains("memvc:"),
+        "{first}"
+    );
     let again = run(&fx, &["report"]);
     assert!(again.trim().is_empty(), "nothing new: {again:?}");
-    fs::write(fx.claude.join("projects/-h-git-a/memory/one.md"), "changed fact\n").unwrap();
+    fs::write(
+        fx.claude.join("projects/-h-git-a/memory/one.md"),
+        "changed fact\n",
+    )
+    .unwrap();
     hook(&fx, &stop("s5"));
     let third = run(&fx, &["report"]);
     assert!(third.contains("1 file committed"), "{third}");
@@ -362,15 +502,31 @@ fn install_and_uninstall_preserve_foreign_hooks() {
     fs::write(&settings, r#"{"model":"x","hooks":{"Stop":[{"hooks":[{"type":"command","command":"/other/status.sh","timeout":5}]}]}}"#).unwrap();
     let out = run(&fx, &["install", "--bin", "/usr/local/bin/memvc"]);
     assert!(out.contains("hooks registered"), "{out}");
-    let v: serde_json::Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
     assert_eq!(v["model"], "x");
-    let stop_cmds: Vec<String> = v["hooks"]["Stop"].as_array().unwrap().iter()
-        .flat_map(|e| e["hooks"].as_array().unwrap().iter().map(|h| h["command"].as_str().unwrap().to_string()))
+    let stop_cmds: Vec<String> = v["hooks"]["Stop"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|e| {
+            e["hooks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|h| h["command"].as_str().unwrap().to_string())
+        })
         .collect();
-    assert!(stop_cmds.contains(&"/other/status.sh".to_string()), "foreign hook lost: {stop_cmds:?}");
+    assert!(
+        stop_cmds.contains(&"/other/status.sh".to_string()),
+        "foreign hook lost: {stop_cmds:?}"
+    );
     assert!(stop_cmds.contains(&"/usr/local/bin/memvc hook".to_string()));
     assert!(stop_cmds.contains(&"/usr/local/bin/memvc report".to_string()));
-    assert_eq!(v["hooks"]["PostToolUse"][0]["matcher"], "Write|Edit|MultiEdit|NotebookEdit");
+    assert_eq!(
+        v["hooks"]["PostToolUse"][0]["matcher"],
+        "Write|Edit|MultiEdit|NotebookEdit"
+    );
     assert_eq!(v["hooks"]["PostToolUse"][0]["hooks"][0]["async"], true);
     assert!(v["hooks"]["SessionEnd"].is_array());
     assert!(fx.claude.join("settings.json.memvc-bak").exists());
@@ -378,15 +534,31 @@ fn install_and_uninstall_preserve_foreign_hooks() {
     assert!(out2.contains("already registered"), "{out2}");
     let out3 = run(&fx, &["uninstall"]);
     assert!(out3.contains("hooks removed"), "{out3}");
-    let v: serde_json::Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
-    let stop_cmds: Vec<String> = v["hooks"]["Stop"].as_array().unwrap().iter()
-        .flat_map(|e| e["hooks"].as_array().unwrap().iter().map(|h| h["command"].as_str().unwrap().to_string()))
+    let v: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    let stop_cmds: Vec<String> = v["hooks"]["Stop"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|e| {
+            e["hooks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|h| h["command"].as_str().unwrap().to_string())
+        })
         .collect();
     assert_eq!(stop_cmds, vec!["/other/status.sh".to_string()]);
     assert!(v["hooks"].get("PostToolUse").is_none());
     // the second root, which had no hooks, must also be clean after uninstall
-    let w: serde_json::Value = serde_json::from_str(&fs::read_to_string(fx.work.join("settings.json")).unwrap()).unwrap();
-    assert!(w.get("hooks").map(|h| h.as_object().map(|o| o.is_empty()).unwrap_or(true)).unwrap_or(true), "{w}");
+    let w: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(fx.work.join("settings.json")).unwrap()).unwrap();
+    assert!(
+        w.get("hooks")
+            .map(|h| h.as_object().map(|o| o.is_empty()).unwrap_or(true))
+            .unwrap_or(true),
+        "{w}"
+    );
 }
 
 #[test]
@@ -405,21 +577,48 @@ fn backfill_replays_transcripts_into_dated_commits() {
         ),
         p = mem.display()
     );
-    write(&fx.claude.join("projects/-h-git-a/0000-session.jsonl"), &transcript);
+    write(
+        &fx.claude.join("projects/-h-git-a/0000-session.jsonl"),
+        &transcript,
+    );
     let out = run(&fx, &["init"]);
     assert!(out.contains("backfill: 2 ops -> 2 commits"), "{out}");
     let dates = git(&fx, &["log", "--format=%ad", "--date=short"]);
-    assert!(dates.contains("2026-08-01") && dates.contains("2026-08-02"), "{dates}");
-    let shas: Vec<String> = git(&fx, &["log", "--format=%H", "--reverse"]).lines().map(|s| s.to_string()).collect();
+    assert!(
+        dates.contains("2026-08-01") && dates.contains("2026-08-02"),
+        "{dates}"
+    );
+    let shas: Vec<String> = git(&fx, &["log", "--format=%H", "--reverse"])
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
     assert_eq!(shas.len(), 3, "2 backfill + 1 import");
-    let v1 = git(&fx, &["show", &format!("{}:claude/projects/-h-git-a/memory/one.md", shas[0])]);
-    let v2 = git(&fx, &["show", &format!("{}:claude/projects/-h-git-a/memory/one.md", shas[1])]);
+    let v1 = git(
+        &fx,
+        &[
+            "show",
+            &format!("{}:claude/projects/-h-git-a/memory/one.md", shas[0]),
+        ],
+    );
+    let v2 = git(
+        &fx,
+        &[
+            "show",
+            &format!("{}:claude/projects/-h-git-a/memory/one.md", shas[1]),
+        ],
+    );
     assert_eq!(v1, "v1 fact\n");
     assert_eq!(v2, "v2 fact\n");
     // the import commit brings the file to its real current content
-    assert_eq!(fs::read_to_string(fx.repo.join("claude/projects/-h-git-a/memory/one.md")).unwrap(), "fact\n");
+    assert_eq!(
+        fs::read_to_string(fx.repo.join("claude/projects/-h-git-a/memory/one.md")).unwrap(),
+        "fact\n"
+    );
     let msg = git(&fx, &["log", "--format=%B", "-1", &shas[0]]);
-    assert!(msg.contains("Event: backfill") && msg.contains("Session: s-old"), "{msg}");
+    assert!(
+        msg.contains("Event: backfill") && msg.contains("Session: s-old"),
+        "{msg}"
+    );
 }
 
 #[test]
@@ -427,5 +626,8 @@ fn status_reports_recent_events() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
     let out = run(&fx, &["status"]);
-    assert!(out.contains("head:") && out.contains("commit") && out.contains("import"), "{out}");
+    assert!(
+        out.contains("head:") && out.contains("commit") && out.contains("import"),
+        "{out}"
+    );
 }

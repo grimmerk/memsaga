@@ -10,7 +10,12 @@ use std::path::Path;
 /// (event, matcher, command suffix, async)
 fn wanted(bin: &str, reporter: bool) -> Vec<(&'static str, Option<&'static str>, String, bool)> {
     let mut v = vec![
-        ("PostToolUse", Some("Write|Edit|MultiEdit|NotebookEdit"), format!("{bin} hook"), true),
+        (
+            "PostToolUse",
+            Some("Write|Edit|MultiEdit|NotebookEdit"),
+            format!("{bin} hook"),
+            true,
+        ),
         ("Stop", None, format!("{bin} hook"), true),
         ("SessionEnd", None, format!("{bin} hook"), true),
     ];
@@ -51,7 +56,11 @@ pub fn install(settings: &Path, bin: &str, reporter: bool) -> Result<bool> {
         let present = list.iter().any(|e| {
             e.get("hooks")
                 .and_then(|h| h.as_array())
-                .map(|arr| arr.iter().any(|h| h.get("command").and_then(|c| c.as_str()) == Some(command.as_str())))
+                .map(|arr| {
+                    arr.iter().any(|h| {
+                        h.get("command").and_then(|c| c.as_str()) == Some(command.as_str())
+                    })
+                })
                 .unwrap_or(false)
         });
         if present {
@@ -104,7 +113,8 @@ fn read_settings(path: &Path) -> Result<Value> {
     if !path.exists() {
         return Ok(Value::Object(Map::new()));
     }
-    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     if text.trim().is_empty() {
         return Ok(Value::Object(Map::new()));
     }
@@ -115,7 +125,9 @@ fn write_settings(path: &Path, value: &Value) -> Result<()> {
     if path.exists() {
         let bak = path.with_file_name(format!(
             "{}.memvc-bak",
-            path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
+            path.file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default()
         ));
         if !bak.exists() {
             std::fs::copy(path, &bak)?;

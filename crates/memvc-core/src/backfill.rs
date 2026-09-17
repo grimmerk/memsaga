@@ -67,8 +67,10 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
     for root in &cfg.roots {
         collect_root(&scope, root, &mut ops, &mut failed)?;
     }
-    let mut report = Report::default();
-    report.failed_dropped = ops.iter().filter(|o| failed.contains(&o.id)).count();
+    let mut report = Report {
+        failed_dropped: ops.iter().filter(|o| failed.contains(&o.id)).count(),
+        ..Default::default()
+    };
     ops.retain(|o| !failed.contains(&o.id));
     ops.sort_by(|a, b| a.ts.cmp(&b.ts));
     report.ops = ops.len();
@@ -120,7 +122,10 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
         if wrote && git.add_all_and_check()? {
             let last = &ops[end - 1];
             let name_status = git.staged_name_status()?;
-            let files: Vec<String> = name_status.lines().filter_map(|l| l.split('\t').nth(1).map(|s| s.to_string())).collect();
+            let files: Vec<String> = name_status
+                .lines()
+                .filter_map(|l| l.split('\t').nth(1).map(|s| s.to_string()))
+                .collect();
             let attrib = crate::sweep::Attribution {
                 event: "backfill".into(),
                 account: last.label.clone(),
@@ -141,7 +146,13 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
         event: "init".into(),
         message: format!(
             "ops={} commits={} known={} unknown={} dropped={} range={}..{}",
-            report.ops, report.commits, report.known_versions, report.unknown_versions, report.failed_dropped, report.first_ts, report.last_ts
+            report.ops,
+            report.commits,
+            report.known_versions,
+            report.unknown_versions,
+            report.failed_dropped,
+            report.first_ts,
+            report.last_ts
         ),
         ..Default::default()
     })?;
@@ -203,10 +214,14 @@ fn reconstruct(ops: &[Op]) -> Vec<Option<String>> {
                 Kind::Write { .. } => None, // nothing before a whole rewrite is knowable here
                 Kind::Edit { old, new, all } => {
                     if s.contains(new.as_str()) && !new.is_empty() {
-                        Some(if *all { s.replace(new.as_str(), old) } else { s.replacen(new.as_str(), old, 1) })
-                    } else if new.is_empty() && s.contains(old.as_str()) {
-                        None // deletion edit: ambiguous where the text was, stop here
+                        Some(if *all {
+                            s.replace(new.as_str(), old)
+                        } else {
+                            s.replacen(new.as_str(), old, 1)
+                        })
                     } else {
+                        // An empty `new_string` is a deletion: where the text was is
+                        // ambiguous, so the chain stops here.
                         None
                     }
                 }
@@ -234,12 +249,22 @@ fn seconds_between(a: &str, b: &str) -> i64 {
 }
 
 /// Walk a root's transcripts and collect in-scope Write/Edit ops.
-fn collect_root(scope: &Scope, root: &Root, ops: &mut Vec<Op>, failed: &mut HashSet<String>) -> Result<()> {
+fn collect_root(
+    scope: &Scope,
+    root: &Root,
+    ops: &mut Vec<Op>,
+    failed: &mut HashSet<String>,
+) -> Result<()> {
     let projects = root.path.join("projects");
     if !projects.is_dir() {
         return Ok(());
     }
-    for item in WalkDir::new(&projects).follow_links(false).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+    for item in WalkDir::new(&projects)
+        .follow_links(false)
+        .max_depth(4)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let p = item.path();
         if !item.file_type().is_file() || p.extension().map(|e| e != "jsonl").unwrap_or(true) {
             continue;
@@ -247,12 +272,19 @@ fn collect_root(scope: &Scope, root: &Root, ops: &mut Vec<Op>, failed: &mut Hash
         if p.components().any(|c| c.as_os_str() == "memory") {
             continue;
         }
-        collect_transcript(scope, root, p, ops, failed).with_context(|| format!("reading {}", p.display()))?;
+        collect_transcript(scope, root, p, ops, failed)
+            .with_context(|| format!("reading {}", p.display()))?;
     }
     Ok(())
 }
 
-fn collect_transcript(scope: &Scope, root: &Root, path: &Path, ops: &mut Vec<Op>, failed: &mut HashSet<String>) -> Result<()> {
+fn collect_transcript(
+    scope: &Scope,
+    root: &Root,
+    path: &Path,
+    ops: &mut Vec<Op>,
+    failed: &mut HashSet<String>,
+) -> Result<()> {
     use std::io::{BufRead, BufReader};
     let f = std::fs::File::open(path)?;
     let mut reader = BufReader::with_capacity(1 << 20, f);
@@ -272,7 +304,11 @@ fn collect_transcript(scope: &Scope, root: &Root, path: &Path, ops: &mut Vec<Op>
             Ok(v) => v,
             Err(_) => continue,
         };
-        let content = match v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array()) {
+        let content = match v
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_array())
+        {
             Some(c) => c,
             None => continue,
         };
@@ -288,9 +324,21 @@ fn collect_transcript(scope: &Scope, root: &Root, path: &Path, ops: &mut Vec<Op>
             }
             continue;
         }
-        let ts = v.get("timestamp").and_then(|t| t.as_str()).unwrap_or("").to_string();
-        let session = v.get("sessionId").and_then(|s| s.as_str()).unwrap_or("").to_string();
-        let cwd = v.get("cwd").and_then(|s| s.as_str()).unwrap_or("").to_string();
+        let ts = v
+            .get("timestamp")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
+        let session = v
+            .get("sessionId")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
+        let cwd = v
+            .get("cwd")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
         for blk in content {
             if blk.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
                 continue;
@@ -314,11 +362,28 @@ fn collect_transcript(scope: &Scope, root: &Root, path: &Path, ops: &mut Vec<Op>
             };
             let rel = Path::new(&hit_root.label).join(rel_in_root);
             let kind = match name {
-                "Write" => Kind::Write { content: input.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string() },
+                "Write" => Kind::Write {
+                    content: input
+                        .get("content")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                },
                 "Edit" => Kind::Edit {
-                    old: input.get("old_string").and_then(|c| c.as_str()).unwrap_or("").to_string(),
-                    new: input.get("new_string").and_then(|c| c.as_str()).unwrap_or("").to_string(),
-                    all: input.get("replace_all").and_then(|c| c.as_bool()).unwrap_or(false),
+                    old: input
+                        .get("old_string")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    new: input
+                        .get("new_string")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    all: input
+                        .get("replace_all")
+                        .and_then(|c| c.as_bool())
+                        .unwrap_or(false),
                 },
                 _ => continue,
             };
@@ -330,7 +395,11 @@ fn collect_transcript(scope: &Scope, root: &Root, path: &Path, ops: &mut Vec<Op>
                 abs: fp,
                 label: hit_root.label.clone(),
                 kind,
-                id: blk.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string(),
+                id: blk
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("")
+                    .to_string(),
             });
         }
     }
@@ -347,8 +416,14 @@ pub fn preview(cfg: &Config) -> Result<BTreeMap<String, (usize, String, String)>
         collect_root(&scope, root, &mut ops, &mut failed)?;
         ops.retain(|o| !failed.contains(&o.id));
         ops.sort_by(|a, b| a.ts.cmp(&b.ts));
-        let first = ops.first().map(|o| o.ts[..10.min(o.ts.len())].to_string()).unwrap_or_default();
-        let last = ops.last().map(|o| o.ts[..10.min(o.ts.len())].to_string()).unwrap_or_default();
+        let first = ops
+            .first()
+            .map(|o| o.ts[..10.min(o.ts.len())].to_string())
+            .unwrap_or_default();
+        let last = ops
+            .last()
+            .map(|o| o.ts[..10.min(o.ts.len())].to_string())
+            .unwrap_or_default();
         out.insert(root.label.clone(), (ops.len(), first, last));
     }
     Ok(out)
@@ -359,7 +434,16 @@ mod tests {
     use super::*;
 
     fn op(ts: &str, rel: &str, abs: &Path, kind: Kind) -> Op {
-        Op { ts: ts.into(), session: "s".into(), cwd: "/c".into(), rel: PathBuf::from(rel), abs: abs.to_path_buf(), label: "claude".into(), kind, id: String::new() }
+        Op {
+            ts: ts.into(),
+            session: "s".into(),
+            cwd: "/c".into(),
+            rel: PathBuf::from(rel),
+            abs: abs.to_path_buf(),
+            label: "claude".into(),
+            kind,
+            id: String::new(),
+        }
     }
 
     #[test]
@@ -368,8 +452,26 @@ mod tests {
         let live = dir.join("MEMORY.md");
         std::fs::write(&live, "- a\n- b\n- c\n").unwrap();
         let ops = vec![
-            op("2026-08-01T00:00:00Z", "claude/m/MEMORY.md", &live, Kind::Edit { old: "- a\n".into(), new: "- a\n- b\n".into(), all: false }),
-            op("2026-08-02T00:00:00Z", "claude/m/MEMORY.md", &live, Kind::Edit { old: "- b\n".into(), new: "- b\n- c\n".into(), all: false }),
+            op(
+                "2026-08-01T00:00:00Z",
+                "claude/m/MEMORY.md",
+                &live,
+                Kind::Edit {
+                    old: "- a\n".into(),
+                    new: "- a\n- b\n".into(),
+                    all: false,
+                },
+            ),
+            op(
+                "2026-08-02T00:00:00Z",
+                "claude/m/MEMORY.md",
+                &live,
+                Kind::Edit {
+                    old: "- b\n".into(),
+                    new: "- b\n- c\n".into(),
+                    all: false,
+                },
+            ),
         ];
         let after = reconstruct(&ops);
         assert_eq!(after[1].as_deref(), Some("- a\n- b\n- c\n"));
@@ -381,9 +483,34 @@ mod tests {
         let dir = tempfile_dir();
         let live = dir.join("t.md"); // does not exist: backward pass cannot help
         let ops = vec![
-            op("2026-08-01T00:00:00Z", "claude/t.md", &live, Kind::Write { content: "v1\n".into() }),
-            op("2026-08-02T00:00:00Z", "claude/t.md", &live, Kind::Edit { old: "v1".into(), new: "v2".into(), all: false }),
-            op("2026-08-03T00:00:00Z", "claude/t.md", &live, Kind::Edit { old: "zzz".into(), new: "v3".into(), all: false }),
+            op(
+                "2026-08-01T00:00:00Z",
+                "claude/t.md",
+                &live,
+                Kind::Write {
+                    content: "v1\n".into(),
+                },
+            ),
+            op(
+                "2026-08-02T00:00:00Z",
+                "claude/t.md",
+                &live,
+                Kind::Edit {
+                    old: "v1".into(),
+                    new: "v2".into(),
+                    all: false,
+                },
+            ),
+            op(
+                "2026-08-03T00:00:00Z",
+                "claude/t.md",
+                &live,
+                Kind::Edit {
+                    old: "zzz".into(),
+                    new: "v3".into(),
+                    all: false,
+                },
+            ),
         ];
         let after = reconstruct(&ops);
         assert_eq!(after[0].as_deref(), Some("v1\n"));
@@ -397,12 +524,36 @@ mod tests {
         let live = dir.join("d.md");
         std::fs::write(&live, "rewritten by bash\n").unwrap();
         let ops = vec![
-            op("2026-08-01T00:00:00Z", "claude/d.md", &live, Kind::Write { content: "v1\n".into() }),
-            op("2026-08-02T00:00:00Z", "claude/d.md", &live, Kind::Edit { old: "v1".into(), new: "v2".into(), all: false }),
+            op(
+                "2026-08-01T00:00:00Z",
+                "claude/d.md",
+                &live,
+                Kind::Write {
+                    content: "v1\n".into(),
+                },
+            ),
+            op(
+                "2026-08-02T00:00:00Z",
+                "claude/d.md",
+                &live,
+                Kind::Edit {
+                    old: "v1".into(),
+                    new: "v2".into(),
+                    all: false,
+                },
+            ),
         ];
         let after = reconstruct(&ops);
-        assert_eq!(after[0].as_deref(), Some("v1\n"), "forward pass still valid");
-        assert_eq!(after[1].as_deref(), Some("v2\n"), "backward pass must not overwrite with drifted live content");
+        assert_eq!(
+            after[0].as_deref(),
+            Some("v1\n"),
+            "forward pass still valid"
+        );
+        assert_eq!(
+            after[1].as_deref(),
+            Some("v2\n"),
+            "backward pass must not overwrite with drifted live content"
+        );
     }
 
     fn tempfile_dir() -> PathBuf {

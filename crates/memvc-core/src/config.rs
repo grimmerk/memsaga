@@ -112,7 +112,10 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .map(|s| {
                     let p = expand_tilde(s);
-                    Root { label: label_for(&p), path: p }
+                    Root {
+                        label: label_for(&p),
+                        path: p,
+                    }
                 })
                 .collect();
         }
@@ -185,7 +188,10 @@ fn discover_roots() -> Vec<Root> {
                         if let Some(dir) = a.get("dir").and_then(|d| d.as_str()) {
                             let p = expand_tilde(dir);
                             if p.is_dir() {
-                                out.push(Root { label: label_for(&p), path: p });
+                                out.push(Root {
+                                    label: label_for(&p),
+                                    path: p,
+                                });
                             }
                         }
                     }
@@ -195,7 +201,10 @@ fn discover_roots() -> Vec<Root> {
         if out.is_empty() {
             let p = home.join(".claude");
             if p.is_dir() {
-                out.push(Root { label: "claude".into(), path: p });
+                out.push(Root {
+                    label: "claude".into(),
+                    path: p,
+                });
             }
         }
     }

@@ -67,7 +67,11 @@ pub fn needs_sweep(cfg: &Config, scope: &Scope, state: &State) -> bool {
     if let Ok(rd) = std::fs::read_dir(&cfg.repo) {
         for e in rd.filter_map(|e| e.ok()) {
             let name = e.file_name().to_string_lossy().to_string();
-            if name == ".git" || name == "index.md" || name == "paths.json" || cfg.roots.iter().any(|r| r.label == name) {
+            if name == ".git"
+                || name == "index.md"
+                || name == "paths.json"
+                || cfg.roots.iter().any(|r| r.label == name)
+            {
                 continue;
             }
             let p = e.path();
@@ -92,7 +96,11 @@ fn tree_newer_than(dir: &Path, marker: SystemTime) -> bool {
         Ok(p) => p,
         Err(_) => return false,
     };
-    for item in WalkDir::new(&start).follow_links(false).into_iter().filter_map(|e| e.ok()) {
+    for item in WalkDir::new(&start)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if let Ok(m) = item.metadata() {
             if let Ok(t) = m.modified() {
                 if t > marker {
@@ -110,7 +118,10 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let scope = Scope::new(cfg);
     let git = Git::new(&cfg.repo);
     if !git.is_repo() {
-        anyhow::bail!("{} is not a git repository; run `memvc init` first", cfg.repo.display());
+        anyhow::bail!(
+            "{} is not a git repository; run `memvc init` first",
+            cfg.repo.display()
+        );
     }
     let state = State::new(cfg.state_dir());
     let _guard = state.lock(Duration::from_secs(20)).context("sweep lock")?;
@@ -130,7 +141,11 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     index::write_index(cfg, &scope)?;
 
     let changed = git.add_all_and_check()?;
-    let mut out = Outcome { copied, deleted, ..Default::default() };
+    let mut out = Outcome {
+        copied,
+        deleted,
+        ..Default::default()
+    };
     if changed {
         let name_status = git.staged_name_status()?;
         let files: Vec<String> = name_status
@@ -168,7 +183,9 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
 
 fn set_marker(state: &State, at: SystemTime) -> Result<()> {
     state.touch("last-sweep")?;
-    let f = std::fs::OpenOptions::new().write(true).open(state.marker("last-sweep"))?;
+    let f = std::fs::OpenOptions::new()
+        .write(true)
+        .open(state.marker("last-sweep"))?;
     f.set_modified(at)?;
     Ok(())
 }

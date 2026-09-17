@@ -15,7 +15,11 @@ use std::io::Read;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "memvc", version, about = "Version control for Claude Code memory and config")]
+#[command(
+    name = "memvc",
+    version,
+    about = "Version control for Claude Code memory and config"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -107,9 +111,13 @@ fn run(cli: Cli) -> Result<()> {
             let input = HookInput::parse(&text);
             let state = State::new(cfg.state_dir());
             match hook::handle(&cfg, &input) {
-                Ok(Action::Swept(o)) if o.committed => {
-                    state.log(&format!("{}: committed {} ({} files, {} ms)", input.hook_event_name, o.sha, o.files.len(), o.duration_ms))
-                }
+                Ok(Action::Swept(o)) if o.committed => state.log(&format!(
+                    "{}: committed {} ({} files, {} ms)",
+                    input.hook_event_name,
+                    o.sha,
+                    o.files.len(),
+                    o.duration_ms
+                )),
                 Ok(_) => {}
                 Err(e) => state.log(&format!("{}: error: {e:#}", input.hook_event_name)),
             }
@@ -125,16 +133,33 @@ fn run(cli: Cli) -> Result<()> {
         }
         Cmd::Sweep { event } => {
             let cfg = Config::load()?;
-            let attrib = Attribution { event, account: cfg.current_root().map(|r| r.label.clone()).unwrap_or_default(), ..Default::default() };
+            let attrib = Attribution {
+                event,
+                account: cfg
+                    .current_root()
+                    .map(|r| r.label.clone())
+                    .unwrap_or_default(),
+                ..Default::default()
+            };
             let o = sweep::sweep(&cfg, &attrib)?;
             if o.committed {
-                println!("committed {} ({}; copied {}, deleted {}, {} ms)", o.sha, o.shortstat, o.copied, o.deleted, o.duration_ms);
+                println!(
+                    "committed {} ({}; copied {}, deleted {}, {} ms)",
+                    o.sha, o.shortstat, o.copied, o.deleted, o.duration_ms
+                );
             } else {
-                println!("no changes (copied {}, deleted {}, {} ms)", o.copied, o.deleted, o.duration_ms);
+                println!(
+                    "no changes (copied {}, deleted {}, {} ms)",
+                    o.copied, o.deleted, o.duration_ms
+                );
             }
             Ok(())
         }
-        Cmd::Init { no_backfill, dry_run, group_window } => cmd_init(no_backfill, dry_run, group_window),
+        Cmd::Init {
+            no_backfill,
+            dry_run,
+            group_window,
+        } => cmd_init(no_backfill, dry_run, group_window),
         Cmd::Status { n } => cmd_status(n),
         Cmd::Log { n } => {
             let cfg = Config::load()?;
@@ -147,21 +172,49 @@ fn run(cli: Cli) -> Result<()> {
                 Some(b) => b,
                 None => std::env::current_exe()?.to_string_lossy().to_string(),
             };
-            let roots: Vec<PathBuf> = if root.is_empty() { cfg.roots.iter().map(|r| r.path.clone()).collect() } else { root.iter().map(|p| expand_tilde(&p.to_string_lossy())).collect() };
+            let roots: Vec<PathBuf> = if root.is_empty() {
+                cfg.roots.iter().map(|r| r.path.clone()).collect()
+            } else {
+                root.iter()
+                    .map(|p| expand_tilde(&p.to_string_lossy()))
+                    .collect()
+            };
             for r in roots {
                 let settings = r.join("settings.json");
                 let changed = install::install(&settings, &bin, cfg.reporter)?;
-                println!("{}: {}", settings.display(), if changed { "hooks registered" } else { "already registered" });
+                println!(
+                    "{}: {}",
+                    settings.display(),
+                    if changed {
+                        "hooks registered"
+                    } else {
+                        "already registered"
+                    }
+                );
             }
             Ok(())
         }
         Cmd::Uninstall { root } => {
             let cfg = Config::load()?;
-            let roots: Vec<PathBuf> = if root.is_empty() { cfg.roots.iter().map(|r| r.path.clone()).collect() } else { root.iter().map(|p| expand_tilde(&p.to_string_lossy())).collect() };
+            let roots: Vec<PathBuf> = if root.is_empty() {
+                cfg.roots.iter().map(|r| r.path.clone()).collect()
+            } else {
+                root.iter()
+                    .map(|p| expand_tilde(&p.to_string_lossy()))
+                    .collect()
+            };
             for r in roots {
                 let settings = r.join("settings.json");
                 let changed = install::uninstall(&settings)?;
-                println!("{}: {}", settings.display(), if changed { "hooks removed" } else { "nothing to remove" });
+                println!(
+                    "{}: {}",
+                    settings.display(),
+                    if changed {
+                        "hooks removed"
+                    } else {
+                        "nothing to remove"
+                    }
+                );
             }
             Ok(())
         }
@@ -188,7 +241,10 @@ fn run(cli: Cli) -> Result<()> {
                 let map = slug::map_from_history(root);
                 println!("[{}] {}", root.label, root.path.display());
                 for (s, paths) in map {
-                    println!("  {s}  ->  {}", paths.into_iter().collect::<Vec<_>>().join(" | "));
+                    println!(
+                        "  {s}  ->  {}",
+                        paths.into_iter().collect::<Vec<_>>().join(" | ")
+                    );
                 }
             }
             Ok(())
@@ -196,7 +252,10 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Config => {
             let cfg = Config::load()?;
             println!("{}", toml::to_string_pretty(&cfg)?);
-            println!("# config file: {}", memvc_core::config::config_path().display());
+            println!(
+                "# config file: {}",
+                memvc_core::config::config_path().display()
+            );
             Ok(())
         }
     }
@@ -222,7 +281,9 @@ fn cmd_init(no_backfill: bool, dry_run: bool, group_window: i64) -> Result<()> {
                 Entry::Memory { slug: s } => {
                     let n = count_files(&src);
                     total_files += n;
-                    let real = slug::resolve(&map, s).map(|p| slug::display_path(&p)).unwrap_or_else(|| "(unresolved)".into());
+                    let real = slug::resolve(&map, s)
+                        .map(|p| slug::display_path(&p))
+                        .unwrap_or_else(|| "(unresolved)".into());
                     println!("  memory {real:<48} {n:>3} files   {s}");
                 }
             }
@@ -253,7 +314,10 @@ fn cmd_init(no_backfill: bool, dry_run: bool, group_window: i64) -> Result<()> {
     } else if !no_backfill {
         println!("repo already has commits; skipping backfill (run `memvc backfill` explicitly to append)");
     }
-    let attrib = Attribution { event: "import".into(), ..Default::default() };
+    let attrib = Attribution {
+        event: "import".into(),
+        ..Default::default()
+    };
     let o = sweep::sweep(&cfg, &attrib)?;
     if o.committed {
         println!("import: committed {} ({})", o.sha, o.shortstat);
@@ -272,20 +336,52 @@ fn cmd_status(n: usize) -> Result<()> {
         println!("not initialised (run memvc init)");
         return Ok(());
     }
-    println!("head: {}", git.head_short().unwrap_or_else(|_| "none".into()));
-    let last_sweep = state.mtime("last-sweep").map(fmt_time).unwrap_or_else(|| "never".into());
+    println!(
+        "head: {}",
+        git.head_short().unwrap_or_else(|_| "none".into())
+    );
+    let last_sweep = state
+        .mtime("last-sweep")
+        .map(fmt_time)
+        .unwrap_or_else(|| "never".into());
     println!("last sweep: {last_sweep}");
     if git.has_remote("origin") {
-        let last_push = state.mtime("last-push").map(fmt_time).unwrap_or_else(|| "never".into());
-        println!("origin: ahead by {} commit(s); last push {}", git.ahead_of("origin"), last_push);
+        let last_push = state
+            .mtime("last-push")
+            .map(fmt_time)
+            .unwrap_or_else(|| "never".into());
+        println!(
+            "origin: ahead by {} commit(s); last push {}",
+            git.ahead_of("origin"),
+            last_push
+        );
     } else {
         println!("origin: none configured");
     }
-    println!("dirty marker: {}", if state.exists("dirty") { "set (sweep pending at next Stop)" } else { "clear" });
+    println!(
+        "dirty marker: {}",
+        if state.exists("dirty") {
+            "set (sweep pending at next Stop)"
+        } else {
+            "clear"
+        }
+    );
     let events = state.read_events();
     println!("recent events:");
     for ev in events.iter().rev().take(n) {
-        println!("  {}  {:<12} {:<12} {:<8} {} {}", &ev.ts[..19.min(ev.ts.len())], ev.kind, ev.event, ev.account, ev.sha, if ev.files.is_empty() { ev.message.clone() } else { format!("{} files", ev.files.len()) });
+        println!(
+            "  {}  {:<12} {:<12} {:<8} {} {}",
+            &ev.ts[..19.min(ev.ts.len())],
+            ev.kind,
+            ev.event,
+            ev.account,
+            ev.sha,
+            if ev.files.is_empty() {
+                ev.message.clone()
+            } else {
+                format!("{} files", ev.files.len())
+            }
+        );
     }
     Ok(())
 }
@@ -295,11 +391,22 @@ fn fmt_time(t: std::time::SystemTime) -> String {
 }
 
 fn chrono_fmt(t: std::time::SystemTime) -> String {
-    let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let ago = std::time::SystemTime::now().duration_since(t).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = t
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let ago = std::time::SystemTime::now()
+        .duration_since(t)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     format!("{} ({}s ago)", secs, ago)
 }
 
 fn count_files(dir: &std::path::Path) -> usize {
-    walkdir::WalkDir::new(dir).follow_links(true).into_iter().filter_map(|e| e.ok()).filter(|e| e.file_type().is_file()).count()
+    walkdir::WalkDir::new(dir)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .count()
 }

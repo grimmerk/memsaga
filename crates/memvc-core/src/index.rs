@@ -19,9 +19,20 @@ pub fn write_index(cfg: &Config, scope: &Scope) -> Result<()> {
     for root in &cfg.roots {
         let map = slug::map_from_history(root);
         let entries = scope.entries(root);
-        writeln!(md, "## {} (`{}`)\n", root.label, slug::display_path(&root.path.to_string_lossy()))?;
-        let files: Vec<_> = entries.iter().filter(|e| matches!(e, Entry::File { .. })).collect();
-        let dirs: Vec<_> = entries.iter().filter(|e| matches!(e, Entry::Dir { .. })).collect();
+        writeln!(
+            md,
+            "## {} (`{}`)\n",
+            root.label,
+            slug::display_path(&root.path.to_string_lossy())
+        )?;
+        let files: Vec<_> = entries
+            .iter()
+            .filter(|e| matches!(e, Entry::File { .. }))
+            .collect();
+        let dirs: Vec<_> = entries
+            .iter()
+            .filter(|e| matches!(e, Entry::Dir { .. }))
+            .collect();
         if !files.is_empty() || !dirs.is_empty() {
             let mut items = Vec::new();
             for e in files.iter().chain(dirs.iter()) {
@@ -59,7 +70,10 @@ pub fn write_index(cfg: &Config, scope: &Scope) -> Result<()> {
         paths.insert(root.label.clone(), per_root);
     }
     std::fs::write(cfg.repo.join("index.md"), md)?;
-    std::fs::write(cfg.repo.join("paths.json"), serde_json::to_string_pretty(&paths)? + "\n")?;
+    std::fs::write(
+        cfg.repo.join("paths.json"),
+        serde_json::to_string_pretty(&paths)? + "\n",
+    )?;
     Ok(())
 }
 
@@ -79,7 +93,11 @@ fn dir_stats(dir: &Path) -> (usize, String) {
         }
     }
     let when = newest
-        .map(|t| chrono::DateTime::<chrono::Local>::from(t).format("%Y-%m-%d").to_string())
+        .map(|t| {
+            chrono::DateTime::<chrono::Local>::from(t)
+                .format("%Y-%m-%d")
+                .to_string()
+        })
         .unwrap_or_default();
     (count, when)
 }
