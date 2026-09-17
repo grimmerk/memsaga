@@ -1,0 +1,22 @@
+[package]
+name = "memvc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "memvc CLI: hook entry point, sweep, init, status, install."
+
+[[bin]]
+name = "memvc"
+path = "src/main.rs"
+
+[dependencies]
+memvc-core = { path = "../memvc-core" }
+anyhow.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+toml.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+assert_cmd = "2"
+tempfile = "3"
