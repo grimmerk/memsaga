@@ -8,8 +8,8 @@ commit. Multiple config directories (accounts) are supported, and the first
 `init` replays your session transcripts so the repo starts with weeks of
 history instead of a single snapshot.
 
-Status: personal tool, early. Design notes are kept privately alongside the
-mirrored data, not in this repo.
+Status: personal tool, early. Working notes (Traditional Chinese) in
+[`docs/design-zh-tw.md`](docs/design-zh-tw.md); an English version will precede any public release.
 
 ## How it works
 
