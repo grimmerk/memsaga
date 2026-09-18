@@ -10,7 +10,7 @@ use memvc_core::hook::{self, Action, HookInput};
 use memvc_core::roots::{Entry, Scope};
 use memvc_core::state::State;
 use memvc_core::sweep::{self, Attribution};
-use memvc_core::{backfill, install, slug};
+use memvc_core::{backfill, install, restore, skills, slug};
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -49,6 +49,24 @@ enum Cmd {
         #[arg(long, default_value_t = 120)]
         group_window: i64,
     },
+    /// Refresh the mirror and show what the next sweep would commit.
+    Diff {
+        /// Only a `--stat` summary instead of the full diff.
+        #[arg(long)]
+        stat: bool,
+    },
+    /// Copy one file from the repo's history back into its live location.
+    /// The only command that writes into a config directory.
+    Restore {
+        /// Repo-relative path (`claude/CLAUDE.md`) or the live path.
+        path: String,
+        /// Revision to restore from (default HEAD).
+        #[arg(long, default_value = "HEAD")]
+        at: String,
+        /// Skip the confirmation prompt.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
     /// Last sweeps, last push, repo state.
     Status {
         #[arg(short, default_value_t = 10)]
@@ -59,7 +77,8 @@ enum Cmd {
         #[arg(short, default_value_t = 20)]
         n: usize,
     },
-    /// Register hooks in each root's settings.json (all configured roots by default).
+    /// Register hooks in each root's settings.json (all configured roots by default),
+    /// and optionally install the bundled skills.
     Install {
         /// Only this root path (repeatable).
         #[arg(long)]
@@ -67,6 +86,15 @@ enum Cmd {
         /// Command to register (default: this executable's absolute path).
         #[arg(long)]
         bin: Option<String>,
+        /// Also write every bundled skill into each root's skills/ directory.
+        #[arg(long)]
+        skills: bool,
+        /// Write only this bundled skill (repeatable); implies --skills.
+        #[arg(long)]
+        skill: Vec<String>,
+        /// Do not touch settings.json (use with --skills / --skill).
+        #[arg(long)]
+        no_hooks: bool,
     },
     /// Remove memvc hooks from each root's settings.json.
     Uninstall {
@@ -160,13 +188,34 @@ fn run(cli: Cli) -> Result<()> {
             dry_run,
             group_window,
         } => cmd_init(no_backfill, dry_run, group_window),
+        Cmd::Diff { stat } => {
+            let cfg = Config::load()?;
+            let (status, diff) = sweep::pending(&cfg, stat)?;
+            if status.trim().is_empty() {
+                println!("no changes since the last commit");
+            } else {
+                print!("{status}");
+                if !diff.trim().is_empty() {
+                    println!();
+                    print!("{diff}");
+                }
+            }
+            Ok(())
+        }
+        Cmd::Restore { path, at, yes } => cmd_restore(&path, &at, yes),
         Cmd::Status { n } => cmd_status(n),
         Cmd::Log { n } => {
             let cfg = Config::load()?;
             print!("{}", Git::new(&cfg.repo).recent(n)?);
             Ok(())
         }
-        Cmd::Install { root, bin } => {
+        Cmd::Install {
+            root,
+            bin,
+            skills: all_skills,
+            skill,
+            no_hooks,
+        } => {
             let cfg = Config::load()?;
             let bin = match bin {
                 Some(b) => b,
@@ -179,18 +228,39 @@ fn run(cli: Cli) -> Result<()> {
                     .map(|p| expand_tilde(&p.to_string_lossy()))
                     .collect()
             };
+            let wanted: Vec<&skills::BundledSkill> = if !skill.is_empty() {
+                skill
+                    .iter()
+                    .map(|n| skills::find(n).with_context(|| format!("no bundled skill named {n}")))
+                    .collect::<Result<Vec<_>>>()?
+            } else if all_skills {
+                skills::BUNDLED.iter().collect()
+            } else {
+                Vec::new()
+            };
             for r in roots {
-                let settings = r.join("settings.json");
-                let changed = install::install(&settings, &bin, cfg.reporter)?;
-                println!(
-                    "{}: {}",
-                    settings.display(),
-                    if changed {
-                        "hooks registered"
-                    } else {
-                        "already registered"
-                    }
-                );
+                if !no_hooks {
+                    let settings = r.join("settings.json");
+                    let changed = install::install(&settings, &bin, cfg.reporter)?;
+                    println!(
+                        "{}: {}",
+                        settings.display(),
+                        if changed {
+                            "hooks registered"
+                        } else {
+                            "already registered"
+                        }
+                    );
+                }
+                for sk in &wanted {
+                    let changed = skills::install_into(&r, sk)?;
+                    println!(
+                        "{}/skills/{}: {}",
+                        r.display(),
+                        sk.name,
+                        if changed { "written" } else { "up to date" }
+                    );
+                }
             }
             Ok(())
         }
@@ -324,6 +394,41 @@ fn cmd_init(no_backfill: bool, dry_run: bool, group_window: i64) -> Result<()> {
     } else {
         println!("import: nothing new to commit");
     }
+    Ok(())
+}
+
+fn cmd_restore(path: &str, at: &str, yes: bool) -> Result<()> {
+    let cfg = Config::load()?;
+    let loc = restore::locate(&cfg, path)?;
+    restore::verify_destination(&cfg, &loc.live)?;
+    let candidate = restore::content_at(&cfg, &loc.repo_rel, at)?
+        .with_context(|| format!("{} does not exist at {at}", loc.repo_rel.display()))?;
+    let current = std::fs::read(&loc.live).ok();
+    if current.as_deref() == Some(candidate.as_slice()) {
+        println!("{} already matches {at}; nothing to do", loc.live.display());
+        return Ok(());
+    }
+    let diff = restore::diff_against_live(&cfg, &loc.live, &candidate)?;
+    print!("{diff}");
+    if !yes {
+        eprint!(
+            "Write this version of {} to {}? [y/N] ",
+            loc.repo_rel.display(),
+            loc.live.display()
+        );
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        if !matches!(answer.trim(), "y" | "Y" | "yes") {
+            println!("not restored");
+            return Ok(());
+        }
+    }
+    restore::write_live(&cfg, &loc, at, &candidate)?;
+    println!(
+        "restored {} from {at} ({} bytes); the next Stop commits the live state",
+        loc.live.display(),
+        candidate.len()
+    );
     Ok(())
 }
 

@@ -112,6 +112,76 @@ fn tree_newer_than(dir: &Path, marker: SystemTime) -> bool {
     false
 }
 
+/// Copy every root into the repo and regenerate the index, without touching
+/// git. Shared by `sweep` and `diff`. The caller holds the lock.
+pub fn refresh_mirror(cfg: &Config, scope: &Scope) -> Result<(usize, usize)> {
+    let mut copied = 0;
+    let mut deleted = 0;
+    for root in &cfg.roots {
+        if !root.path.is_dir() {
+            continue;
+        }
+        let s = mirror::sync_root(scope, root, &cfg.repo)
+            .with_context(|| format!("mirroring {}", root.path.display()))?;
+        copied += s.copied + s.linked;
+        deleted += s.deleted;
+    }
+    index::write_index(cfg, scope)?;
+    Ok((copied, deleted))
+}
+
+/// Refresh the mirror and return git's view of what a sweep would commit:
+/// `(status --short, diff)`; `stat_only` asks for `--stat` instead of a full diff.
+pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
+    let scope = Scope::new(cfg);
+    let git = Git::new(&cfg.repo);
+    if !git.is_repo() {
+        anyhow::bail!(
+            "{} is not a git repository; run `memvc init` first",
+            cfg.repo.display()
+        );
+    }
+    let state = State::new(cfg.state_dir());
+    let _guard = state.lock(Duration::from_secs(20)).context("sweep lock")?;
+    refresh_mirror(cfg, &scope)?;
+    // Stage into a throwaway index so new files show up in the diff without
+    // touching whatever the user may have staged in the real one.
+    let temp_index = |args: &[&str]| -> Result<String> {
+        let out = git.run_with_temp_index(args)?;
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    };
+    // The temp index is recreated per call, so add and diff must be one process each
+    // on the same file: use a tiny shell-free sequence through a fixed temp path.
+    let tmp = cfg
+        .repo
+        .join(".git")
+        .join(format!("memvc-index-{}", std::process::id()));
+    let real = cfg.repo.join(".git").join("index");
+    if real.exists() {
+        std::fs::copy(&real, &tmp)?;
+    }
+    let run = |args: &[&str]| -> Result<String> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&cfg.repo)
+            .env("GIT_INDEX_FILE", &tmp)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .args(args)
+            .output()?;
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    };
+    let _ = temp_index; // keep the helper for callers that need a single command
+    run(&["add", "-A", "--", "."])?;
+    let status = run(&["status", "--short"])?;
+    let diff = if stat_only {
+        run(&["diff", "--cached", "--stat"])?
+    } else {
+        run(&["diff", "--cached"])?
+    };
+    let _ = std::fs::remove_file(&tmp);
+    Ok((status, diff))
+}
+
 /// Mirror, index, commit. Returns what happened. Never writes into a root.
 pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let started = Instant::now();
@@ -127,18 +197,7 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let _guard = state.lock(Duration::from_secs(20)).context("sweep lock")?;
     let sweep_start = SystemTime::now();
 
-    let mut copied = 0;
-    let mut deleted = 0;
-    for root in &cfg.roots {
-        if !root.path.is_dir() {
-            continue;
-        }
-        let s = mirror::sync_root(&scope, root, &cfg.repo)
-            .with_context(|| format!("mirroring {}", root.path.display()))?;
-        copied += s.copied + s.linked;
-        deleted += s.deleted;
-    }
-    index::write_index(cfg, &scope)?;
+    let (copied, deleted) = refresh_mirror(cfg, &scope)?;
 
     let changed = git.add_all_and_check()?;
     let mut out = Outcome {

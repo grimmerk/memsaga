@@ -818,6 +818,17 @@ flowchart LR
 - Stop 的 fast path 不再 spawn `git status`，改成 stat 走訪使用者擁有的頂層目錄，40 ms 降到 24 ms。
 - settings.json 用 read-merge-write 加 `preserve_order`，key 順序不變；第一次安裝時順序被排序過，已用備份還原。
 
+## 14. 使用方式（給自己的速查，2026-09-18）
+
+- 平常什麼都不用做：有變動的輪次結尾會看到 `memvc: N files committed (sha)`。
+- `memvc status`：最後一次掃描、dirty 標記、push 狀態、最近事件。
+- `memvc diff`：看下一次會 commit 什麼（會刷新鏡像但不 commit）；`--stat` 只看摘要。
+- `memvc restore claude/projects/<slug>/memory/x.md --at <rev>`：先印 diff、問你 y/N，才寫回 live；`-y` 跳過詢問。路徑也可以直接給 live 的絕對路徑。刪掉的檔一樣能救回。
+- `memvc log`、`git -C ~/git/ccmem log -p --follow -- <路徑>`：看歷史；`memvc-history` skill 有更多查法。
+- `memvc install --skills`：把 binary 內建的 `memvc-history`、`companion-docs` 寫進各帳號的 `skills/`（`--skill <name>` 只裝一個，`--no-hooks` 不碰 settings.json）。
+- `memvc push`：立刻推；平常是 Stop 時每 10 分鐘最多一次、SessionEnd 一次。
+- 設定在 `~/.config/memvc/config.toml`，`memvc config` 印出生效值；工程細節在 `docs/architecture.md`（英文）。
+
 ## 附錄 A：量測數據
 
 - Transcript 統計：243 份（含 subagent）掃寫入方式；133 份主 transcript 算每輪負載。9,651 個 user turn、63,389 次工具呼叫、10,571 次 Write/Edit（17%）、每輪 1.10 次 Write/Edit（session 中位數 0.59）。
