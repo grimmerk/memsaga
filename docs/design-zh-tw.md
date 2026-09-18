@@ -273,7 +273,7 @@ flowchart TD
 2. `PostToolUse`：從 `tool_input.file_path` 判斷是否在任一 root 的 allowlist 內，不在就退出（25 ms）。
 3. `Stop`/`SessionEnd`：判斷「有沒有檔案比上次掃描新」。做法是每次掃描開始時 `touch` 一個空的標記檔 `.git/config-vc.last-sweep`，它的 mtime 就是「上次掃描時間」；下一次用 `[ 檔案 -nt 標記 ]`（單一檔案）和 `find 目錄 -newer 標記 -print -quit`（目錄，找到第一個就停）去問檔案系統有沒有任何東西在標記之後被改過。這只是幾個 `stat` 系統呼叫，不讀檔案內容，所以 32 ms。刪除也抓得到，因為刪檔會更新父目錄的 mtime。symlink 的目錄要用 trailing slash 讓 `find` 跟進去（實測沒有 slash 會漏）。
 4. 取 lock。lock 的用途是**互斥**：你同時開著好幾個 Claude session，它們的 hook 可能在同一秒各自啟動一個 script，若兩個同時 rsync 加 `git commit`，會撞 `index.lock` 或互相蓋掉。所以 script 先「佔位」，佔到的才做事，其他的等（最多 10 秒）或放棄。佔位用 `mkdir .git/config-vc.lock`：`mkdir` 在檔案系統層是 atomic，兩個 process 同時做只會有一個成功，這是 macOS 沒有 `flock` 指令時的標準替代。過期判定只在 `stat` 成功且超過 120 秒時才視為 stale（上一個 script 死掉沒清）；`stat` 失敗代表別人剛釋放，重試即可。原型第一版把 `stat` 失敗當 stale 而刪掉別人剛建的 lock，已修。
-5. 每個 root：`rsync -a --delete` allowlist 內的檔與目錄到 `<repo>/<root 名>/`，排除 `*.codev-bak*`、`*.codev-tmp-*`、`.DS_Store`；memory 目錄逐一 rsync 到 `<repo>/<root 名>/projects/<slug>/memory/`，空目錄跳過，來源消失的 slug 從 repo 移除。symlink 保留為 symlink。
+5. 每個 root：`rsync -a --delete` allowlist 內的檔與目錄到 `<repo>/<root 名>/`，排除 `*.codev-bak*`、`*.codev-tmp-*`、`.DS_Store`；memory 目錄逐一 rsync 到 `<repo>/<root 名>/memory/<slug>/`（2026-09-18 前是 `projects/<slug>/memory/`），空目錄跳過，來源消失的 slug 從 repo 移除。symlink 保留為 symlink。
 6. `git add -A`；無 diff 就更新標記並退出；有 diff 就 commit（`-c commit.gpgsign=false`，避免 1Password 在 hook 裡跳簽章提示）。
 7. 8 個 session 同時觸發的測試：嚴格序列化、1 個 commit 收齊 8 個檔、0 失敗、無殘留 lock。
 
@@ -330,7 +330,7 @@ flowchart TD
 
 ```
 git -C ~/git/claude-memory log --diff-filter=D --since='7 days ago' --name-only
-git -C ~/git/claude-memory show <sha>^:claude/projects/<slug>/memory/<file>.md
+git -C ~/git/claude-memory show <sha>^:claude/memory/<slug>/<file>.md   # 2026-09-18 前的 revision 是 claude/projects/<slug>/memory/
 ```
 
 原型測試 5 就是「Claude 用 Bash 刪 memory 檔，Stop 掃描後 commit 出 deletion」。兩種 layout 都適用；整個專案 memory 清空時該節點會被移除。
@@ -817,7 +817,7 @@ flowchart LR
 - 指出樹外的 symlink（`skills/agent-browser -> ../../.agents/...`）改寫成絕對路徑，repo 裡不會是斷的。
 - Stop 的 fast path 不再 spawn `git status`，改成 stat 走訪使用者擁有的頂層目錄，40 ms 降到 24 ms。
 - settings.json 用 read-merge-write 加 `preserve_order`，key 順序不變；第一次安裝時順序被排序過，已用備份還原。
-- repo 端的 memory 路徑從 `<label>/projects/<slug>/memory/` 改成 `<label>/memory/<slug>/`（2026-09-18，PR grimmerk/memsaga-private#3）：repo 裡不會有 transcript，`projects/` 這層只是照抄 live 的結構，拿掉後 kind 在前（`memory/`、`skills/`、`hooks/`），將來若鏡像別種東西就是再加一個頂層目錄。遷移是一個純 rename commit，`git log --follow` 跨得過去；升級後第一次掃描會自動把舊的 `projects/` 搬掉；`restore --at` 對舊 revision 會自動改查舊路徑。與官方目錄結構一致的好處只對會自己翻 repo 的人有意義，判斷不值得那一層。
+- repo 端的 memory 路徑從 `<label>/projects/<slug>/memory/` 改成 `<label>/memory/<slug>/`（2026-09-18，PR grimmerk/memsaga-private#3）：repo 裡不會有 transcript，`projects/` 這層只是照抄 live 的結構，拿掉後 kind 在前（`memory/`、`skills/`、`hooks/`），將來若鏡像別種東西就是再加一個頂層目錄。遷移是一個 commit（rename 加上重生成的 `index.md`），內容沒有同時大改的檔 `git log --follow` 跨得過去；升級後第一次 Stop 就會自動把舊的 `projects/` 搬掉（`needs_sweep` 看到它就掃）；`restore --at` 對舊 revision 會自動改查舊路徑。與官方目錄結構一致的好處只對會自己翻 repo 的人有意義，判斷不值得那一層。
 
 ## 14. 使用方式（給自己的速查，2026-09-18）
 

@@ -827,9 +827,14 @@ fn legacy_projects_layout_is_renamed_and_old_revisions_stay_restorable() {
     let legacy = git(&fx, &["rev-parse", "HEAD"]).trim().to_string();
     let before = commits(&fx);
 
-    // Any sweep moves it back; nothing in the live root changed.
-    run(&fx, &["sweep", "--event", "upgrade"]);
+    // A plain Stop moves it back even though nothing in the live root changed.
+    hook(&fx, &stop("s0"));
     assert_eq!(commits(&fx), before + 1);
+    let subject = git(&fx, &["log", "-1", "--format=%s"]);
+    assert!(
+        subject.contains("claude:memory:-h-git-a") && !subject.contains("claude:projects"),
+        "{subject}"
+    );
     let files = head_files(&fx);
     assert!(
         files.iter().any(|f| f == "claude/memory/-h-git-a/one.md"),
@@ -869,4 +874,31 @@ fn legacy_projects_layout_is_renamed_and_old_revisions_stay_restorable() {
     );
     assert!(out.contains("restored"), "{out}");
     assert_eq!(fs::read_to_string(&live).unwrap(), "fact\n");
+    // The old spelling is still accepted as input.
+    write(&live, "changed again\n");
+    hook(&fx, &stop("s2"));
+    let out = run(
+        &fx,
+        &[
+            "restore",
+            "claude/projects/-h-git-a/memory/one.md",
+            "--at",
+            &legacy,
+            "--yes",
+        ],
+    );
+    assert!(out.contains("restored"), "{out}");
+    assert_eq!(fs::read_to_string(&live).unwrap(), "fact\n");
+}
+
+#[test]
+fn dirs_may_not_name_memory_or_projects() {
+    let fx = fixture("turn", "dirs = [\"skills\", \"memory\"]\n");
+    let out = cmd(&fx).arg("config").output().unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("must not contain \"memory\""),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

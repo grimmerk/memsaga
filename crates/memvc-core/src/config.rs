@@ -122,6 +122,14 @@ impl Config {
         if cfg.roots.is_empty() {
             cfg.roots = discover_roots();
         }
+        for d in &cfg.dirs {
+            if d == "memory" || d == "projects" {
+                anyhow::bail!(
+                    "`dirs` must not contain {d:?}: per-project memory is mirrored by \
+                     `memory = true` into <label>/memory/, and projects/ holds transcripts"
+                );
+            }
+        }
         Ok(cfg)
     }
 

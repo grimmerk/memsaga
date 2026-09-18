@@ -84,8 +84,10 @@ Repo layout:
 ```
 
 Before 2026-09-18 memory was stored at `<label>/projects/<slug>/memory/`. The
-first sweep after upgrading moves it in one rename commit, `git log --follow`
-crosses the move, and `restore --at` reads older revisions from the old path.
+first sweep after upgrading moves it in one commit (renames plus the regenerated
+`index.md`); `git log --follow` crosses the move for every file whose content did
+not also change a lot in that same sweep, and `restore --at` reads older
+revisions from the old path regardless.
 
 ## Configuration
 
