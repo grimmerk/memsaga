@@ -1,4 +1,4 @@
-//! A thin wrapper over the system `git` binary. memvc deliberately spawns git
+//! A thin wrapper over the system `git` binary. memsaga deliberately spawns git
 //! instead of linking libgit2 so behaviour matches the user's own git
 //! configuration (credential helpers, hooks) while overriding exactly the two
 //! things a hook must never trigger: commit signing (a 1Password prompt would
@@ -130,7 +130,7 @@ impl<'a> Git<'a> {
         let tmp = self
             .repo
             .join(".git")
-            .join(format!("memvc-index-{}", std::process::id()));
+            .join(format!("memsaga-index-{}", std::process::id()));
         if index.exists() {
             std::fs::copy(&index, &tmp)?;
         }

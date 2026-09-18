@@ -1,6 +1,6 @@
-//! Registering memvc's hooks in a root's `settings.json`, read-merge-write:
+//! Registering memsaga's hooks in a root's `settings.json`, read-merge-write:
 //! every other key and every foreign hook entry is preserved; only entries
-//! whose command mentions `memvc` are ours. A backup `settings.json.memvc-bak`
+//! whose command mentions `memsaga` are ours. A backup `settings.json.memsaga-bak`
 //! is written before the first change. `uninstall` removes exactly our entries.
 
 use anyhow::{Context, Result};
@@ -33,7 +33,7 @@ fn is_ours(entry: &Value) -> bool {
             arr.iter().any(|h| {
                 h.get("command")
                     .and_then(|c| c.as_str())
-                    .map(|c| c.contains("memvc"))
+                    .map(|c| c.contains("memsaga"))
                     .unwrap_or(false)
             })
         })
@@ -124,7 +124,7 @@ fn read_settings(path: &Path) -> Result<Value> {
 fn write_settings(path: &Path, value: &Value) -> Result<()> {
     if path.exists() {
         let bak = path.with_file_name(format!(
-            "{}.memvc-bak",
+            "{}.memsaga-bak",
             path.file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default()
@@ -138,7 +138,7 @@ fn write_settings(path: &Path, value: &Value) -> Result<()> {
     }
     let text = serde_json::to_string_pretty(value)? + "\n";
     // Write to a temp file and rename so a concurrent reader never sees a torn file.
-    let tmp = path.with_extension("json.memvc-tmp");
+    let tmp = path.with_extension("json.memsaga-tmp");
     std::fs::write(&tmp, text)?;
     std::fs::rename(&tmp, path)?;
     Ok(())

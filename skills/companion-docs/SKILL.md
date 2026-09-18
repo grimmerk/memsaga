@@ -7,23 +7,23 @@ description: Where to put a translated or annotated companion of a document that
 
 A companion is a second file about the same document: a translation, a
 commentary, a summary in another language. It must not land in the source
-repository, so it lives in the memvc data repo, which commits it automatically
+repository, so it lives in the memsaga data repo, which commits it automatically
 at the end of the turn.
 
 ## Path convention
 
 ```
-<memvc repo>/companion/<repo name>/<path inside that repo>.<lang>.md
+<memsaga repo>/companion/<repo name>/<path inside that repo>.<lang>.md
 ```
 
-- `<memvc repo>` is the `repo` value of `memvc config` (default `~/git/ccmem`).
+- `<memsaga repo>` is the `repo` value of `memsaga config` (default `~/git/memories`).
 - `<repo name>` is the source repository's directory name under `~/git`
   (`webapp`, `docs`), not the GitHub full name.
 - `<path inside that repo>` keeps the source's relative path and extension,
   then adds the language tag: `docs/api.md` -> `docs/api.zh-tw.md`.
 
 Example: the companion of `~/git/webapp/docs/api.md` is
-`~/git/ccmem/companion/webapp/docs/api.zh-tw.md`.
+`~/git/memories/companion/webapp/docs/api.zh-tw.md`.
 
 ## Frontmatter
 
@@ -57,7 +57,7 @@ Get the source commit with `git -C <source repo> log -1 --format='%h %cI' -- <pa
    source so the two files can be read side by side.
 3. Do not add anything to the source repository, its `.gitignore`, or its
    docs; the companion is complete on its own.
-4. Nothing else to do: memvc commits `companion/` at the next `Stop`.
+4. Nothing else to do: memsaga commits `companion/` at the next `Stop`.
 
 ## When reading a document
 

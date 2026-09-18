@@ -1,5 +1,5 @@
 //! `restore`: copy one file from the repo's history back into a live config
-//! directory. This is the only place memvc ever writes into a root, and it
+//! directory. This is the only place memsaga ever writes into a root, and it
 //! does so only for a path inside the allowlist, only after showing the diff,
 //! and only with explicit confirmation (`--yes` or an interactive "y").
 //!
@@ -163,7 +163,7 @@ pub fn write_live(cfg: &Config, loc: &Located, rev: &str, candidate: &[u8]) -> R
         std::fs::create_dir_all(parent)?;
     }
     let tmp = dest.with_file_name(format!(
-        ".{}.memvc-restore-{}",
+        ".{}.memsaga-restore-{}",
         dest.file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default(),

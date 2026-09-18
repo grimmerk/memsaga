@@ -217,7 +217,7 @@ pub fn report(cfg: &Config) -> Option<String> {
     let files: usize = commits.iter().map(|e| e.files.len()).sum();
     let shas: Vec<&str> = commits.iter().map(|e| e.sha.as_str()).collect();
     Some(format!(
-        "memvc: {} file{} committed ({})",
+        "memsaga: {} file{} committed ({})",
         files,
         if files == 1 { "" } else { "s" },
         shas.join(", ")

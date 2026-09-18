@@ -1,4 +1,4 @@
-# memvc
+# memsaga
 
 Version control for what Claude Code learns and how you configure it.
 
@@ -8,8 +8,8 @@ and reads your skills, hooks and scripts from `~/.claude/`. None of that has
 history: two sessions editing the same file in one day leave no trace of the
 earlier version, and a memory clean-up that deletes or merges files is final.
 
-memvc gives those files a git history without changing where they live or how
-Claude Code writes them. A hook fires at the end of every turn, memvc copies
+memsaga gives those files a git history without changing where they live or how
+Claude Code writes them. A hook fires at the end of every turn, memsaga copies
 the allowlisted files into a private git repo and commits, one commit per turn,
 with the session that made the change recorded in the commit. Several config
 directories (accounts) are supported, and the first `init` replays your
@@ -26,9 +26,9 @@ Chinese) in [`docs/design-zh-tw.md`](docs/design-zh-tw.md).
 - Commits that say which session, working directory and account changed what.
 - A repo you can browse on GitHub or open as an Obsidian vault (memory files
   already use frontmatter and `[[wikilinks]]`).
-- `memvc restore` to bring back an earlier version, or a deleted file, after
+- `memsaga restore` to bring back an earlier version, or a deleted file, after
   seeing the diff.
-- History from before you installed memvc, replayed from transcripts.
+- History from before you installed memsaga, replayed from transcripts.
 
 Live files are never edited by the tool except through `restore`, which shows
 the diff and asks first.
@@ -36,11 +36,11 @@ the diff and asks first.
 ## Install
 
 ```sh
-cargo install --path crates/memvc --locked   # binary lands in ~/.cargo/bin
-memvc init --dry-run                          # what would be imported, how much history is replayable
-memvc init                                    # create the repo, backfill, import the current state
-memvc install                                 # register the hooks in each config directory
-memvc status                                  # last sweep, pending changes, recent events
+cargo install --path crates/memsaga --locked   # binary lands in ~/.cargo/bin
+memsaga init --dry-run                          # what would be imported, how much history is replayable
+memsaga init                                    # create the repo, backfill, import the current state
+memsaga install                                 # register the hooks in each config directory
+memsaga status                                  # last sweep, pending changes, recent events
 ```
 
 From then on nothing else is needed: every turn that changed something in
@@ -50,15 +50,15 @@ scope ends with a commit, and the terminal shows a one-line notice.
 
 | Command | What it does |
 |---|---|
-| `memvc status` | Last sweep, pending dirty marker, push state, recent events |
-| `memvc log` | Recent commits |
-| `memvc diff [--stat]` | What the next sweep would commit (refreshes the mirror, commits nothing) |
-| `memvc restore <path> [--at <rev>] [-y]` | Copy one file from history back to its live location, diff first |
-| `memvc sweep` | Mirror and commit now |
-| `memvc push` | Push to `origin` now (pushes also happen on `Stop`, throttled, and on `SessionEnd`) |
-| `memvc paths` | The slug → real-directory map |
-| `memvc install --skills` | Write the bundled skills (`memvc-history`, `companion-docs`) into each config directory |
-| `memvc uninstall` | Remove the hooks |
+| `memsaga status` | Last sweep, pending dirty marker, push state, recent events |
+| `memsaga log` | Recent commits |
+| `memsaga diff [--stat]` | What the next sweep would commit (refreshes the mirror, commits nothing) |
+| `memsaga restore <path> [--at <rev>] [-y]` | Copy one file from history back to its live location, diff first |
+| `memsaga sweep` | Mirror and commit now |
+| `memsaga push` | Push to `origin` now (pushes also happen on `Stop`, throttled, and on `SessionEnd`) |
+| `memsaga paths` | The slug → real-directory map |
+| `memsaga install --skills` | Write the bundled skills (`memsaga-history`, `companion-docs`) into each config directory |
+| `memsaga uninstall` | Remove the hooks |
 
 Paths for `restore` can be repo-relative (`claude/memory/<slug>/x.md`)
 or the live path.
@@ -91,11 +91,11 @@ revisions from the old path regardless.
 
 ## Configuration
 
-`~/.config/memvc/config.toml`; every key has a default and `memvc config`
+`~/.config/memsaga/config.toml`; every key has a default and `memsaga config`
 prints the effective values.
 
 ```toml
-repo = "~/git/ccmem"
+repo = "~/git/memories"
 files = ["CLAUDE.md"]
 dirs = ["skills", "hooks", "scripts"]
 memory = true
@@ -112,7 +112,7 @@ path = "~/.claude"
 label = "claude"
 ```
 
-Without `[[roots]]`, memvc reads codev's `~/.config/codev/accounts.json` if
+Without `[[roots]]`, memsaga reads codev's `~/.config/codev/accounts.json` if
 present, else uses `~/.claude`.
 
 ## Two accounts
@@ -126,7 +126,7 @@ trailer comes from `CLAUDE_CONFIG_DIR`.
 ## Tests
 
 `cargo test` runs behaviour tests that drive the real binary against fake
-config directories in a temp dir (`crates/memvc/tests/e2e.rs`) plus unit
+config directories in a temp dir (`crates/memsaga/tests/e2e.rs`) plus unit
 tests for pure logic. CI runs them on ubuntu and macOS with `cargo fmt --check`
 and `cargo clippy -D warnings`. `hook/config-vc.sh` is the original bash
 prototype, kept as a reference implementation.

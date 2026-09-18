@@ -817,18 +817,19 @@ flowchart LR
 - 指出樹外的 symlink（`skills/agent-browser -> ../../.agents/...`）改寫成絕對路徑，repo 裡不會是斷的。
 - Stop 的 fast path 不再 spawn `git status`，改成 stat 走訪使用者擁有的頂層目錄，40 ms 降到 24 ms。
 - settings.json 用 read-merge-write 加 `preserve_order`，key 順序不變；第一次安裝時順序被排序過，已用備份還原。
+- 改名（2026-09-18，PR grimmerk/memsaga-private#4）：工具 memvc → **memsaga**（CLI、crate、GitHub repo、`~/.config/memsaga/`、`.git/memsaga/`、環境變數 `MEMSAGA_*`、skill `memsaga-history`），資料 repo ccmem → **memories**（GitHub `grimmerk/memories`、本機 `~/git/memories`）。author 的理由：GitHub 上看到 `grimmerk/memories` 一眼懂；saga 是「一段記憶的長篇歷史」，跟 mem- 前綴成一對。本文件其他段落保留舊名，因為那是當時的紀錄。
 - repo 端的 memory 路徑從 `<label>/projects/<slug>/memory/` 改成 `<label>/memory/<slug>/`（2026-09-18，PR grimmerk/memsaga-private#3）：repo 裡不會有 transcript，`projects/` 這層只是照抄 live 的結構，拿掉後 kind 在前（`memory/`、`skills/`、`hooks/`），將來若鏡像別種東西就是再加一個頂層目錄。遷移是一個 commit（rename 加上重生成的 `index.md`），內容沒有同時大改的檔 `git log --follow` 跨得過去；升級後第一次 Stop 就會自動把舊的 `projects/` 搬掉（`needs_sweep` 看到它就掃）；`restore --at` 對舊 revision 會自動改查舊路徑。與官方目錄結構一致的好處只對會自己翻 repo 的人有意義，判斷不值得那一層。
 
 ## 14. 使用方式（給自己的速查，2026-09-18）
 
-- 平常什麼都不用做：有變動的輪次結尾會看到 `memvc: N files committed (sha)`。
-- `memvc status`：最後一次掃描、dirty 標記、push 狀態、最近事件。
-- `memvc diff`：看下一次會 commit 什麼（會刷新鏡像但不 commit）；`--stat` 只看摘要。
-- `memvc restore claude/memory/<slug>/x.md --at <rev>`：先印 diff、問你 y/N，才寫回 live；`-y` 跳過詢問。路徑也可以直接給 live 的絕對路徑。刪掉的檔一樣能救回。
-- `memvc log`、`git -C ~/git/ccmem log -p --follow -- <路徑>`：看歷史；`memvc-history` skill 有更多查法。
-- `memvc install --skills`：把 binary 內建的 `memvc-history`、`companion-docs` 寫進各帳號的 `skills/`（`--skill <name>` 只裝一個，`--no-hooks` 不碰 settings.json）。
-- `memvc push`：立刻推；平常是 Stop 時每 10 分鐘最多一次、SessionEnd 一次。
-- 設定在 `~/.config/memvc/config.toml`，`memvc config` 印出生效值；工程細節在 `docs/architecture.md`（英文）。
+- 平常什麼都不用做：有變動的輪次結尾會看到 `memsaga: N files committed (sha)`。
+- `memsaga status`：最後一次掃描、dirty 標記、push 狀態、最近事件。
+- `memsaga diff`：看下一次會 commit 什麼（會刷新鏡像但不 commit）；`--stat` 只看摘要。
+- `memsaga restore claude/memory/<slug>/x.md --at <rev>`：先印 diff、問你 y/N，才寫回 live；`-y` 跳過詢問。路徑也可以直接給 live 的絕對路徑。刪掉的檔一樣能救回。
+- `memsaga log`、`git -C ~/git/memories log -p --follow -- <路徑>`：看歷史；`memsaga-history` skill 有更多查法。
+- `memsaga install --skills`：把 binary 內建的 `memsaga-history`、`companion-docs` 寫進各帳號的 `skills/`（`--skill <name>` 只裝一個，`--no-hooks` 不碰 settings.json）。
+- `memsaga push`：立刻推；平常是 Stop 時每 10 分鐘最多一次、SessionEnd 一次。
+- 設定在 `~/.config/memsaga/config.toml`，`memsaga config` 印出生效值；工程細節在 `docs/architecture.md`（英文）。
 
 ## 附錄 A：量測數據
 
