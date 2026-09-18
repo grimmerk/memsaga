@@ -163,6 +163,7 @@ fn init_imports_allowlist_and_excludes_noise() {
         "claude-work/projects/-h-git-a/memory/w.md",
         "claude-work/CLAUDE.md",
         "claude-work/skills",
+        "claude/hooks/x.sh",
         "index.md",
         "paths.json",
         ".gitattributes",
@@ -178,7 +179,6 @@ fn init_imports_allowlist_and_excludes_noise() {
         "file-history",
         "plugins/",
         ".claude.json",
-        "hooks/x.sh",
         "-h-git-b",
     ] {
         assert!(
@@ -645,10 +645,23 @@ fn diff_shows_what_the_next_sweep_would_commit() {
     .unwrap();
     let out = run(&fx, &["diff", "--stat"]);
     assert!(out.contains("memory/one.md"), "{out}");
+    assert!(
+        !out.contains("+fact, now longer"),
+        "stat must not include the patch: {out}"
+    );
     let full = run(&fx, &["diff"]);
     assert!(full.contains("+fact, now longer"), "{full}");
-    // diff must not commit
+    // diff must not commit, and must not touch what the user staged in the real index
     assert_eq!(commits(&fx), 1);
+    write(&fx.repo.join("manual/staged.md"), "mine\n");
+    git(&fx, &["add", "manual/staged.md"]);
+    run(&fx, &["diff"]);
+    let staged = git(&fx, &["diff", "--cached", "--name-only"]);
+    assert_eq!(
+        staged.trim(),
+        "manual/staged.md",
+        "real index changed: {staged}"
+    );
 }
 
 #[test]
@@ -705,7 +718,35 @@ fn restore_writes_an_old_version_back_only_when_confirmed() {
         &["restore", live.to_str().unwrap(), "--at", "HEAD~1", "--yes"],
     );
     assert!(out.contains("restored"), "{out}");
-    assert!(live.exists());
+    assert_eq!(fs::read_to_string(&live).unwrap(), "fact\n");
+    // A directory is not restorable.
+    let dir_out = cmd(&fx)
+        .args(["restore", "claude/projects/-h-git-a/memory", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        !dir_out.status.success()
+            && String::from_utf8_lossy(&dir_out.stderr).contains("not a file")
+    );
+    // A live path that resolves outside every root (a skill dir symlinked away) is refused.
+    let outside = fx.claude.parent().unwrap().join("elsewhere/foo");
+    write(&outside.join("SKILL.md"), "outside\n");
+    fs::remove_dir_all(fx.claude.join("skills/foo")).unwrap();
+    std::os::unix::fs::symlink(&outside, fx.claude.join("skills/foo")).unwrap();
+    let esc = cmd(&fx)
+        .args(["restore", "claude/skills/foo/SKILL.md", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        !esc.status.success(),
+        "must refuse writing through an escaping symlink"
+    );
+    assert!(String::from_utf8_lossy(&esc.stderr).contains("outside every mirrored root"));
+    assert_eq!(
+        fs::read_to_string(outside.join("SKILL.md")).unwrap(),
+        "outside\n",
+        "nothing written outside"
+    );
     // Out-of-scope paths are refused before anything is written.
     let out = cmd(&fx)
         .args(["restore", "claude/settings.json", "--yes"])

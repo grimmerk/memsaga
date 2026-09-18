@@ -62,10 +62,45 @@ pub fn locate(cfg: &Config, input: &str) -> Result<Located> {
     Ok(Located { repo_rel: p, live })
 }
 
+/// Where a write to `live` would really land: the path with every symlink
+/// resolved (the file itself may not exist yet, so its parent is resolved).
+/// Refuses a destination outside every mirrored root, e.g. a skill directory
+/// that is a symlink into `~/.agents/`.
+pub fn verify_destination(cfg: &Config, live: &Path) -> Result<PathBuf> {
+    let resolved = if live.exists() {
+        std::fs::canonicalize(live)?
+    } else {
+        let parent = live.parent().context("live path has no parent")?;
+        let name = live.file_name().context("live path has no file name")?;
+        std::fs::canonicalize(parent)
+            .with_context(|| format!("{} does not exist", parent.display()))?
+            .join(name)
+    };
+    let inside = cfg.roots.iter().any(|r| {
+        std::fs::canonicalize(&r.path)
+            .map(|rp| resolved.starts_with(rp))
+            .unwrap_or(false)
+    });
+    if !inside {
+        bail!(
+            "{} resolves to {}, which is outside every mirrored root; refusing to write through it",
+            live.display(),
+            resolved.display()
+        );
+    }
+    Ok(resolved)
+}
+
 /// Content of `repo_rel` at `rev`, or None when it did not exist there.
+/// A directory (tree) at that path is an error, not content.
 pub fn content_at(cfg: &Config, repo_rel: &Path, rev: &str) -> Result<Option<Vec<u8>>> {
     let git = Git::new(&cfg.repo);
     let spec = format!("{rev}:{}", repo_rel.to_string_lossy());
+    match git.object_type(&spec)? {
+        None => return Ok(None),
+        Some(t) if t == "blob" => {}
+        Some(t) => bail!("{spec} is a {t}, not a file"),
+    }
     let out = git.run(&["show", &spec])?;
     if out.status.success() {
         Ok(Some(out.stdout))
@@ -78,7 +113,7 @@ pub fn content_at(cfg: &Config, repo_rel: &Path, rev: &str) -> Result<Option<Vec
 pub fn diff_against_live(cfg: &Config, live: &Path, candidate: &[u8]) -> Result<String> {
     let state = State::new(cfg.state_dir());
     state.ensure()?;
-    let tmp = state.marker("restore-candidate");
+    let tmp = state.marker(&format!("restore-candidate-{}", std::process::id()));
     std::fs::write(&tmp, candidate)?;
     let live_arg = if live.exists() {
         live.to_string_lossy().to_string()
@@ -107,12 +142,25 @@ pub fn diff_against_live(cfg: &Config, live: &Path, candidate: &[u8]) -> Result<
 /// Write `candidate` to the live path and record the event. The caller has
 /// already shown the diff and obtained confirmation.
 pub fn write_live(cfg: &Config, loc: &Located, rev: &str, candidate: &[u8]) -> Result<()> {
-    if let Some(parent) = loc.live.parent() {
+    let dest = verify_destination(cfg, &loc.live)?;
+    let state = State::new(cfg.state_dir());
+    // Hold the sweep lock so a concurrent Stop never mirrors a half-written file,
+    // and replace atomically for any other reader.
+    let _guard = state
+        .lock(std::time::Duration::from_secs(20))
+        .context("sweep lock")?;
+    if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&loc.live, candidate)
-        .with_context(|| format!("writing {}", loc.live.display()))?;
-    let state = State::new(cfg.state_dir());
+    let tmp = dest.with_file_name(format!(
+        ".{}.memvc-restore-{}",
+        dest.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        std::process::id()
+    ));
+    std::fs::write(&tmp, candidate).with_context(|| format!("writing {}", tmp.display()))?;
+    std::fs::rename(&tmp, &dest).with_context(|| format!("writing {}", dest.display()))?;
     // The live file now differs from the mirror: make sure the next Stop commits it.
     state.write_dirty(&format!(
         "{} restore {} {}",

@@ -144,15 +144,41 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
     let state = State::new(cfg.state_dir());
     let _guard = state.lock(Duration::from_secs(20)).context("sweep lock")?;
     refresh_mirror(cfg, &scope)?;
-    // Stage so new files show up in the diff too, then leave the index as is:
-    // the next sweep re-adds everything anyway.
-    git.run_ok(&["add", "-A", "--", "."])?;
-    let status = git.run_ok(&["status", "--short"])?;
-    let diff = if stat_only {
-        git.run_ok(&["diff", "--cached", "--stat"])?
-    } else {
-        git.run_ok(&["diff", "--cached"])?
+    // Stage into a throwaway index so new files show up in the diff without
+    // touching whatever the user may have staged in the real one.
+    let temp_index = |args: &[&str]| -> Result<String> {
+        let out = git.run_with_temp_index(args)?;
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
     };
+    // The temp index is recreated per call, so add and diff must be one process each
+    // on the same file: use a tiny shell-free sequence through a fixed temp path.
+    let tmp = cfg
+        .repo
+        .join(".git")
+        .join(format!("memvc-index-{}", std::process::id()));
+    let real = cfg.repo.join(".git").join("index");
+    if real.exists() {
+        std::fs::copy(&real, &tmp)?;
+    }
+    let run = |args: &[&str]| -> Result<String> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&cfg.repo)
+            .env("GIT_INDEX_FILE", &tmp)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .args(args)
+            .output()?;
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    };
+    let _ = temp_index; // keep the helper for callers that need a single command
+    run(&["add", "-A", "--", "."])?;
+    let status = run(&["status", "--short"])?;
+    let diff = if stat_only {
+        run(&["diff", "--cached", "--stat"])?
+    } else {
+        run(&["diff", "--cached"])?
+    };
+    let _ = std::fs::remove_file(&tmp);
     Ok((status, diff))
 }
 

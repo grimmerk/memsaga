@@ -65,9 +65,9 @@ or the live path.
 
 ## What is mirrored
 
-Per config directory (root): `CLAUDE.md`, `skills/`, `hooks/`, `scripts/`, and
-every non-empty `projects/<slug>/memory/`. Never: transcripts, `settings.json`
-(opt-in), `~/.claude.json`, caches, `file-history`, plugins, and Claude Code's
+Per config directory (root), by default: `CLAUDE.md`, `skills/`, `hooks/`,
+`scripts/`, and every non-empty `projects/<slug>/memory/`; `settings.json` is
+opt-in (`files = ["CLAUDE.md", "settings.json"]`). Never: transcripts, `~/.claude.json`, caches, `file-history`, plugins, and Claude Code's
 own synced skills under `skills/synced/`.
 
 Repo layout:

@@ -37,6 +37,9 @@ pub fn install_into(root: &Path, skill: &BundledSkill) -> Result<bool> {
         }
     }
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-    std::fs::write(&path, skill.content).with_context(|| format!("writing {}", path.display()))?;
+    // Temp file + rename: Claude Code may be reading skills/ while we write.
+    let tmp = dir.join(format!(".{}.memvc-tmp", skill.name));
+    std::fs::write(&tmp, skill.content).with_context(|| format!("writing {}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).with_context(|| format!("writing {}", path.display()))?;
     Ok(true)
 }

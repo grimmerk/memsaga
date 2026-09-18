@@ -67,7 +67,7 @@ impl Default for Config {
             repo: expand_tilde("~/git/ccmem"),
             roots: Vec::new(),
             files: vec!["CLAUDE.md".into()],
-            dirs: vec!["skills".into()],
+            dirs: vec!["skills".into(), "hooks".into(), "scripts".into()],
             memory: true,
             exclude: vec![
                 "*.codev-bak*".into(),

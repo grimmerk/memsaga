@@ -400,6 +400,7 @@ fn cmd_init(no_backfill: bool, dry_run: bool, group_window: i64) -> Result<()> {
 fn cmd_restore(path: &str, at: &str, yes: bool) -> Result<()> {
     let cfg = Config::load()?;
     let loc = restore::locate(&cfg, path)?;
+    restore::verify_destination(&cfg, &loc.live)?;
     let candidate = restore::content_at(&cfg, &loc.repo_rel, at)?
         .with_context(|| format!("{} does not exist at {at}", loc.repo_rel.display()))?;
     let current = std::fs::read(&loc.live).ok();

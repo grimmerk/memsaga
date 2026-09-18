@@ -48,6 +48,6 @@ file may jump versions between two `backfill:` commits. The `import:` commit of
 ## Restoring
 
 Restoring writes into a live config directory, so: show the user the diff first, get an
-explicit yes, then copy the blob out of git into place, e.g.
-`git -C $R show <sha>:claude/projects/<slug>/memory/<file>.md > ~/.claude/projects/<slug>/memory/<file>.md`.
-Never `git checkout` inside `~/.claude`; it is not a git repo.
+explicit yes, then run `memvc restore claude/projects/<slug>/memory/<file>.md --at <sha>`,
+which shows the diff, asks, writes the file atomically and records a `restore` event so the
+next turn commits the restored state. Never `git checkout` inside `~/.claude`; it is not a git repo.

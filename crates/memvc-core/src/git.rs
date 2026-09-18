@@ -111,6 +111,39 @@ impl<'a> Git<'a> {
         self.head_short()
     }
 
+    /// `blob` / `tree` / `commit` for `<rev>:<path>`, or None when it does not exist.
+    pub fn object_type(&self, spec: &str) -> Result<Option<String>> {
+        let out = self.run(&["cat-file", "-t", spec])?;
+        if out.status.success() {
+            Ok(Some(
+                String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Run `git` with a throwaway copy of the index, so staging done for an
+    /// inspection (`diff`) never changes what the user has staged.
+    pub fn run_with_temp_index(&self, args: &[&str]) -> Result<Output> {
+        let index = self.repo.join(".git").join("index");
+        let tmp = self
+            .repo
+            .join(".git")
+            .join(format!("memvc-index-{}", std::process::id()));
+        if index.exists() {
+            std::fs::copy(&index, &tmp)?;
+        }
+        let out = self
+            .cmd()
+            .env("GIT_INDEX_FILE", &tmp)
+            .args(args)
+            .output()
+            .with_context(|| format!("running git {} (temp index)", args.join(" ")));
+        let _ = std::fs::remove_file(&tmp);
+        out
+    }
+
     pub fn head_short(&self) -> Result<String> {
         Ok(self
             .run_ok(&["rev-parse", "--short", "HEAD"])?
