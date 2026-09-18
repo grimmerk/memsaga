@@ -21,9 +21,13 @@ paths.json                                        slug -> real cwd, e.g. "-Users
 index.md                                          browsable table of every project
 ```
 
-Slug = the cwd with every non-alphanumeric character replaced by `-`. The memory for
-`~/git/webapp` is `claude/projects/-Users-me-git-webapp/memory/`; `~/git` itself is
-`claude/projects/-Users-me-git/memory/`.
+A project slug is a path with every non-alphanumeric character replaced by `-`. For
+transcripts that path is the cwd; for auto-memory since Claude Code 2.1.275 it is the git
+common dir, so every worktree and subdirectory of `~/git/webapp` shares
+`claude/projects/-Users-me-git-webapp/memory/`, and a non-repo directory such as
+`~/git` keeps its own (`claude/projects/-Users-me-git/memory/`). Older slugs such as
+`-Users-me-git-webapp-<worktree>-packages-api` are per-cwd leftovers from
+before that change; their files are still mirrored but no longer loaded.
 
 Commit messages carry trailers `Event:` (PostToolUse / Stop / SessionEnd / backfill / import),
 `Account:`, `Session:` (the Claude session id), `Cwd:`, `Agent:`.
