@@ -560,7 +560,7 @@ mod tests {
         // Unique per call: unit tests run in parallel threads of one process.
         static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let d = std::env::temp_dir().join(format!("memvc-bf-{}-{}", std::process::id(), n));
+        let d = std::env::temp_dir().join(format!("memsaga-bf-{}-{}", std::process::id(), n));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d

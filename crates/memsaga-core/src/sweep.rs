@@ -147,7 +147,7 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
     let git = Git::new(&cfg.repo);
     if !git.is_repo() {
         anyhow::bail!(
-            "{} is not a git repository; run `memvc init` first",
+            "{} is not a git repository; run `memsaga init` first",
             cfg.repo.display()
         );
     }
@@ -165,7 +165,7 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
     let tmp = cfg
         .repo
         .join(".git")
-        .join(format!("memvc-index-{}", std::process::id()));
+        .join(format!("memsaga-index-{}", std::process::id()));
     let real = cfg.repo.join(".git").join("index");
     if real.exists() {
         std::fs::copy(&real, &tmp)?;
@@ -199,7 +199,7 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let git = Git::new(&cfg.repo);
     if !git.is_repo() {
         anyhow::bail!(
-            "{} is not a git repository; run `memvc init` first",
+            "{} is not a git repository; run `memsaga init` first",
             cfg.repo.display()
         );
     }

@@ -1,4 +1,4 @@
-//! Small state files under `<repo>/.git/memvc/`. Nothing here is versioned.
+//! Small state files under `<repo>/.git/memsaga/`. Nothing here is versioned.
 //!
 //! - `lock`: exclusive advisory lock (flock) held during a sweep.
 //!   Several Claude sessions fire hooks at the same moment; the
@@ -11,7 +11,7 @@
 //!   the turn; the Stop sweep consumes it.
 //! - `events.jsonl`: one JSON object per sweep or push; `status` reads it.
 //! - `last-push`: mtime = last successful push (throttling).
-//! - `memvc.log`: free-form log lines for debugging.
+//! - `memsaga.log`: free-form log lines for debugging.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -137,7 +137,7 @@ impl State {
         if let Ok(mut f) = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(self.marker("memvc.log"))
+            .open(self.marker("memsaga.log"))
         {
             let _ = writeln!(f, "{} {}", now_rfc3339(), line);
         }

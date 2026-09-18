@@ -1,16 +1,16 @@
 [package]
-name = "memvc"
+name = "memsaga"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "memvc CLI: hook entry point, sweep, init, status, install."
+description = "memsaga CLI: hook entry point, sweep, init, status, install."
 
 [[bin]]
-name = "memvc"
+name = "memsaga"
 path = "src/main.rs"
 
 [dependencies]
-memvc-core = { path = "../memvc-core" }
+memsaga-core = { path = "../memsaga-core" }
 anyhow.workspace = true
 serde_json.workspace = true
 clap.workspace = true

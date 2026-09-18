@@ -1,22 +1,22 @@
-//! memvc CLI. `hook` and `report` are what Claude Code calls; the rest is for
+//! memsaga CLI. `hook` and `report` are what Claude Code calls; the rest is for
 //! humans. `hook` and `report` always exit 0: a hook that fails must never
 //! become a failed tool call in someone's session.
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use memvc_core::config::{expand_tilde, Config};
-use memvc_core::git::Git;
-use memvc_core::hook::{self, Action, HookInput};
-use memvc_core::roots::{Entry, Scope};
-use memvc_core::state::State;
-use memvc_core::sweep::{self, Attribution};
-use memvc_core::{backfill, install, restore, skills, slug};
+use memsaga_core::config::{expand_tilde, Config};
+use memsaga_core::git::Git;
+use memsaga_core::hook::{self, Action, HookInput};
+use memsaga_core::roots::{Entry, Scope};
+use memsaga_core::state::State;
+use memsaga_core::sweep::{self, Attribution};
+use memsaga_core::{backfill, install, restore, skills, slug};
 use std::io::Read;
 use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
-    name = "memvc",
+    name = "memsaga",
     version,
     about = "Version control for Claude Code memory and config"
 )]
@@ -96,7 +96,7 @@ enum Cmd {
         #[arg(long)]
         no_hooks: bool,
     },
-    /// Remove memvc hooks from each root's settings.json.
+    /// Remove memsaga hooks from each root's settings.json.
     Uninstall {
         #[arg(long)]
         root: Vec<PathBuf>,
@@ -119,7 +119,7 @@ fn main() {
     let code = match run(cli) {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("memvc: {e:#}");
+            eprintln!("memsaga: {e:#}");
             1
         }
     };
@@ -324,7 +324,7 @@ fn run(cli: Cli) -> Result<()> {
             println!("{}", toml::to_string_pretty(&cfg)?);
             println!(
                 "# config file: {}",
-                memvc_core::config::config_path().display()
+                memsaga_core::config::config_path().display()
             );
             Ok(())
         }
@@ -382,7 +382,7 @@ fn cmd_init(no_backfill: bool, dry_run: bool, group_window: i64) -> Result<()> {
         let r = backfill::backfill(&cfg, group_window).context("backfill")?;
         println!("backfill: {} ops -> {} commits ({} versions known, {} unknown, {} failed calls dropped)", r.ops, r.commits, r.known_versions, r.unknown_versions, r.failed_dropped);
     } else if !no_backfill {
-        println!("repo already has commits; skipping backfill (run `memvc backfill` explicitly to append)");
+        println!("repo already has commits; skipping backfill (run `memsaga backfill` explicitly to append)");
     }
     let attrib = Attribution {
         event: "import".into(),
@@ -438,7 +438,7 @@ fn cmd_status(n: usize) -> Result<()> {
     let state = State::new(cfg.state_dir());
     println!("repo: {}", cfg.repo.display());
     if !git.is_repo() {
-        println!("not initialised (run memvc init)");
+        println!("not initialised (run memsaga init)");
         return Ok(());
     }
     println!(

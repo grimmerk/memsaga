@@ -1,9 +1,9 @@
 //! Configuration: which roots to mirror, into which repo, with what allowlist.
 //!
-//! Resolution order for the config file: `MEMVC_CONFIG` env var, else
-//! `~/.config/memvc/config.toml`. A missing file is fine: every field has a
-//! default. Env overrides (used by tests and one-off runs): `MEMVC_REPO`,
-//! `MEMVC_ROOTS` (colon-separated paths).
+//! Resolution order for the config file: `MEMSAGA_CONFIG` env var, else
+//! `~/.config/memsaga/config.toml`. A missing file is fine: every field has a
+//! default. Env overrides (used by tests and one-off runs): `MEMSAGA_REPO`,
+//! `MEMSAGA_ROOTS` (colon-separated paths).
 //!
 //! Roots are discovered when the file names none: codev's account registry
 //! (`~/.config/codev/accounts.json`) if present, else `~/.claude`. codev is an
@@ -64,7 +64,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            repo: expand_tilde("~/git/ccmem"),
+            repo: expand_tilde("~/git/memories"),
             roots: Vec::new(),
             files: vec!["CLAUDE.md".into()],
             dirs: vec!["skills".into(), "hooks".into(), "scripts".into()],
@@ -103,10 +103,10 @@ impl Config {
                 r.label = label_for(&r.path);
             }
         }
-        if let Ok(v) = std::env::var("MEMVC_REPO") {
+        if let Ok(v) = std::env::var("MEMSAGA_REPO") {
             cfg.repo = expand_tilde(&v);
         }
-        if let Ok(v) = std::env::var("MEMVC_ROOTS") {
+        if let Ok(v) = std::env::var("MEMSAGA_ROOTS") {
             cfg.roots = v
                 .split(':')
                 .filter(|s| !s.is_empty())
@@ -143,19 +143,19 @@ impl Config {
         self.roots.iter().find(|r| r.path == dir)
     }
 
-    /// Where memvc keeps its own state inside the repo.
+    /// Where memsaga keeps its own state inside the repo.
     pub fn state_dir(&self) -> PathBuf {
-        self.repo.join(".git").join("memvc")
+        self.repo.join(".git").join("memsaga")
     }
 }
 
 pub fn config_path() -> PathBuf {
-    if let Ok(v) = std::env::var("MEMVC_CONFIG") {
+    if let Ok(v) = std::env::var("MEMSAGA_CONFIG") {
         return PathBuf::from(v);
     }
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/"))
-        .join(".config/memvc/config.toml")
+        .join(".config/memsaga/config.toml")
 }
 
 /// `.claude` -> `claude`, `.claude-work` -> `claude-work`, `foo` -> `foo`.

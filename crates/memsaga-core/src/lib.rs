@@ -1,8 +1,8 @@
-//! memvc-core: everything memvc does, as a library.
+//! memsaga-core: everything memsaga does, as a library.
 //!
 //! The mental model, in one paragraph: a set of *roots* (Claude Code config
 //! directories such as `~/.claude`) contain files we want under version control
-//! (global CLAUDE.md, per-project auto-memory, skills). memvc never edits those
+//! (global CLAUDE.md, per-project auto-memory, skills). memsaga never edits those
 //! live files. It copies an allowlisted subset into a *mirror* git repo, one
 //! subtree per root, and commits whenever something changed. Claude Code hooks
 //! call `hook` with a JSON event on stdin; `sweep` is the copy-and-commit step;
@@ -15,7 +15,7 @@
 //! - `slug`     Claude Code's project-directory encoding and the reverse map
 //! - `mirror`   copying a root into its repo subtree (rsync-like, one way)
 //! - `git`      thin wrapper around the system `git` binary
-//! - `state`    small files under `.git/memvc/`: lock, markers, events log
+//! - `state`    small files under `.git/memsaga/`: lock, markers, events log
 //! - `sweep`    the orchestration: lock, mirror, index, commit, events
 //! - `hook`     parsing a hook event and deciding what to do
 //! - `index`    `index.md` and `paths.json` generation

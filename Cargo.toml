@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/memvc-core", "crates/memvc"]
+members = ["crates/memsaga-core", "crates/memsaga"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/grimmerk/memvc"
+repository = "https://github.com/grimmerk/memsaga"
 
 [workspace.dependencies]
 anyhow = "1"

@@ -1,4 +1,4 @@
-//! Behaviour tests: run the real `memvc` binary against fake Claude config
+//! Behaviour tests: run the real `memsaga` binary against fake Claude config
 //! directories in a temp dir, feed it hook JSON on stdin, and inspect the git
 //! repo it produces. Nothing here looks at implementation details; the same
 //! cases can be run against any implementation that keeps the CLI contract.
@@ -77,8 +77,8 @@ fn fixture(granularity: &str, extra_toml: &str) -> Fx {
 }
 
 fn cmd(fx: &Fx) -> Command {
-    let mut c = Command::cargo_bin("memvc").unwrap();
-    c.env("MEMVC_CONFIG", &fx.cfg)
+    let mut c = Command::cargo_bin("memsaga").unwrap();
+    c.env("MEMSAGA_CONFIG", &fx.cfg)
         .env("CLAUDE_CONFIG_DIR", &fx.claude)
         .env("GIT_AUTHOR_NAME", "t")
         .env("GIT_AUTHOR_EMAIL", "t@t")
@@ -91,7 +91,7 @@ fn run(fx: &Fx, args: &[&str]) -> String {
     let out = cmd(fx).args(args).output().unwrap();
     assert!(
         out.status.success(),
-        "memvc {:?} failed: {}",
+        "memsaga {:?} failed: {}",
         args,
         String::from_utf8_lossy(&out.stderr)
     );
@@ -213,7 +213,7 @@ fn out_of_scope_edit_is_ignored() {
     fs::write(fx.claude.join("CLAUDE.md"), "# global\nmore\n").unwrap(); // dirty, but the hook is told about another file
     hook(&fx, &post_tool_use(Path::new("/h/git/a/src/foo.ts"), "s1"));
     assert_eq!(commits(&fx), 1);
-    assert!(!fx.repo.join(".git/memvc/dirty").exists());
+    assert!(!fx.repo.join(".git/memsaga/dirty").exists());
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn turn_granularity_batches_a_turn_into_one_commit() {
     fs::write(&b, "bbbb\n").unwrap();
     hook(&fx, &post_tool_use(&b, "s1"));
     assert_eq!(commits(&fx), 1, "no commit before Stop");
-    assert!(fx.repo.join(".git/memvc/dirty").exists());
+    assert!(fx.repo.join(".git/memsaga/dirty").exists());
     hook(&fx, &stop("s1"));
     assert_eq!(commits(&fx), 2, "exactly one commit at Stop");
     let files = git(&fx, &["show", "--name-only", "--format=", "HEAD"]);
@@ -256,7 +256,7 @@ fn turn_granularity_batches_a_turn_into_one_commit() {
         files.contains("-h-git-a/a.md") && files.contains("-h-git-a/b.md"),
         "{files}"
     );
-    assert!(!fx.repo.join(".git/memvc/dirty").exists());
+    assert!(!fx.repo.join(".git/memsaga/dirty").exists());
 }
 
 #[test]
@@ -291,10 +291,10 @@ fn concurrent_stop_hooks_lose_nothing() {
     for i in 0..8 {
         let f = fx.claude.join(format!("projects/-h-git-a/memory/c{i}.md"));
         fs::write(&f, format!("fact {i}\n")).unwrap();
-        let bin = assert_cmd::cargo::cargo_bin("memvc");
+        let bin = assert_cmd::cargo::cargo_bin("memsaga");
         let mut child = std::process::Command::new(bin)
             .arg("hook")
-            .env("MEMVC_CONFIG", &fx.cfg)
+            .env("MEMSAGA_CONFIG", &fx.cfg)
             .env("CLAUDE_CONFIG_DIR", &fx.claude)
             .env("GIT_AUTHOR_NAME", "t")
             .env("GIT_AUTHOR_EMAIL", "t@t")
@@ -327,7 +327,7 @@ fn concurrent_stop_hooks_lose_nothing() {
             "c{i}.md missing"
         );
     }
-    let log = fs::read_to_string(fx.repo.join(".git/memvc/memvc.log")).unwrap_or_default();
+    let log = fs::read_to_string(fx.repo.join(".git/memsaga/memsaga.log")).unwrap_or_default();
     assert!(!log.contains("error"), "errors logged:\n{log}");
 }
 
@@ -401,7 +401,7 @@ fn exclude_paths_prune_subtrees_and_outside_symlinks_become_absolute() {
         &post_tool_use(&fx.claude.join("skills/synced/docx/SKILL.md"), "s9"),
     );
     assert!(
-        !fx.repo.join(".git/memvc/dirty").exists(),
+        !fx.repo.join(".git/memsaga/dirty").exists(),
         "excluded path must not mark dirty"
     );
 }
@@ -482,7 +482,7 @@ fn reporter_prints_once_per_batch_of_commits() {
     run(&fx, &["init", "--no-backfill"]);
     let first = run(&fx, &["report"]); // consumes the import commit event
     assert!(
-        first.contains("systemMessage") && first.contains("memvc:"),
+        first.contains("systemMessage") && first.contains("memsaga:"),
         "{first}"
     );
     let again = run(&fx, &["report"]);
@@ -502,7 +502,7 @@ fn install_and_uninstall_preserve_foreign_hooks() {
     let fx = fixture("turn", "");
     let settings = fx.claude.join("settings.json");
     fs::write(&settings, r#"{"model":"x","hooks":{"Stop":[{"hooks":[{"type":"command","command":"/other/status.sh","timeout":5}]}]}}"#).unwrap();
-    let out = run(&fx, &["install", "--bin", "/usr/local/bin/memvc"]);
+    let out = run(&fx, &["install", "--bin", "/usr/local/bin/memsaga"]);
     assert!(out.contains("hooks registered"), "{out}");
     let v: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
@@ -523,16 +523,16 @@ fn install_and_uninstall_preserve_foreign_hooks() {
         stop_cmds.contains(&"/other/status.sh".to_string()),
         "foreign hook lost: {stop_cmds:?}"
     );
-    assert!(stop_cmds.contains(&"/usr/local/bin/memvc hook".to_string()));
-    assert!(stop_cmds.contains(&"/usr/local/bin/memvc report".to_string()));
+    assert!(stop_cmds.contains(&"/usr/local/bin/memsaga hook".to_string()));
+    assert!(stop_cmds.contains(&"/usr/local/bin/memsaga report".to_string()));
     assert_eq!(
         v["hooks"]["PostToolUse"][0]["matcher"],
         "Write|Edit|MultiEdit|NotebookEdit"
     );
     assert_eq!(v["hooks"]["PostToolUse"][0]["hooks"][0]["async"], true);
     assert!(v["hooks"]["SessionEnd"].is_array());
-    assert!(fx.claude.join("settings.json.memvc-bak").exists());
-    let out2 = run(&fx, &["install", "--bin", "/usr/local/bin/memvc"]);
+    assert!(fx.claude.join("settings.json.memsaga-bak").exists());
+    let out2 = run(&fx, &["install", "--bin", "/usr/local/bin/memsaga"]);
     assert!(out2.contains("already registered"), "{out2}");
     let out3 = run(&fx, &["uninstall"]);
     assert!(out3.contains("hooks removed"), "{out3}");
@@ -700,7 +700,7 @@ fn restore_writes_an_old_version_back_only_when_confirmed() {
     );
     assert!(out.contains("restored"), "{out}");
     assert_eq!(fs::read_to_string(&live).unwrap(), "fact\n");
-    assert!(fx.repo.join(".git/memvc/dirty").exists());
+    assert!(fx.repo.join(".git/memsaga/dirty").exists());
     hook(&fx, &stop("s1"));
     assert_eq!(
         commits(&fx),
@@ -772,11 +772,11 @@ fn install_skills_writes_bundled_skills_without_touching_hooks() {
         ],
     );
     assert!(
-        out.contains("skills/memvc-history: written")
+        out.contains("skills/memsaga-history: written")
             && out.contains("skills/companion-docs: written"),
         "{out}"
     );
-    assert!(fx.claude.join("skills/memvc-history/SKILL.md").exists());
+    assert!(fx.claude.join("skills/memsaga-history/SKILL.md").exists());
     assert!(
         fs::read_to_string(fx.claude.join("skills/companion-docs/SKILL.md"))
             .unwrap()
@@ -794,12 +794,12 @@ fn install_skills_writes_bundled_skills_without_touching_hooks() {
             "--root",
             fx.claude.to_str().unwrap(),
             "--skill",
-            "memvc-history",
+            "memsaga-history",
             "--no-hooks",
         ],
     );
     assert!(
-        again.contains("memvc-history: up to date") && !again.contains("companion-docs"),
+        again.contains("memsaga-history: up to date") && !again.contains("companion-docs"),
         "{again}"
     );
     let bad = cmd(&fx)

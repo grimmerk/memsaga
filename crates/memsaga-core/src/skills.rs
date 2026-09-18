@@ -1,4 +1,4 @@
-//! Skills shipped with the binary. `memvc install --skills` writes them into a
+//! Skills shipped with the binary. `memsaga install --skills` writes them into a
 //! root's `skills/` directory so Claude Code can find them; the source of
 //! truth is `skills/<name>/SKILL.md` in this repository, compiled in at build
 //! time so a single binary carries everything it needs.
@@ -13,8 +13,8 @@ pub struct BundledSkill {
 
 pub const BUNDLED: &[BundledSkill] = &[
     BundledSkill {
-        name: "memvc-history",
-        content: include_str!("../../../skills/memvc-history/SKILL.md"),
+        name: "memsaga-history",
+        content: include_str!("../../../skills/memsaga-history/SKILL.md"),
     },
     BundledSkill {
         name: "companion-docs",
@@ -38,7 +38,7 @@ pub fn install_into(root: &Path, skill: &BundledSkill) -> Result<bool> {
     }
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     // Temp file + rename: Claude Code may be reading skills/ while we write.
-    let tmp = dir.join(format!(".{}.memvc-tmp", skill.name));
+    let tmp = dir.join(format!(".{}.memsaga-tmp", skill.name));
     std::fs::write(&tmp, skill.content).with_context(|| format!("writing {}", tmp.display()))?;
     std::fs::rename(&tmp, &path).with_context(|| format!("writing {}", path.display()))?;
     Ok(true)

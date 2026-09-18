@@ -1,4 +1,4 @@
-# memvc architecture
+# memsaga architecture
 
 Engineering notes for contributors. The user-facing description is the
 [README](../README.md); the Traditional Chinese design history is
@@ -10,22 +10,22 @@ A *root* is a Claude Code config directory (`~/.claude`, or any directory
 launched with `CLAUDE_CONFIG_DIR`). Each root holds files worth versioning
 (global `CLAUDE.md`, per-project auto-memory under `projects/<slug>/memory/`,
 `skills/`, `hooks/`, `scripts/`) next to a lot that is not (transcripts,
-caches, OAuth state). memvc never edits a root. It copies an allowlist from
+caches, OAuth state). memsaga never edits a root. It copies an allowlist from
 every root into a *mirror* git repo, one subtree per root, and commits when the
 copy differs from HEAD. Claude Code hooks trigger it; a transcript replay gives
-the repo history from before memvc existed.
+the repo history from before memsaga existed.
 
 ```
                  PostToolUse(Write|Edit)           Stop / SessionEnd
-Claude Code ─────────┬──────────────────────────────────┬───────────────▶  memvc hook (stdin JSON)
-                     │ in scope? → touch .git/memvc/dirty │ dirty or mtime newer than last sweep?
+Claude Code ─────────┬──────────────────────────────────┬───────────────▶  memsaga hook (stdin JSON)
+                     │ in scope? → touch .git/memsaga/dirty │ dirty or mtime newer than last sweep?
                      │ (5 ms, no git)                    │   → lock → mirror → index → commit
                      ▼                                    │   → throttled push
    roots (read only)                                      ▼
-   ~/.claude, ~/.claude-work  ──── rsync-like copy ────▶  ~/git/ccmem  (private git repo)
+   ~/.claude, ~/.claude-work  ──── rsync-like copy ────▶  ~/git/memories  (private git repo)
 ```
 
-## Modules (`crates/memvc-core/src`)
+## Modules (`crates/memsaga-core/src`)
 
 | Module | Owns | Key facts |
 |---|---|---|
@@ -34,11 +34,11 @@ Claude Code ─────────┬────────────�
 | `slug` | Claude Code's project-dir encoding and the reverse map | `encode` = every non-alphanumeric byte → `-`. The reverse map comes from each root's `history.jsonl` (`project` field per prompt), never from parsing the slug. |
 | `mirror` | One-way copy of a root into `repo/<label>/` | rsync semantics: copy when size or mtime differ, preserve mtime, delete extras, keep symlinks. A top-level symlink into another root is rewritten relative (`../claude/CLAUDE.md`); a symlink inside a mirrored dir that escapes the tree becomes absolute. Deletion is confined to tool-owned subtrees; `.git` is never removed. |
 | `git` | Spawning the system `git` | Always `-c commit.gpgsign=false` and `GIT_TERMINAL_PROMPT=0`: a hook has no TTY and must never wait on a signing or credential prompt. No libgit2, so the user's credential helpers and config apply. |
-| `state` | `.git/memvc/`: flock, `last-sweep`, `dirty`, `last-push`, `report-offset`, `events.jsonl`, `memvc.log` | The lock is `flock(2)` on an open fd: a crashed process releases it, so there is no stale-lock logic. |
+| `state` | `.git/memsaga/`: flock, `last-sweep`, `dirty`, `last-push`, `report-offset`, `events.jsonl`, `memsaga.log` | The lock is `flock(2)` on an open fd: a crashed process releases it, so there is no stale-lock logic. |
 | `sweep` | `needs_sweep`, `refresh_mirror`, `pending`, `sweep`, commit message | `needs_sweep` is stat-only: allowlist mtimes vs `last-sweep`, a walk of user-owned top-level dirs in the repo, and a check for a pre-2026-09-18 `<label>/projects/`. The marker is set to the sweep's *start* time so edits made during a sweep are caught next time. |
 | `hook` | Event → action; throttled push; the reporter | `Turn` granularity: PostToolUse only marks dirty, Stop commits once per turn. `Edit` granularity sweeps per edit. Push: on Stop when ahead and `push_min_interval_secs` elapsed; on SessionEnd always. |
 | `index` | `index.md`, `paths.json` at the repo root | Regenerated every sweep; the flat slug layout stays browsable on GitHub. |
-| `install` | Hook registration in `settings.json` | Read-merge-write with `serde_json` `preserve_order`; foreign entries and key order survive; a `.memvc-bak` is taken before the first change; ours are the entries whose command mentions `memvc`. |
+| `install` | Hook registration in `settings.json` | Read-merge-write with `serde_json` `preserve_order`; foreign entries and key order survive; a `.memsaga-bak` is taken before the first change; ours are the entries whose command mentions `memsaga`. |
 | `restore` | Repo path ↔ live path; the only write into a root | Diff first (`git diff --no-index`), then confirmation, then write, then `dirty` so the next Stop commits the live state. Refuses paths outside the allowlist. Accepts the old `projects/<slug>/memory` spelling and reads pre-move revisions from it. |
 | `skills` | `SKILL.md` files compiled into the binary (`include_str!`) | Source of truth is `skills/<name>/SKILL.md` in this repo; `install --skills` writes them into a root. |
 | `backfill` | Transcript replay into dated commits | Two passes per file: forward from each `Write` applying later `Edit`s; backward from the live file undoing `Edit`s while each op's result is still visible. Ops of one session within `group_window` seconds share a commit; `GIT_AUTHOR_DATE` = the last op's timestamp. Failed tool calls (`is_error`) are dropped. |
@@ -53,7 +53,7 @@ Claude Code ─────────┬────────────�
    `<label>/memory/` (and the pre-2026-09-18 `<label>/projects/`, which it
    removes once). User-owned paths (`companion/`, `manual/`, anything
    else at the repo root) are committed but never deleted by the tool.
-3. **Hooks exit 0.** `hook` and `report` log errors to `.git/memvc/memvc.log`
+3. **Hooks exit 0.** `hook` and `report` log errors to `.git/memsaga/memsaga.log`
    and never fail a Claude Code tool call.
 4. **The fast paths do no git work.** PostToolUse out of scope: parse stdin,
    match path, exit. Stop with nothing newer: stat walk, exit.
@@ -62,7 +62,7 @@ Claude Code ─────────┬────────────�
 
 ## CLI contract (what the tests pin)
 
-- `memvc hook` reads one JSON object on stdin with the Claude Code hook fields
+- `memsaga hook` reads one JSON object on stdin with the Claude Code hook fields
   (`hook_event_name`, `session_id`, `cwd`, `tool_input.file_path`,
   `tool_calls[]`, `agent_type`, `file_path`).
 - Commit trailers: `Event`, `Account`, `Session`, `Cwd`, `Agent`.
@@ -70,15 +70,15 @@ Claude Code ─────────┬────────────�
   `<label>/memory/<slug>/…` (live `projects/<slug>/memory/`; the mapping is
   `roots::repo_rel_of_live` and its inverse), plus `index.md`, `paths.json`,
   `.gitattributes`.
-- Config: `~/.config/memvc/config.toml` (`MEMVC_CONFIG` overrides the path;
-  `MEMVC_REPO` and `MEMVC_ROOTS` override values).
+- Config: `~/.config/memsaga/config.toml` (`MEMSAGA_CONFIG` overrides the path;
+  `MEMSAGA_REPO` and `MEMSAGA_ROOTS` override values).
 
 Anything that keeps this contract can be dropped in for the binary and the
 behaviour tests will still pass.
 
 ## Tests
 
-`crates/memvc/tests/e2e.rs` builds fake roots in a temp dir, runs the real
+`crates/memsaga/tests/e2e.rs` builds fake roots in a temp dir, runs the real
 binary, and asserts on the git repo it produces: import scope and exclusions,
 symlink handling, no-op sweeps, out-of-scope hooks, per-turn batching, Bash
 edits and deletions caught at Stop, eight concurrent hooks, user-owned paths,
