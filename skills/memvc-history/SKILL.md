@@ -15,7 +15,7 @@ expecting it to flow back: restore is an explicit, user-approved copy.
 ```
 claude/CLAUDE.md                                  global CLAUDE.md (account main)
 claude/skills/<name>/SKILL.md                     user skills
-claude/projects/<slug>/memory/{MEMORY.md,*.md}    auto-memory per project (main account)
+claude/memory/<slug>/{MEMORY.md,*.md}             auto-memory per project (main account); live path is projects/<slug>/memory/
 claude-work/...                                   same for the second account (work); CLAUDE.md and skills are symlinks to claude/
 paths.json                                        slug -> real cwd, e.g. "-Users-me-git-webapp": "/Users/me/git/webapp"
 index.md                                          browsable table of every project
@@ -24,8 +24,8 @@ index.md                                          browsable table of every proje
 A project slug is a path with every non-alphanumeric character replaced by `-`. For
 transcripts that path is the cwd; for auto-memory since Claude Code 2.1.275 it is the git
 common dir, so every worktree and subdirectory of `~/git/webapp` shares
-`claude/projects/-Users-me-git-webapp/memory/`, and a non-repo directory such as
-`~/git` keeps its own (`claude/projects/-Users-me-git/memory/`). Older slugs such as
+`claude/memory/-Users-me-git-webapp/`, and a non-repo directory such as
+`~/git` keeps its own (`claude/memory/-Users-me-git/`). Older slugs such as
 `-Users-me-git-webapp-<worktree>-packages-api` are per-cwd leftovers from
 before that change; their files are still mirrored but no longer loaded.
 
@@ -38,12 +38,17 @@ Commit messages carry trailers `Event:` (PostToolUse / Stop / SessionEnd / backf
 R=~/git/ccmem
 memvc status                                            # last sweep, pending dirty marker, recent events
 git -C $R log --since='7 days ago' --date=short --format='%h %ad %s' -- claude/CLAUDE.md
-git -C $R log -p --follow -- claude/projects/-Users-me-git-webapp/memory/MEMORY.md
+git -C $R log -p --follow -- claude/memory/-Users-me-git-webapp/MEMORY.md
 git -C $R log --diff-filter=D --since='30 days ago' --name-only --format='%h %ad' -- '*/memory/*'   # deleted memories
-git -C $R show <sha>^:claude/projects/<slug>/memory/<file>.md        # content before a commit
+git -C $R show <sha>^:claude/memory/<slug>/<file>.md        # content before a commit
 git -C $R diff <sha1> <sha2> -- claude/CLAUDE.md
 git -C $R log --format='%h %ad %s%n  %(trailers:key=Session,valueonly)' --date=short -n 20   # which session changed what
 ```
+
+Before 2026-09-18 the repo stored memory at `claude/projects/<slug>/memory/`; that commit is
+a pure rename, so use `--follow` (as above) to see history across it, and `git show
+<old sha>:claude/projects/<slug>/memory/<file>.md` for content from before it. `memvc restore
+--at <old sha>` handles the old path by itself.
 
 Backfilled history has gaps: an edit made through Bash is invisible to the replay, so a
 file may jump versions between two `backfill:` commits. The `import:` commit of
@@ -52,6 +57,6 @@ file may jump versions between two `backfill:` commits. The `import:` commit of
 ## Restoring
 
 Restoring writes into a live config directory, so: show the user the diff first, get an
-explicit yes, then run `memvc restore claude/projects/<slug>/memory/<file>.md --at <sha>`,
+explicit yes, then run `memvc restore claude/memory/<slug>/<file>.md --at <sha>`,
 which shows the diff, asks, writes the file atomically and records a `restore` event so the
 next turn commits the restored state. Never `git checkout` inside `~/.claude`; it is not a git repo.

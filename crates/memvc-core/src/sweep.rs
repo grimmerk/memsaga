@@ -44,6 +44,16 @@ pub fn needs_sweep(cfg: &Config, scope: &Scope, state: &State) -> bool {
         None => return true, // never swept
     };
     for root in &cfg.roots {
+        // The pre-2026-09-18 layout: move it even when nothing live changed.
+        if cfg
+            .repo
+            .join(&root.label)
+            .join("projects")
+            .symlink_metadata()
+            .is_ok()
+        {
+            return true;
+        }
         for e in scope.entries(root) {
             let src = e.source(root);
             match e {
@@ -209,7 +219,9 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         let name_status = git.staged_name_status()?;
         let files: Vec<String> = name_status
             .lines()
-            .filter_map(|l| l.split('\t').nth(1).map(|s| s.to_string()))
+            // `M\tpath`, or `R100\told\tnew` for a rename: the last field is the
+            // path that exists after the commit.
+            .filter_map(|l| l.split('\t').next_back().map(|s| s.to_string()))
             .collect();
         let shortstat = git.staged_shortstat()?;
         let msg = commit_message(cfg, attrib, &files, &name_status, &shortstat);
@@ -283,7 +295,8 @@ fn or_none(s: &str) -> &str {
     }
 }
 
-/// `claude/projects/-x-a/memory/f.md` -> `claude:memory:-x-a`;
+/// `claude/memory/-x-a/f.md` -> `claude:memory:-x-a` (so does the pre-2026-09-18
+/// `claude/projects/-x-a/memory/f.md`, seen as deletions in the migration commit);
 /// `claude/skills/foo/SKILL.md` -> `claude:skills`; `claude/CLAUDE.md` -> `claude:CLAUDE.md`;
 /// anything outside a root subtree -> its first component (`companion`, `manual`).
 fn area_of(cfg: &Config, file: &str) -> String {
@@ -294,7 +307,9 @@ fn area_of(cfg: &Config, file: &str) -> String {
         return label.to_string();
     }
     match parts.get(1).copied() {
-        Some("projects") => format!("{label}:memory:{}", parts.get(2).copied().unwrap_or("?")),
+        Some("memory") | Some("projects") => {
+            format!("{label}:memory:{}", parts.get(2).copied().unwrap_or("?"))
+        }
         Some(dir) if cfg.dirs.iter().any(|d| d == dir) => format!("{label}:{dir}"),
         Some(f) => format!("{label}:{f}"),
         None => label.to_string(),

@@ -61,7 +61,7 @@ pub fn sync_root(scope: &Scope, root: &Root, repo: &Path) -> Result<Stats> {
             }
         }
     }
-    stats.add(prune_projects(scope, root, repo, &entries)?);
+    stats.add(prune_memory(scope, root, repo, &entries)?);
     Ok(stats)
 }
 
@@ -95,6 +95,7 @@ fn sync_entry(scope: &Scope, root: &Root, entry: &Entry, repo: &Path) -> Result<
         {
             fs::remove_file(&dst)?;
         }
+        // Relative to the root (the live side): `exclude_paths` are root-relative.
         let prefix = match entry {
             Entry::Dir { rel } => PathBuf::from(rel),
             Entry::Memory { slug } => PathBuf::from("projects").join(slug).join("memory"),
@@ -233,7 +234,9 @@ fn mirror_symlink(scope: &Scope, src: &Path, dst: &Path, repo: &Path) -> Result<
     let mut link = target;
     for other in &scope.cfg.roots {
         if let Ok(rest) = abs_target.strip_prefix(&other.path) {
-            let repo_target = repo.join(&other.label).join(rest);
+            let repo_target = repo
+                .join(&other.label)
+                .join(crate::roots::repo_rel_of_live(rest));
             if let Some(parent) = dst.parent() {
                 if let Some(rel) = relative_path(parent, &repo_target) {
                     link = rel;
@@ -261,10 +264,18 @@ fn replace_symlink(dst: &Path, link: &Path) -> Result<bool> {
     Ok(true)
 }
 
-/// Repo project dirs whose source memory is gone, empty, or excluded.
-fn prune_projects(_scope: &Scope, root: &Root, repo: &Path, entries: &[Entry]) -> Result<Stats> {
+/// Repo memory dirs (`<label>/memory/<slug>`) whose source memory is gone,
+/// empty, or excluded. Also removes `<label>/projects/`, the layout used
+/// before 2026-09-18: the same files are re-synced under `memory/`, so the
+/// next commit is a pure rename and `git log --follow` crosses it.
+fn prune_memory(_scope: &Scope, root: &Root, repo: &Path, entries: &[Entry]) -> Result<Stats> {
     let mut stats = Stats::default();
-    let projects = repo.join(&root.label).join("projects");
+    let legacy = repo.join(&root.label).join("projects");
+    if legacy.symlink_metadata().is_ok() {
+        remove_any(&legacy)?;
+        stats.deleted += 1;
+    }
+    let projects = repo.join(&root.label).join(crate::roots::MEMORY_DIR);
     let live: BTreeSet<&str> = entries
         .iter()
         .filter_map(|e| match e {

@@ -43,7 +43,7 @@ pub struct Config {
     pub files: Vec<String>,
     /// Top-level directories of each root to mirror recursively.
     pub dirs: Vec<String>,
-    /// Mirror `projects/*/memory/` of each root.
+    /// Mirror `projects/*/memory/` of each root (stored as `<label>/memory/<slug>/`).
     pub memory: bool,
     /// File-name globs excluded everywhere (matched against the basename).
     pub exclude: Vec<String>,
@@ -121,6 +121,14 @@ impl Config {
         }
         if cfg.roots.is_empty() {
             cfg.roots = discover_roots();
+        }
+        for d in &cfg.dirs {
+            if d == "memory" || d == "projects" {
+                anyhow::bail!(
+                    "`dirs` must not contain {d:?}: per-project memory is mirrored by \
+                     `memory = true` into <label>/memory/, and projects/ holds transcripts"
+                );
+            }
         }
         Ok(cfg)
     }
