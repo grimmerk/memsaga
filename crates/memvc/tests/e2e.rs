@@ -158,9 +158,9 @@ fn init_imports_allowlist_and_excludes_noise() {
     for want in [
         "claude/CLAUDE.md",
         "claude/skills/foo/SKILL.md",
-        "claude/projects/-h-git-a/memory/MEMORY.md",
-        "claude/projects/-h-git-a/memory/one.md",
-        "claude-work/projects/-h-git-a/memory/w.md",
+        "claude/memory/-h-git-a/MEMORY.md",
+        "claude/memory/-h-git-a/one.md",
+        "claude-work/memory/-h-git-a/w.md",
         "claude-work/CLAUDE.md",
         "claude-work/skills",
         "claude/hooks/x.sh",
@@ -253,7 +253,7 @@ fn turn_granularity_batches_a_turn_into_one_commit() {
     assert_eq!(commits(&fx), 2, "exactly one commit at Stop");
     let files = git(&fx, &["show", "--name-only", "--format=", "HEAD"]);
     assert!(
-        files.contains("memory/a.md") && files.contains("memory/b.md"),
+        files.contains("-h-git-a/a.md") && files.contains("-h-git-a/b.md"),
         "{files}"
     );
     assert!(!fx.repo.join(".git/memvc/dirty").exists());
@@ -275,7 +275,9 @@ fn bash_edits_and_deletions_are_caught_by_stop() {
     fs::remove_file(fx.claude.join("projects/-h-git-a/memory/one.md")).unwrap();
     hook(&fx, &stop("s2"));
     assert_eq!(commits(&fx), 3);
-    assert!(!head_files(&fx).iter().any(|f| f.ends_with("memory/one.md")));
+    assert!(!head_files(&fx)
+        .iter()
+        .any(|f| f.ends_with("-h-git-a/one.md")));
     let ns = git(&fx, &["show", "--name-status", "--format=", "HEAD"]);
     assert!(ns.starts_with('D'), "{ns}");
 }
@@ -321,7 +323,7 @@ fn concurrent_stop_hooks_lose_nothing() {
         assert!(
             files
                 .iter()
-                .any(|f| f.ends_with(&format!("memory/c{i}.md"))),
+                .any(|f| f.ends_with(&format!("-h-git-a/c{i}.md"))),
             "c{i}.md missing"
         );
     }
@@ -597,21 +599,21 @@ fn backfill_replays_transcripts_into_dated_commits() {
         &fx,
         &[
             "show",
-            &format!("{}:claude/projects/-h-git-a/memory/one.md", shas[0]),
+            &format!("{}:claude/memory/-h-git-a/one.md", shas[0]),
         ],
     );
     let v2 = git(
         &fx,
         &[
             "show",
-            &format!("{}:claude/projects/-h-git-a/memory/one.md", shas[1]),
+            &format!("{}:claude/memory/-h-git-a/one.md", shas[1]),
         ],
     );
     assert_eq!(v1, "v1 fact\n");
     assert_eq!(v2, "v2 fact\n");
     // the import commit brings the file to its real current content
     assert_eq!(
-        fs::read_to_string(fx.repo.join("claude/projects/-h-git-a/memory/one.md")).unwrap(),
+        fs::read_to_string(fx.repo.join("claude/memory/-h-git-a/one.md")).unwrap(),
         "fact\n"
     );
     let msg = git(&fx, &["log", "--format=%B", "-1", &shas[0]]);
@@ -644,7 +646,7 @@ fn diff_shows_what_the_next_sweep_would_commit() {
     )
     .unwrap();
     let out = run(&fx, &["diff", "--stat"]);
-    assert!(out.contains("memory/one.md"), "{out}");
+    assert!(out.contains("-h-git-a/one.md"), "{out}");
     assert!(
         !out.contains("+fact, now longer"),
         "stat must not include the patch: {out}"
@@ -674,12 +676,7 @@ fn restore_writes_an_old_version_back_only_when_confirmed() {
     assert_eq!(commits(&fx), 2);
     // Declined: nothing changes.
     let out = cmd(&fx)
-        .args([
-            "restore",
-            "claude/projects/-h-git-a/memory/one.md",
-            "--at",
-            "HEAD~1",
-        ])
+        .args(["restore", "claude/memory/-h-git-a/one.md", "--at", "HEAD~1"])
         .write_stdin("n\n")
         .output()
         .unwrap();
@@ -695,7 +692,7 @@ fn restore_writes_an_old_version_back_only_when_confirmed() {
         &fx,
         &[
             "restore",
-            "claude/projects/-h-git-a/memory/one.md",
+            "claude/memory/-h-git-a/one.md",
             "--at",
             "HEAD~1",
             "--yes",
@@ -721,7 +718,7 @@ fn restore_writes_an_old_version_back_only_when_confirmed() {
     assert_eq!(fs::read_to_string(&live).unwrap(), "fact\n");
     // A directory is not restorable.
     let dir_out = cmd(&fx)
-        .args(["restore", "claude/projects/-h-git-a/memory", "--yes"])
+        .args(["restore", "claude/memory/-h-git-a", "--yes"])
         .output()
         .unwrap();
     assert!(
@@ -810,4 +807,66 @@ fn install_skills_writes_bundled_skills_without_touching_hooks() {
         .output()
         .unwrap();
     assert!(!bad.status.success());
+}
+
+#[test]
+fn legacy_projects_layout_is_renamed_and_old_revisions_stay_restorable() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    // Rewrite HEAD into the layout used before 2026-09-18.
+    fs::create_dir_all(fx.repo.join("claude/projects/-h-git-a")).unwrap();
+    git(
+        &fx,
+        &[
+            "mv",
+            "claude/memory/-h-git-a",
+            "claude/projects/-h-git-a/memory",
+        ],
+    );
+    git(&fx, &["commit", "-q", "-m", "legacy layout"]);
+    let legacy = git(&fx, &["rev-parse", "HEAD"]).trim().to_string();
+    let before = commits(&fx);
+
+    // Any sweep moves it back; nothing in the live root changed.
+    run(&fx, &["sweep", "--event", "upgrade"]);
+    assert_eq!(commits(&fx), before + 1);
+    let files = head_files(&fx);
+    assert!(
+        files.iter().any(|f| f == "claude/memory/-h-git-a/one.md"),
+        "{files:?}"
+    );
+    assert!(
+        !files.iter().any(|f| f.starts_with("claude/projects/")),
+        "{files:?}"
+    );
+    assert!(!fx.repo.join("claude/projects").exists());
+    // git sees the move as a rename, so history follows the file across it.
+    let followed = git(
+        &fx,
+        &[
+            "log",
+            "--follow",
+            "--format=%h",
+            "--",
+            "claude/memory/-h-git-a/one.md",
+        ],
+    );
+    assert!(followed.lines().count() >= 2, "{followed}");
+
+    // A revision from before the move is still readable through the new path.
+    let live = fx.claude.join("projects/-h-git-a/memory/one.md");
+    write(&live, "changed after the move\n");
+    hook(&fx, &stop("s1"));
+    let out = run(
+        &fx,
+        &[
+            "restore",
+            "claude/memory/-h-git-a/one.md",
+            "--at",
+            &legacy,
+            "--yes",
+        ],
+    );
+    assert!(out.contains("restored"), "{out}");
+    assert_eq!(fs::read_to_string(&live).unwrap(), "fact\n");
 }

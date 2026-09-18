@@ -1,5 +1,6 @@
 //! What, inside one root, is in scope: the allowlisted top-level files and
-//! directories, and every non-empty `projects/<slug>/memory/` directory.
+//! directories, and every non-empty `projects/<slug>/memory/` directory,
+//! which the repo stores as `<label>/memory/<slug>/`.
 //!
 //! Two questions are answered here: "is this absolute path something we
 //! mirror?" (`Scope::contains`, used by the hook fast path) and "list every
@@ -31,9 +32,57 @@ impl Entry {
         let base = repo.join(&root.label);
         match self {
             Entry::File { rel } | Entry::Dir { rel } => base.join(rel),
-            Entry::Memory { slug } => base.join("projects").join(slug).join("memory"),
+            Entry::Memory { slug } => base.join(MEMORY_DIR).join(slug),
         }
     }
+}
+
+/// Repo-side directory under each root's subtree that holds every project's
+/// memory: `<label>/memory/<slug>/…`. Live memory stays at
+/// `projects/<slug>/memory/`; the two mappings below convert between them.
+pub const MEMORY_DIR: &str = "memory";
+
+/// Root-relative live path -> path relative to the root's repo subtree.
+/// `projects/<slug>/memory/x.md` becomes `memory/<slug>/x.md`; every other
+/// allowlisted path is stored where it lives.
+pub fn repo_rel_of_live(rel: &Path) -> PathBuf {
+    let parts: Vec<_> = rel.iter().collect();
+    if parts.len() >= 3 && parts[0] == "projects" && parts[2] == "memory" {
+        let mut out = PathBuf::from(MEMORY_DIR);
+        out.push(parts[1]);
+        out.extend(&parts[3..]);
+        return out;
+    }
+    rel.to_path_buf()
+}
+
+/// Inverse of `repo_rel_of_live`: `memory/<slug>/x.md` -> `projects/<slug>/memory/x.md`.
+pub fn live_rel_of_repo(rel: &Path) -> PathBuf {
+    let parts: Vec<_> = rel.iter().collect();
+    if parts.len() >= 2 && parts[0] == MEMORY_DIR {
+        let mut out = PathBuf::from("projects");
+        out.push(parts[1]);
+        out.push("memory");
+        out.extend(&parts[2..]);
+        return out;
+    }
+    rel.to_path_buf()
+}
+
+/// Where a memory file lived in the repo before the layout change of
+/// 2026-09-18 (`<label>/projects/<slug>/memory/x.md`), so revisions from
+/// before the move can still be read. None for anything that is not memory.
+pub fn legacy_repo_path(repo_rel: &Path) -> Option<PathBuf> {
+    let parts: Vec<_> = repo_rel.iter().collect();
+    if parts.len() >= 3 && parts[1] == MEMORY_DIR {
+        let mut out = PathBuf::from(parts[0]);
+        out.push("projects");
+        out.push(parts[2]);
+        out.push("memory");
+        out.extend(&parts[3..]);
+        return Some(out);
+    }
+    None
 }
 
 pub struct Scope<'a> {
@@ -213,5 +262,31 @@ mod tests {
         assert!(s
             .contains(Path::new("/h/.claude/projects/-h-git-a/memory/a.md"))
             .is_some());
+    }
+
+    #[test]
+    fn memory_paths_map_between_live_and_repo_layouts() {
+        let live = Path::new("projects/-h-git-a/memory/x.md");
+        let repo = Path::new("memory/-h-git-a/x.md");
+        assert_eq!(repo_rel_of_live(live), repo);
+        assert_eq!(live_rel_of_repo(repo), live);
+        assert_eq!(
+            repo_rel_of_live(Path::new("projects/-h-git-a/memory")),
+            Path::new("memory/-h-git-a")
+        );
+        // Non-memory paths are stored where they live.
+        assert_eq!(
+            repo_rel_of_live(Path::new("skills/foo/SKILL.md")),
+            Path::new("skills/foo/SKILL.md")
+        );
+        assert_eq!(
+            live_rel_of_repo(Path::new("CLAUDE.md")),
+            Path::new("CLAUDE.md")
+        );
+        assert_eq!(
+            legacy_repo_path(Path::new("claude/memory/-h-git-a/x.md")),
+            Some(PathBuf::from("claude/projects/-h-git-a/memory/x.md"))
+        );
+        assert_eq!(legacy_repo_path(Path::new("claude/CLAUDE.md")), None);
     }
 }

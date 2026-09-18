@@ -283,7 +283,7 @@ fn or_none(s: &str) -> &str {
     }
 }
 
-/// `claude/projects/-x-a/memory/f.md` -> `claude:memory:-x-a`;
+/// `claude/memory/-x-a/f.md` -> `claude:memory:-x-a`;
 /// `claude/skills/foo/SKILL.md` -> `claude:skills`; `claude/CLAUDE.md` -> `claude:CLAUDE.md`;
 /// anything outside a root subtree -> its first component (`companion`, `manual`).
 fn area_of(cfg: &Config, file: &str) -> String {
@@ -294,7 +294,7 @@ fn area_of(cfg: &Config, file: &str) -> String {
         return label.to_string();
     }
     match parts.get(1).copied() {
-        Some("projects") => format!("{label}:memory:{}", parts.get(2).copied().unwrap_or("?")),
+        Some("memory") => format!("{label}:memory:{}", parts.get(2).copied().unwrap_or("?")),
         Some(dir) if cfg.dirs.iter().any(|d| d == dir) => format!("{label}:{dir}"),
         Some(f) => format!("{label}:{f}"),
         None => label.to_string(),

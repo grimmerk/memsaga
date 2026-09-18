@@ -39,7 +39,7 @@ Claude Code ─────────┬────────────�
 | `hook` | Event → action; throttled push; the reporter | `Turn` granularity: PostToolUse only marks dirty, Stop commits once per turn. `Edit` granularity sweeps per edit. Push: on Stop when ahead and `push_min_interval_secs` elapsed; on SessionEnd always. |
 | `index` | `index.md`, `paths.json` at the repo root | Regenerated every sweep; the flat slug layout stays browsable on GitHub. |
 | `install` | Hook registration in `settings.json` | Read-merge-write with `serde_json` `preserve_order`; foreign entries and key order survive; a `.memvc-bak` is taken before the first change; ours are the entries whose command mentions `memvc`. |
-| `restore` | Repo path ↔ live path; the only write into a root | Diff first (`git diff --no-index`), then confirmation, then write, then `dirty` so the next Stop commits the live state. Refuses paths outside the allowlist. |
+| `restore` | Repo path ↔ live path; the only write into a root | Diff first (`git diff --no-index`), then confirmation, then write, then `dirty` so the next Stop commits the live state. Refuses paths outside the allowlist. Accepts the old `projects/<slug>/memory` spelling and reads pre-move revisions from it. |
 | `skills` | `SKILL.md` files compiled into the binary (`include_str!`) | Source of truth is `skills/<name>/SKILL.md` in this repo; `install --skills` writes them into a root. |
 | `backfill` | Transcript replay into dated commits | Two passes per file: forward from each `Write` applying later `Edit`s; backward from the live file undoing `Edit`s while each op's result is still visible. Ops of one session within `group_window` seconds share a commit; `GIT_AUTHOR_DATE` = the last op's timestamp. Failed tool calls (`is_error`) are dropped. |
 
@@ -49,8 +49,9 @@ Claude Code ─────────┬────────────�
    Test: `mirror_is_one_way_and_never_touches_roots` snapshots both roots
    before and after sweeps.
 2. **Deletion never leaves a tool-owned subtree.** `mirror::sync_dir` only
-   deletes under the destination it was given; `prune_projects` only under
-   `<label>/projects/`. User-owned paths (`companion/`, `manual/`, anything
+   deletes under the destination it was given; `prune_memory` only under
+   `<label>/memory/` (and the pre-2026-09-18 `<label>/projects/`, which it
+   removes once). User-owned paths (`companion/`, `manual/`, anything
    else at the repo root) are committed but never deleted by the tool.
 3. **Hooks exit 0.** `hook` and `report` log errors to `.git/memvc/memvc.log`
    and never fail a Claude Code tool call.
@@ -66,7 +67,8 @@ Claude Code ─────────┬────────────�
   `tool_calls[]`, `agent_type`, `file_path`).
 - Commit trailers: `Event`, `Account`, `Session`, `Cwd`, `Agent`.
 - Repo layout: `<label>/CLAUDE.md`, `<label>/<dir>/…`,
-  `<label>/projects/<slug>/memory/…`, plus `index.md`, `paths.json`,
+  `<label>/memory/<slug>/…` (live `projects/<slug>/memory/`; the mapping is
+  `roots::repo_rel_of_live` and its inverse), plus `index.md`, `paths.json`,
   `.gitattributes`.
 - Config: `~/.config/memvc/config.toml` (`MEMVC_CONFIG` overrides the path;
   `MEMVC_REPO` and `MEMVC_ROOTS` override values).

@@ -58,7 +58,7 @@ pub fn write_index(cfg: &Config, scope: &Scope) -> Result<()> {
                     .as_deref()
                     .map(slug::display_path)
                     .unwrap_or_else(|| format!("(unresolved) {s}"));
-                let link = format!("{}/projects/{}/memory", root.label, s);
+                let link = format!("{}/memory/{}", root.label, s);
                 rows.push((label, link, count, newest, s.clone()));
             }
         }

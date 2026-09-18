@@ -3,12 +3,14 @@
 //! does so only for a path inside the allowlist, only after showing the diff,
 //! and only with explicit confirmation (`--yes` or an interactive "y").
 //!
-//! Also the path mapping both directions: `claude/projects/<slug>/memory/x.md`
-//! in the repo is `<root of label "claude">/projects/<slug>/memory/x.md` live.
+//! Also the path mapping both directions: `claude/memory/<slug>/x.md` in the
+//! repo is `<root of label "claude">/projects/<slug>/memory/x.md` live. The
+//! pre-2026-09-18 repo path (`claude/projects/<slug>/memory/x.md`) is still
+//! accepted as input and is where old revisions are read from.
 
 use crate::config::{expand_tilde, Config};
 use crate::git::Git;
-use crate::roots::Scope;
+use crate::roots::{self, Scope};
 use crate::state::{self, Event, State};
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
@@ -36,7 +38,7 @@ pub fn locate(cfg: &Config, input: &str) -> Result<Located> {
         })?;
         let rel = p.strip_prefix(&root.path)?;
         return Ok(Located {
-            repo_rel: Path::new(&root.label).join(rel),
+            repo_rel: Path::new(&root.label).join(roots::repo_rel_of_live(rel)),
             live: p,
         });
     }
@@ -51,7 +53,9 @@ pub fn locate(cfg: &Config, input: &str) -> Result<Located> {
         .find(|r| r.label == label)
         .with_context(|| format!("no mirrored root is labelled {label:?} (path {input})"))?;
     let rest: PathBuf = comps.collect();
-    let live = root.path.join(&rest);
+    // Accept both layouts as input; the repo path is always the current one.
+    let live_rel = roots::live_rel_of_repo(&rest);
+    let live = root.path.join(&live_rel);
     if scope.contains(&live).is_none() {
         bail!(
             "{} is not inside the allowlist of root {}",
@@ -59,7 +63,10 @@ pub fn locate(cfg: &Config, input: &str) -> Result<Located> {
             root.label
         );
     }
-    Ok(Located { repo_rel: p, live })
+    Ok(Located {
+        repo_rel: Path::new(&root.label).join(roots::repo_rel_of_live(&live_rel)),
+        live,
+    })
 }
 
 /// Where a write to `live` would really land: the path with every symlink
@@ -92,21 +99,24 @@ pub fn verify_destination(cfg: &Config, live: &Path) -> Result<PathBuf> {
 }
 
 /// Content of `repo_rel` at `rev`, or None when it did not exist there.
-/// A directory (tree) at that path is an error, not content.
+/// A memory file absent at `rev` is also looked up at its pre-2026-09-18
+/// path, so `--at` works across the layout change. A directory (tree) at
+/// the path is an error, not content.
 pub fn content_at(cfg: &Config, repo_rel: &Path, rev: &str) -> Result<Option<Vec<u8>>> {
     let git = Git::new(&cfg.repo);
-    let spec = format!("{rev}:{}", repo_rel.to_string_lossy());
-    match git.object_type(&spec)? {
-        None => return Ok(None),
-        Some(t) if t == "blob" => {}
-        Some(t) => bail!("{spec} is a {t}, not a file"),
+    let mut candidates = vec![repo_rel.to_path_buf()];
+    candidates.extend(roots::legacy_repo_path(repo_rel));
+    for path in candidates {
+        let spec = format!("{rev}:{}", path.to_string_lossy());
+        match git.object_type(&spec)? {
+            None => continue,
+            Some(t) if t == "blob" => {}
+            Some(t) => bail!("{spec} is a {t}, not a file"),
+        }
+        let out = git.run(&["show", &spec])?;
+        return Ok(out.status.success().then_some(out.stdout));
     }
-    let out = git.run(&["show", &spec])?;
-    if out.status.success() {
-        Ok(Some(out.stdout))
-    } else {
-        Ok(None)
-    }
+    Ok(None)
 }
 
 /// A unified diff between the live file (or nothing) and `candidate`.
@@ -204,11 +214,17 @@ mod tests {
     #[test]
     fn locate_maps_both_directions_and_refuses_out_of_scope() {
         let c = cfg();
-        let a = locate(&c, "claude/projects/-h-git-a/memory/x.md").unwrap();
+        let a = locate(&c, "claude/memory/-h-git-a/x.md").unwrap();
         assert_eq!(
             a.live,
             PathBuf::from("/h/.claude/projects/-h-git-a/memory/x.md")
         );
+        // The pre-2026-09-18 repo path and the live path name the same file.
+        let old = locate(&c, "claude/projects/-h-git-a/memory/x.md").unwrap();
+        assert_eq!(old, a);
+        let abs = locate(&c, "/h/.claude/projects/-h-git-a/memory/x.md").unwrap();
+        assert_eq!(abs, a);
+        assert_eq!(a.repo_rel, PathBuf::from("claude/memory/-h-git-a/x.md"));
         let b = locate(&c, "/h/.claude-work/CLAUDE.md").unwrap();
         assert_eq!(b.repo_rel, PathBuf::from("claude-work/CLAUDE.md"));
         assert!(

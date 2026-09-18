@@ -43,7 +43,7 @@ pub struct Config {
     pub files: Vec<String>,
     /// Top-level directories of each root to mirror recursively.
     pub dirs: Vec<String>,
-    /// Mirror `projects/*/memory/` of each root.
+    /// Mirror `projects/*/memory/` of each root (stored as `<label>/memory/<slug>/`).
     pub memory: bool,
     /// File-name globs excluded everywhere (matched against the basename).
     pub exclude: Vec<String>,

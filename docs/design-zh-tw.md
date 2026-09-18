@@ -290,18 +290,18 @@ flowchart TD
 ├── claude/
 │   ├── CLAUDE.md
 │   ├── skills/…                 （opt-in）
-│   └── projects/
-│       ├── -Users-me-git/memory/…
-│       ├── -Users-me-git-webapp/memory/…
+│   └── memory/                  ← live 端是 projects/<slug>/memory/，repo 端拿掉 projects 這層（2026-09-18 起）
+│       ├── -Users-me-git/…
+│       ├── -Users-me-git-webapp/…
 │       └── …
 └── claude-work/
     ├── CLAUDE.md -> ../claude/CLAUDE.md      ← 相對 symlink，repo 自洽（Phase 1.1）
     ├── skills   -> ../claude/skills
-    └── projects/
-        └── -Users-me-git-webapp/memory/…
+    └── memory/
+        └── -Users-me-git-webapp/…
 ```
 
-還原零腦力：路徑一比一，反向 copy 就是。缺點：跟來源一樣攤平，靠 README 索引補瀏覽性。
+還原接近零腦力：只有 memory 這一種路徑要對映（`projects/<slug>/memory/` ↔ `memory/<slug>/`），其餘一比一。缺點：跟來源一樣攤平，靠 README 索引補瀏覽性。
 
 **Layout B（之後可轉）**：還原成真實路徑樹，`home/git/webapp/memory/…`，非 home 路徑放 `root/…`，反查不到的 slug 放 `_unresolved/<slug>/`。從 A 轉 B 是一個 `git mv` commit，`git log --follow` 保留每個檔的歷史；`paths.json` 隨時可從 `history.jsonl` 重新產生。author 傾向先 A，理由是 B 要處理 root 在 `/` 之下的一般情況。**決定：A，B 保留為之後的選項。**
 
@@ -817,13 +817,14 @@ flowchart LR
 - 指出樹外的 symlink（`skills/agent-browser -> ../../.agents/...`）改寫成絕對路徑，repo 裡不會是斷的。
 - Stop 的 fast path 不再 spawn `git status`，改成 stat 走訪使用者擁有的頂層目錄，40 ms 降到 24 ms。
 - settings.json 用 read-merge-write 加 `preserve_order`，key 順序不變；第一次安裝時順序被排序過，已用備份還原。
+- repo 端的 memory 路徑從 `<label>/projects/<slug>/memory/` 改成 `<label>/memory/<slug>/`（2026-09-18，PR grimmerk/memsaga-private#3）：repo 裡不會有 transcript，`projects/` 這層只是照抄 live 的結構，拿掉後 kind 在前（`memory/`、`skills/`、`hooks/`），將來若鏡像別種東西就是再加一個頂層目錄。遷移是一個純 rename commit，`git log --follow` 跨得過去；升級後第一次掃描會自動把舊的 `projects/` 搬掉；`restore --at` 對舊 revision 會自動改查舊路徑。與官方目錄結構一致的好處只對會自己翻 repo 的人有意義，判斷不值得那一層。
 
 ## 14. 使用方式（給自己的速查，2026-09-18）
 
 - 平常什麼都不用做：有變動的輪次結尾會看到 `memvc: N files committed (sha)`。
 - `memvc status`：最後一次掃描、dirty 標記、push 狀態、最近事件。
 - `memvc diff`：看下一次會 commit 什麼（會刷新鏡像但不 commit）；`--stat` 只看摘要。
-- `memvc restore claude/projects/<slug>/memory/x.md --at <rev>`：先印 diff、問你 y/N，才寫回 live；`-y` 跳過詢問。路徑也可以直接給 live 的絕對路徑。刪掉的檔一樣能救回。
+- `memvc restore claude/memory/<slug>/x.md --at <rev>`：先印 diff、問你 y/N，才寫回 live；`-y` 跳過詢問。路徑也可以直接給 live 的絕對路徑。刪掉的檔一樣能救回。
 - `memvc log`、`git -C ~/git/ccmem log -p --follow -- <路徑>`：看歷史；`memvc-history` skill 有更多查法。
 - `memvc install --skills`：把 binary 內建的 `memvc-history`、`companion-docs` 寫進各帳號的 `skills/`（`--skill <name>` 只裝一個，`--no-hooks` 不碰 settings.json）。
 - `memvc push`：立刻推；平常是 Stop 時每 10 分鐘最多一次、SessionEnd 一次。

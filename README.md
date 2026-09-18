@@ -60,7 +60,7 @@ scope ends with a commit, and the terminal shows a one-line notice.
 | `memvc install --skills` | Write the bundled skills (`memvc-history`, `companion-docs`) into each config directory |
 | `memvc uninstall` | Remove the hooks |
 
-Paths for `restore` can be repo-relative (`claude/projects/<slug>/memory/x.md`)
+Paths for `restore` can be repo-relative (`claude/memory/<slug>/x.md`)
 or the live path.
 
 ## What is mirrored
@@ -76,12 +76,16 @@ Repo layout:
 <repo>/
   claude/CLAUDE.md
   claude/skills/…  claude/hooks/…  claude/scripts/…
-  claude/projects/<slug>/memory/{MEMORY.md, *.md}
+  claude/memory/<slug>/{MEMORY.md, *.md}
   claude-work/…                      second account; shared files stay symlinks
   index.md                           generated table of every project
   paths.json                         slug → real working directory
   companion/  manual/  …             yours: committed, never deleted by the tool
 ```
+
+Before 2026-09-18 memory was stored at `<label>/projects/<slug>/memory/`. The
+first sweep after upgrading moves it in one rename commit, `git log --follow`
+crosses the move, and `restore --at` reads older revisions from the old path.
 
 ## Configuration
 

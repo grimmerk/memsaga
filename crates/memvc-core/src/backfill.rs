@@ -20,7 +20,7 @@
 
 use crate::config::{Config, Root};
 use crate::git::Git;
-use crate::roots::Scope;
+use crate::roots::{self, Scope};
 use crate::state::{self, Event, State};
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -360,7 +360,7 @@ fn collect_transcript(
                 Ok(r) => r.to_path_buf(),
                 Err(_) => continue,
             };
-            let rel = Path::new(&hit_root.label).join(rel_in_root);
+            let rel = Path::new(&hit_root.label).join(roots::repo_rel_of_live(&rel_in_root));
             let kind = match name {
                 "Write" => Kind::Write {
                     content: input
