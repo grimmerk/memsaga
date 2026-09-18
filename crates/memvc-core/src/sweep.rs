@@ -112,6 +112,50 @@ fn tree_newer_than(dir: &Path, marker: SystemTime) -> bool {
     false
 }
 
+/// Copy every root into the repo and regenerate the index, without touching
+/// git. Shared by `sweep` and `diff`. The caller holds the lock.
+pub fn refresh_mirror(cfg: &Config, scope: &Scope) -> Result<(usize, usize)> {
+    let mut copied = 0;
+    let mut deleted = 0;
+    for root in &cfg.roots {
+        if !root.path.is_dir() {
+            continue;
+        }
+        let s = mirror::sync_root(scope, root, &cfg.repo)
+            .with_context(|| format!("mirroring {}", root.path.display()))?;
+        copied += s.copied + s.linked;
+        deleted += s.deleted;
+    }
+    index::write_index(cfg, scope)?;
+    Ok((copied, deleted))
+}
+
+/// Refresh the mirror and return git's view of what a sweep would commit:
+/// `(status --short, diff)`; `stat_only` asks for `--stat` instead of a full diff.
+pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
+    let scope = Scope::new(cfg);
+    let git = Git::new(&cfg.repo);
+    if !git.is_repo() {
+        anyhow::bail!(
+            "{} is not a git repository; run `memvc init` first",
+            cfg.repo.display()
+        );
+    }
+    let state = State::new(cfg.state_dir());
+    let _guard = state.lock(Duration::from_secs(20)).context("sweep lock")?;
+    refresh_mirror(cfg, &scope)?;
+    // Stage so new files show up in the diff too, then leave the index as is:
+    // the next sweep re-adds everything anyway.
+    git.run_ok(&["add", "-A", "--", "."])?;
+    let status = git.run_ok(&["status", "--short"])?;
+    let diff = if stat_only {
+        git.run_ok(&["diff", "--cached", "--stat"])?
+    } else {
+        git.run_ok(&["diff", "--cached"])?
+    };
+    Ok((status, diff))
+}
+
 /// Mirror, index, commit. Returns what happened. Never writes into a root.
 pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let started = Instant::now();
@@ -127,18 +171,7 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let _guard = state.lock(Duration::from_secs(20)).context("sweep lock")?;
     let sweep_start = SystemTime::now();
 
-    let mut copied = 0;
-    let mut deleted = 0;
-    for root in &cfg.roots {
-        if !root.path.is_dir() {
-            continue;
-        }
-        let s = mirror::sync_root(&scope, root, &cfg.repo)
-            .with_context(|| format!("mirroring {}", root.path.display()))?;
-        copied += s.copied + s.linked;
-        deleted += s.deleted;
-    }
-    index::write_index(cfg, &scope)?;
+    let (copied, deleted) = refresh_mirror(cfg, &scope)?;
 
     let changed = git.add_all_and_check()?;
     let mut out = Outcome {

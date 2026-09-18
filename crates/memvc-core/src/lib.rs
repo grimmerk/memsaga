@@ -20,6 +20,8 @@
 //! - `hook`     parsing a hook event and deciding what to do
 //! - `index`    `index.md` and `paths.json` generation
 //! - `install`  registering the hooks in a root's settings.json
+//! - `restore`  copying one file from history back into a root (the only write)
+//! - `skills`   the SKILL.md files bundled with the binary
 //! - `backfill` replaying transcripts into dated commits
 
 pub mod backfill;
@@ -29,7 +31,9 @@ pub mod hook;
 pub mod index;
 pub mod install;
 pub mod mirror;
+pub mod restore;
 pub mod roots;
+pub mod skills;
 pub mod slug;
 pub mod state;
 pub mod sweep;
