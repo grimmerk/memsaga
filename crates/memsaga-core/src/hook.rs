@@ -138,8 +138,12 @@ pub fn handle(cfg: &Config, input: &HookInput) -> Result<Action> {
 }
 
 /// Push when a remote exists, the branch is ahead, and either this is a
-/// SessionEnd or the throttle interval has elapsed. Failures are logged as
-/// events, never raised: the next opportunity retries.
+/// SessionEnd or the throttle interval has elapsed. Inside the interval the
+/// push is deferred, not dropped: a detached `memsaga push --after N` waits
+/// out the remainder and pushes, so a commit made by a session's last turn
+/// still reaches origin within one interval even if no Stop ever follows
+/// (measured 2026-09-20: a commit 30 s inside the window sat unpushed for
+/// 16 minutes). Failures are logged as events, never raised.
 pub fn maybe_push(
     cfg: &Config,
     state: &State,
@@ -159,19 +163,34 @@ pub fn maybe_push(
         }
         if let Some(last) = state.mtime("last-push") {
             let elapsed = last.elapsed().unwrap_or(Duration::ZERO);
-            if elapsed < Duration::from_secs(cfg.push_min_interval_secs) {
+            let interval = Duration::from_secs(cfg.push_min_interval_secs);
+            if elapsed < interval {
+                if !nothing_to_push(&git) {
+                    defer_push(state, interval - elapsed, attrib)?;
+                }
                 return Ok(false);
             }
         }
     }
-    if git.ahead_of("origin") == 0
+    if nothing_to_push(&git) {
+        return Ok(false);
+    }
+    push_now(cfg, state, attrib)
+}
+
+/// True when origin's tracking branch already has everything on HEAD.
+fn nothing_to_push(git: &Git) -> bool {
+    git.ahead_of("origin") == 0
         && git
             .run(&["rev-parse", "--verify", "-q", "origin/HEAD"])
             .map(|o| o.status.success())
             .unwrap_or(false)
-    {
-        return Ok(false);
-    }
+}
+
+/// `git push origin` now, recording the outcome as an event. The caller has
+/// decided that a push is wanted; this does not consult the throttle.
+pub fn push_now(cfg: &Config, state: &State, attrib: &Attribution) -> Result<bool> {
+    let git = Git::new(&cfg.repo);
     let mut ev = Event {
         ts: state::now_rfc3339(),
         event: attrib.event.clone(),
@@ -195,6 +214,80 @@ pub fn maybe_push(
             Ok(false)
         }
     }
+}
+
+/// Schedule one push for when the throttle window ends. The `push-pending`
+/// marker holds the scheduled unix time; while it lies in the future a waiter
+/// is assumed alive and no second one is started. The waiter is a detached
+/// process (its own session, no stdio), so it outlives the hook that spawned
+/// it and whatever process group Claude Code tears down.
+fn defer_push(state: &State, wait: Duration, attrib: &Attribution) -> Result<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Some(due) = state
+        .read_marker("push-pending")
+        .and_then(|s| s.parse::<u64>().ok())
+    {
+        if due > now {
+            return Ok(());
+        }
+    }
+    let secs = wait.as_secs().max(1);
+    state.write_marker("push-pending", &(now + secs).to_string())?;
+    let exe = std::env::current_exe()?;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(["push", "--after", &secs.to_string()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    // SAFETY: setsid only detaches the child from the caller's session and
+    // controlling terminal; it takes no arguments and touches no shared state.
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    match cmd.spawn() {
+        Ok(_) => {
+            state.append_event(&Event {
+                ts: state::now_rfc3339(),
+                kind: "push-deferred".into(),
+                event: attrib.event.clone(),
+                account: attrib.account.clone(),
+                session: attrib.session.clone(),
+                cwd: attrib.cwd.clone(),
+                message: format!("push in {secs}s"),
+                ..Default::default()
+            })?;
+            state.log(&format!("{}: push deferred {secs}s", attrib.event));
+        }
+        Err(e) => {
+            state.remove("push-pending");
+            state.log(&format!("could not start the deferred push: {e}"));
+        }
+    }
+    Ok(())
+}
+
+/// Body of `memsaga push --after N`: sleep, then push whatever is ahead.
+/// Runs detached; nothing is printed, everything goes to the state dir.
+pub fn deferred_push(cfg: &Config, after_secs: u64) -> Result<()> {
+    std::thread::sleep(Duration::from_secs(after_secs));
+    let state = State::new(cfg.state_dir());
+    let git = Git::new(&cfg.repo);
+    let attrib = Attribution {
+        event: "deferred".into(),
+        ..Default::default()
+    };
+    if git.has_remote("origin") && !nothing_to_push(&git) {
+        push_now(cfg, &state, &attrib)?;
+    }
+    state.remove("push-pending");
+    Ok(())
 }
 
 /// The reporter: commits since the last report, as a one-line notice, or None.

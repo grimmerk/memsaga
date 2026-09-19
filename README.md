@@ -108,7 +108,7 @@ exclude_paths = ["skills/synced"] # root-relative subtrees
 extra_files = []                  # single files outside every root, e.g. "~/.config/codev/accounts.json"
 granularity = "turn"             # or "edit": one commit per Write/Edit
 reporter = true                  # one-line notice in the terminal after a commit
-push_min_interval_secs = 600     # 0 disables pushes on Stop
+push_min_interval_secs = 600     # at most one push per interval on Stop; a throttled push is deferred to the end of the window, not dropped. 0 disables pushes on Stop
 push_on_session_end = true
 
 [[roots]]
