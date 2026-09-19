@@ -222,6 +222,9 @@ pub fn push_now(cfg: &Config, state: &State, attrib: &Attribution) -> Result<boo
 /// process (its own session, no stdio), so it outlives the hook that spawned
 /// it and whatever process group Claude Code tears down.
 fn defer_push(state: &State, wait: Duration, attrib: &Attribution) -> Result<()> {
+    // Check-and-claim under the state lock so two concurrent Stops cannot
+    // both start a waiter.
+    let _guard = state.lock(Duration::from_secs(5))?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -234,7 +237,7 @@ fn defer_push(state: &State, wait: Duration, attrib: &Attribution) -> Result<()>
             return Ok(());
         }
     }
-    let secs = wait.as_secs().max(1);
+    let secs = (wait.as_secs_f64().ceil() as u64).max(1);
     state.write_marker("push-pending", &(now + secs).to_string())?;
     let exe = std::env::current_exe()?;
     let mut cmd = std::process::Command::new(exe);
@@ -278,6 +281,20 @@ fn defer_push(state: &State, wait: Duration, attrib: &Attribution) -> Result<()>
 pub fn deferred_push(cfg: &Config, after_secs: u64) -> Result<()> {
     std::thread::sleep(Duration::from_secs(after_secs));
     let state = State::new(cfg.state_dir());
+    // A SessionEnd or manual push may have happened while sleeping; keep the
+    // at-most-one-push-per-interval promise relative to that newer push.
+    let interval = Duration::from_secs(cfg.push_min_interval_secs);
+    loop {
+        let remaining = state
+            .mtime("last-push")
+            .and_then(|t| t.elapsed().ok())
+            .map(|e| interval.saturating_sub(e))
+            .unwrap_or(Duration::ZERO);
+        if remaining.is_zero() {
+            break;
+        }
+        std::thread::sleep(remaining);
+    }
     let git = Git::new(&cfg.repo);
     let attrib = Attribution {
         event: "deferred".into(),

@@ -694,7 +694,7 @@ fn config_change_triggers_a_sweep_and_the_config_mirrors_itself() {
 
 #[test]
 fn throttled_push_is_deferred_not_dropped() {
-    let fx = fixture("turn", "push_min_interval_secs = 2\n");
+    let fx = fixture("turn", "push_min_interval_secs = 4\n");
     run(&fx, &["init", "--no-backfill"]);
     let origin = fx.repo.parent().unwrap().join("origin.git");
     assert!(std::process::Command::new("git")
@@ -728,27 +728,23 @@ fn throttled_push_is_deferred_not_dropped() {
     let head = git(&fx, &["rev-parse", "HEAD"]).trim().to_string();
     assert_ne!(head, before, "the Stop must have committed");
     assert_eq!(origin_head(), before, "throttled: not pushed yet");
-    assert!(fx.repo.join(".git/memsaga/push-pending").exists());
+    let marker = fx.repo.join(".git/memsaga/push-pending");
+    assert!(marker.exists(), "a waiter must have been scheduled");
 
-    // No further hook call: the detached waiter pushes on its own.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
-    while origin_head() != head && std::time::Instant::now() < deadline {
+    // No further hook call: the detached waiter pushes on its own, records
+    // the event, and removes the marker (in that order, so wait for the last).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(12);
+    while marker.exists() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
-    assert_eq!(origin_head(), head, "deferred push never arrived");
+    assert!(!marker.exists(), "deferred push never finished");
+    assert_eq!(origin_head(), head, "deferred push did not reach origin");
     let events = fs::read_to_string(fx.repo.join(".git/memsaga/events.jsonl")).unwrap();
     assert!(events.contains("\"push-deferred\""), "{events}");
     assert!(
         events.contains("\"kind\":\"push\",\"event\":\"deferred\""),
         "{events}"
     );
-    // The marker is gone once the waiter has done its job.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-    while fx.repo.join(".git/memsaga/push-pending").exists() && std::time::Instant::now() < deadline
-    {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    assert!(!fx.repo.join(".git/memsaga/push-pending").exists());
 }
 
 #[test]
