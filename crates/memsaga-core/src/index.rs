@@ -69,12 +69,65 @@ pub fn write_index(cfg: &Config, scope: &Scope) -> Result<()> {
         writeln!(md)?;
         paths.insert(root.label.clone(), per_root);
     }
+    let companions = list_companions(&cfg.repo.join("companion"));
+    if !companions.is_empty() {
+        writeln!(
+            md,
+            "## companion
+"
+        )?;
+        writeln!(
+            md,
+            "Translations and annotations of documents that live in other repositories (see the `companion-docs` skill).
+"
+        )?;
+        for c in &companions {
+            writeln!(md, "- [{c}](companion/{})", link_dest(c))?;
+        }
+        writeln!(md)?;
+    }
     std::fs::write(cfg.repo.join("index.md"), md)?;
     std::fs::write(
         cfg.repo.join("paths.json"),
         serde_json::to_string_pretty(&paths)? + "\n",
     )?;
     Ok(())
+}
+
+/// Percent-encode the characters that would break a Markdown link
+/// destination; `/` and ordinary path characters stay readable.
+fn link_dest(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for b in path.bytes() {
+        match b {
+            b' ' | b'(' | b')' | b'[' | b']' | b'#' | b'%' | b'<' | b'>' | b'?' => {
+                out.push_str(&format!("%{b:02X}"))
+            }
+            _ => out.push(b as char),
+        }
+    }
+    out
+}
+
+/// Every file under `companion/`, relative, sorted.
+fn list_companions(dir: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    if !dir.is_dir() {
+        return out;
+    }
+    for item in walkdir::WalkDir::new(dir)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if item.file_type().is_file() {
+            if let Ok(rel) = item.path().strip_prefix(dir) {
+                out.push(rel.to_string_lossy().to_string());
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 fn dir_stats(dir: &Path) -> (usize, String) {

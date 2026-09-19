@@ -31,6 +31,42 @@ impl Stats {
     }
 }
 
+/// Repo path for an `extra_files` entry: `extra/home/<path under $HOME>` or
+/// `extra/root/<absolute path>`. Collision-free, and readable on GitHub.
+pub fn extra_repo_rel(p: &Path) -> PathBuf {
+    // `..` in a configured path must not let the copy leave the repo.
+    let p = &normalize(p);
+    if let Some(home) = dirs::home_dir() {
+        if let Ok(rel) = p.strip_prefix(&home) {
+            return PathBuf::from("extra/home").join(rel);
+        }
+    }
+    let rel = p.strip_prefix("/").unwrap_or(p);
+    PathBuf::from("extra/root").join(rel)
+}
+
+/// Copy memsaga's own config file to `<repo>/memsaga/config.toml` and every
+/// `extra_files` entry to its `extra/` path. Missing sources are skipped, and
+/// nothing under `memsaga/` or `extra/` is ever deleted here: an entry removed
+/// from the config keeps its last mirrored copy until the user deletes it.
+pub fn sync_self_and_extras(cfg: &crate::config::Config) -> Result<Stats> {
+    let mut stats = Stats::default();
+    let own = crate::config::config_path();
+    if own.is_file() && copy_if_changed(&own, &cfg.repo.join("memsaga/config.toml"))? {
+        stats.copied += 1;
+    }
+    for src in cfg.extra_files() {
+        if !src.is_file() {
+            continue;
+        }
+        let dst = cfg.repo.join(extra_repo_rel(&src));
+        if copy_if_changed(&src, &dst)? {
+            stats.copied += 1;
+        }
+    }
+    Ok(stats)
+}
+
 /// Mirror every entry of `root` into `repo/<label>/`, then prune project
 /// directories whose memory vanished or became excluded.
 pub fn sync_root(scope: &Scope, root: &Root, repo: &Path) -> Result<Stats> {
@@ -350,6 +386,24 @@ pub fn relative_path(from_dir: &Path, to: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extra_repo_rel_stays_inside_the_repo() {
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(
+            extra_repo_rel(&home.join(".config/codev/accounts.json")),
+            PathBuf::from("extra/home/.config/codev/accounts.json")
+        );
+        assert_eq!(
+            extra_repo_rel(Path::new("/etc/hosts")),
+            PathBuf::from("extra/root/etc/hosts")
+        );
+        // `..` is resolved lexically first, so it cannot climb out of extra/.
+        let tricky = home.join("a/../../../etc/passwd");
+        let rel = extra_repo_rel(&tricky);
+        assert!(!rel.components().any(|c| c.as_os_str() == ".."), "{rel:?}");
+        assert!(rel.starts_with("extra/"), "{rel:?}");
+    }
 
     #[test]
     fn relative_path_walks_up_then_down() {

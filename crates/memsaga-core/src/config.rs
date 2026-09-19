@@ -52,6 +52,10 @@ pub struct Config {
     /// Root-relative paths excluded with their whole subtree, e.g. `skills/synced`
     /// (Claude Code's own synced skills from claude.ai are not the user's files).
     pub exclude_paths: Vec<String>,
+    /// Single files outside every root to mirror as well, absolute or
+    /// `~/`-prefixed (for example codev's `~/.config/codev/accounts.json`).
+    /// Stored under `extra/` in the repo; never deleted by the tool.
+    pub extra_files: Vec<String>,
     pub granularity: Granularity,
     /// Print a one-line terminal notice at the end of a turn that committed.
     pub reporter: bool,
@@ -76,6 +80,7 @@ impl Default for Config {
             ],
             exclude_projects: Vec::new(),
             exclude_paths: vec!["skills/synced".into()],
+            extra_files: Vec::new(),
             granularity: Granularity::Turn,
             reporter: true,
             push_min_interval_secs: 600,
@@ -131,6 +136,23 @@ impl Config {
             }
         }
         Ok(cfg)
+    }
+
+    /// `extra_files` with `~` expanded.
+    pub fn extra_files(&self) -> Vec<PathBuf> {
+        self.extra_files.iter().map(|s| expand_tilde(s)).collect()
+    }
+
+    /// A stable digest of the effective configuration (file plus env
+    /// overrides). Stored in the state dir after each sweep; a different value
+    /// at the next Stop means the scope changed, so a sweep runs even when no
+    /// file in the old scope is newer than the marker.
+    pub fn fingerprint(&self) -> String {
+        use std::hash::{Hash, Hasher};
+        let text = serde_json::to_string(self).unwrap_or_default();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut h);
+        format!("{:016x}", h.finish())
     }
 
     /// The root whose path equals `CLAUDE_CONFIG_DIR` (or `~/.claude` when unset).

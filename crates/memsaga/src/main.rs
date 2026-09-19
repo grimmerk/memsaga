@@ -471,6 +471,20 @@ fn cmd_status(n: usize) -> Result<()> {
             "clear"
         }
     );
+    let scope = Scope::new(&cfg);
+    for root in &cfg.roots {
+        let n = scope
+            .entries(root)
+            .iter()
+            .filter(|e| matches!(e, Entry::Memory { .. }))
+            .count();
+        println!(
+            "root {}: {} memory dir(s) ({})",
+            root.label,
+            n,
+            root.path.display()
+        );
+    }
     let events = state.read_events();
     println!("recent events:");
     for ev in events.iter().rev().take(n) {

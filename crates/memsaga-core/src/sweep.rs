@@ -43,6 +43,19 @@ pub fn needs_sweep(cfg: &Config, scope: &Scope, state: &State) -> bool {
         Some(m) => m,
         None => return true, // never swept
     };
+    // The scope itself changed (a file or dir added to the config, an env
+    // override), or the config file was edited: the old marker says nothing
+    // about files that were not in scope when it was set.
+    if state.read_marker("config-fingerprint").as_deref() != Some(cfg.fingerprint().as_str())
+        || state::newer_than(&crate::config::config_path(), marker)
+    {
+        return true;
+    }
+    for p in cfg.extra_files() {
+        if state::newer_than(&p, marker) {
+            return true;
+        }
+    }
     for root in &cfg.roots {
         // The pre-2026-09-18 layout: move it even when nothing live changed.
         if cfg
@@ -80,6 +93,8 @@ pub fn needs_sweep(cfg: &Config, scope: &Scope, state: &State) -> bool {
             if name == ".git"
                 || name == "index.md"
                 || name == "paths.json"
+                || name == "memsaga"
+                || name == "extra"
                 || cfg.roots.iter().any(|r| r.label == name)
             {
                 continue;
@@ -136,6 +151,7 @@ pub fn refresh_mirror(cfg: &Config, scope: &Scope) -> Result<(usize, usize)> {
         copied += s.copied + s.linked;
         deleted += s.deleted;
     }
+    copied += mirror::sync_self_and_extras(cfg)?.copied;
     index::write_index(cfg, scope)?;
     Ok((copied, deleted))
 }
@@ -152,7 +168,7 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
         );
     }
     let state = State::new(cfg.state_dir());
-    let _guard = state.lock(Duration::from_secs(20)).context("sweep lock")?;
+    let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
     refresh_mirror(cfg, &scope)?;
     // Stage into a throwaway index so new files show up in the diff without
     // touching whatever the user may have staged in the real one.
@@ -204,7 +220,7 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         );
     }
     let state = State::new(cfg.state_dir());
-    let _guard = state.lock(Duration::from_secs(20)).context("sweep lock")?;
+    let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
     let sweep_start = SystemTime::now();
 
     let (copied, deleted) = refresh_mirror(cfg, &scope)?;
@@ -234,6 +250,7 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     // Promote the marker only after a successful pass; edits made during the
     // sweep have mtimes after `sweep_start` and are caught next time.
     set_marker(&state, sweep_start)?;
+    state.write_marker("config-fingerprint", &cfg.fingerprint())?;
     state.remove("dirty");
     out.duration_ms = started.elapsed().as_millis() as u64;
     let ev = Event {
