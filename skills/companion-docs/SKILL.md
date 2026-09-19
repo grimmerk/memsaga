@@ -1,6 +1,6 @@
 ---
 name: companion-docs
-description: Where to put a translated or annotated companion of a document that must not be committed to its own repository (for example a Traditional Chinese version of an English doc in a company repo). Use when the user asks for a translation, a 中文版 / 繁中版 / 繁中 / zh-tw version, a companion or side-by-side version of a document, or when reading a document that may already have one. Not for a request to reply in Chinese (用繁中跟我對話): that is about the conversation language, not a document.
+description: Where to put a translated or annotated companion of a document that must not be committed to its own repository (for example a Traditional Chinese version of an English doc in a company repo). Use when the user asks for a translation, a 中文版 / 繁中版 / 繁中 / zh-tw version, a companion or side-by-side version of a document, when reading a document that may already have one, or when the user mentions a companion or the memories repo's companion/ directory. Not for a request to reply in Chinese (用繁中跟我對話): that is about the conversation language, not a document.
 ---
 
 # Companion docs
@@ -35,6 +35,13 @@ the source appears: `~/git/memories/companion/webapp/docs/new-design.zh-tw.md`
 for a future `~/git/webapp/docs/new-design.md`. Set `status: draft` and leave
 `sources` empty; fill `sources` in when the source is committed. Ask the user
 where the source will live if it is not obvious.
+
+A draft has no source file for a later session to read, so also add one line
+to that repository's auto-memory index (`MEMORY.md` under
+`~/.claude/projects/<slug>/memory/`): the topic, the companion's path, and
+"no source yet". The pointer is what a fresh session in that repository
+loads; the content stays in the companion. Remove the line once the source
+is committed, since the path rule finds the companion from then on.
 
 ## Frontmatter
 
