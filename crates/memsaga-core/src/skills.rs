@@ -60,8 +60,10 @@ mod tests {
         for skill in BUNDLED {
             let mut lines = skill.content.lines();
             assert_eq!(lines.next(), Some("---"), "{}: no frontmatter", skill.name);
+            let mut closed = false;
             for line in lines {
                 if line == "---" {
+                    closed = true;
                     break;
                 }
                 let (key, value) = line
@@ -75,6 +77,7 @@ mod tests {
                     skill.name
                 );
             }
+            assert!(closed, "{}: frontmatter never closed", skill.name);
         }
     }
 }
