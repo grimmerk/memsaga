@@ -77,6 +77,12 @@ Get the source commit with `git -C <source repo> log -1 --format='%h %cI' -- <pa
    docs; the companion is complete on its own.
 4. Nothing else to do: memsaga commits `companion/` at the next `Stop`.
 
+## Listing what exists
+
+`memsaga companions [repo name]` prints every companion with its status and
+source; in a session the user can type `/companions webapp` (or
+`! memsaga companions webapp`) to see the same list directly.
+
 ## When reading a document
 
 Before summarising or translating a file under `~/git/<repo>/`, check whether

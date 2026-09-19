@@ -25,6 +25,7 @@
 //! - `backfill` replaying transcripts into dated commits
 
 pub mod backfill;
+pub mod companion;
 pub mod config;
 pub mod git;
 pub mod hook;

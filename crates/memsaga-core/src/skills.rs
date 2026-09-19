@@ -20,6 +20,10 @@ pub const BUNDLED: &[BundledSkill] = &[
         name: "companion-docs",
         content: include_str!("../../../skills/companion-docs/SKILL.md"),
     },
+    BundledSkill {
+        name: "companions",
+        content: include_str!("../../../skills/companions/SKILL.md"),
+    },
 ];
 
 pub fn find(name: &str) -> Option<&'static BundledSkill> {

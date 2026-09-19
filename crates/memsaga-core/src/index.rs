@@ -69,7 +69,10 @@ pub fn write_index(cfg: &Config, scope: &Scope) -> Result<()> {
         writeln!(md)?;
         paths.insert(root.label.clone(), per_root);
     }
-    let companions = list_companions(&cfg.repo.join("companion"));
+    let companions: Vec<String> = crate::companion::list(&cfg.repo, None)
+        .into_iter()
+        .map(|c| c.rel)
+        .collect();
     if !companions.is_empty() {
         writeln!(
             md,
@@ -106,27 +109,6 @@ fn link_dest(path: &str) -> String {
             _ => out.push(b as char),
         }
     }
-    out
-}
-
-/// Every file under `companion/`, relative, sorted.
-fn list_companions(dir: &Path) -> Vec<String> {
-    let mut out = Vec::new();
-    if !dir.is_dir() {
-        return out;
-    }
-    for item in walkdir::WalkDir::new(dir)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        if item.file_type().is_file() {
-            if let Ok(rel) = item.path().strip_prefix(dir) {
-                out.push(rel.to_string_lossy().to_string());
-            }
-        }
-    }
-    out.sort();
     out
 }
 
