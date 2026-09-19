@@ -1,7 +1,7 @@
 ---
 name: companions
 description: List the companion documents (translations, annotated copies, drafts) memsaga keeps under its data repo's companion/ directory, optionally for one source repository. User-invoked as /companions [repo name]; the output is printed verbatim so the user can read it directly.
-argument-hint: [repo name]
+argument-hint: [repo dir name under ~/git, e.g. webapp; empty = all]
 disable-model-invocation: true
 ---
 
