@@ -102,7 +102,12 @@ enum Cmd {
         root: Vec<PathBuf>,
     },
     /// Push to origin now.
-    Push,
+    Push {
+        /// Wait this many seconds first, then push silently (used internally
+        /// for the throttled push; runs detached from the hook that started it).
+        #[arg(long)]
+        after: Option<u64>,
+    },
     /// Replay transcripts into dated commits (normally part of init).
     Backfill {
         #[arg(long, default_value_t = 120)]
@@ -293,15 +298,31 @@ fn run(cli: Cli) -> Result<()> {
             }
             Ok(())
         }
-        Cmd::Push => {
+        Cmd::Push { after } => {
             let cfg = Config::load()?;
+            if let Some(secs) = after {
+                // Detached waiter: never fail loudly, the state dir has the log.
+                if let Err(e) = hook::deferred_push(&cfg, secs) {
+                    State::new(cfg.state_dir()).log(&format!("deferred push: error: {e:#}"));
+                }
+                return Ok(());
+            }
             let git = Git::new(&cfg.repo);
             if !git.has_remote("origin") {
                 anyhow::bail!("no remote named origin in {}", cfg.repo.display());
             }
-            git.push("origin")?;
-            State::new(cfg.state_dir()).touch("last-push")?;
-            println!("pushed");
+            let attrib = memsaga_core::sweep::Attribution {
+                event: "manual".into(),
+                ..Default::default()
+            };
+            if hook::push_now(&cfg, &State::new(cfg.state_dir()), &attrib)? {
+                println!("pushed");
+            } else {
+                anyhow::bail!(
+                    "push failed; see {}",
+                    cfg.state_dir().join("memsaga.log").display()
+                );
+            }
             Ok(())
         }
         Cmd::Backfill { group_window } => {
