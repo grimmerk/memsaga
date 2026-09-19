@@ -1,6 +1,6 @@
 ---
 name: companion-docs
-description: Where to put a translated or annotated companion of a document that must not be committed to its own repository (for example a Traditional Chinese version of an English doc in a company repo). Use when the user asks for a translation, a 中文版 / 繁中版, a companion or side-by-side version of a file, or when reading a document that may already have one.
+description: Where to put a translated or annotated companion of a document that must not be committed to its own repository (for example a Traditional Chinese version of an English doc in a company repo). Use when the user asks for a translation, a 中文版 / 繁中版 / 繁中 / zh-tw version, a companion or side-by-side version of a document, or when reading a document that may already have one. Not for a request to reply in Chinese (用繁中跟我對話): that is about the conversation language, not a document.
 ---
 
 # Companion docs
