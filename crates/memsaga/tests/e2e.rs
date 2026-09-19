@@ -635,6 +635,72 @@ fn status_reports_recent_events() {
 }
 
 #[test]
+fn config_change_triggers_a_sweep_and_the_config_mirrors_itself() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let files = head_files(&fx);
+    assert!(
+        files.iter().any(|f| f == "memsaga/config.toml"),
+        "{files:?}"
+    );
+    let before = commits(&fx);
+    // A Stop with nothing new is a no-op.
+    hook(&fx, &stop("s0"));
+    assert_eq!(commits(&fx), before);
+    // Widen the scope to settings.json (its mtime is older than the marker).
+    let extra = fx.claude.parent().unwrap().join("extra.json");
+    write(&extra, "{\"extra\":true}\n");
+    let toml = fs::read_to_string(&fx.cfg).unwrap();
+    write(
+        &fx.cfg,
+        &format!(
+            "files = [\"CLAUDE.md\", \"settings.json\"]\nextra_files = [\"{}\"]\n{toml}",
+            extra.display()
+        ),
+    );
+    hook(&fx, &stop("s1"));
+    assert_eq!(commits(&fx), before + 1, "config change must sweep");
+    let files = head_files(&fx);
+    for want in [
+        "claude/settings.json",
+        "claude-work/settings.json",
+        "memsaga/config.toml",
+    ] {
+        assert!(files.iter().any(|f| f == want), "missing {want}: {files:?}");
+    }
+    assert!(
+        files
+            .iter()
+            .any(|f| f.starts_with("extra/") && f.ends_with("/extra.json")),
+        "{files:?}"
+    );
+    // The extra file is watched by mtime like everything else.
+    let before = commits(&fx);
+    write(&extra, "{\"extra\":2}\n");
+    hook(&fx, &stop("s2"));
+    assert_eq!(commits(&fx), before + 1);
+    let out = run(&fx, &["status"]);
+    assert!(
+        out.contains("root claude: 1 memory dir(s)")
+            && out.contains("root claude-work: 1 memory dir(s)"),
+        "{out}"
+    );
+}
+
+#[test]
+fn companions_are_listed_in_the_index() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    write(&fx.repo.join("companion/webapp/docs/a.zh-tw.md"), "# 中文\n");
+    hook(&fx, &stop("s1"));
+    let idx = fs::read_to_string(fx.repo.join("index.md")).unwrap();
+    assert!(
+        idx.contains("[webapp/docs/a.zh-tw.md](companion/webapp/docs/a.zh-tw.md)"),
+        "{idx}"
+    );
+}
+
+#[test]
 fn diff_shows_what_the_next_sweep_would_commit() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);

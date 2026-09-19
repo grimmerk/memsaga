@@ -80,6 +80,8 @@ Repo layout:
   claude-work/…                      second account; shared files stay symlinks
   index.md                           generated table of every project
   paths.json                         slug → real working directory
+  memsaga/config.toml                this config file, mirrored automatically
+  extra/home/…  extra/root/…         extra_files, by their real path
   companion/  manual/  …             yours: committed, never deleted by the tool
 ```
 
@@ -102,6 +104,7 @@ memory = true
 exclude = ["*.codev-bak*", "*.codev-tmp-*", ".DS_Store"]
 exclude_projects = []            # slug globs
 exclude_paths = ["skills/synced"] # root-relative subtrees
+extra_files = []                  # single files outside every root, e.g. "~/.config/codev/accounts.json"
 granularity = "turn"             # or "edit": one commit per Write/Edit
 reporter = true                  # one-line notice in the terminal after a commit
 push_min_interval_secs = 600     # 0 disables pushes on Stop

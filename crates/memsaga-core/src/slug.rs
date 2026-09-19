@@ -10,10 +10,15 @@ use crate::config::Root;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-/// Encode a working directory the way Claude Code does.
+/// Encode a working directory the way Claude Code does. It replaces every
+/// UTF-16 code unit, not every character (measured 2026-09-19: a character
+/// outside the BMP, such as an emoji, becomes two dashes).
 pub fn encode(path: &str) -> String {
-    path.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+    path.encode_utf16()
+        .map(|u| match u8::try_from(u) {
+            Ok(b) if b.is_ascii_alphanumeric() => b as char,
+            _ => '-',
+        })
         .collect()
 }
 
@@ -80,6 +85,9 @@ mod tests {
         assert_eq!(encode("/Users/me/git/webapp"), "-Users-me-git-webapp");
         assert_eq!(encode("/Users/me/git/webapp.wiki"), "-Users-me-git-webapp-wiki");
         assert_eq!(encode("/private/tmp/x y"), "-private-tmp-x-y");
+        // One dash per UTF-16 code unit: a BMP character is one, an emoji two.
+        assert_eq!(encode("/h/café"), "-h-caf-");
+        assert_eq!(encode("/h/a🚀b"), "-h-a--b");
     }
 
     #[test]

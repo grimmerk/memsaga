@@ -31,6 +31,40 @@ impl Stats {
     }
 }
 
+/// Repo path for an `extra_files` entry: `extra/home/<path under $HOME>` or
+/// `extra/root/<absolute path>`. Collision-free, and readable on GitHub.
+pub fn extra_repo_rel(p: &Path) -> PathBuf {
+    if let Some(home) = dirs::home_dir() {
+        if let Ok(rel) = p.strip_prefix(&home) {
+            return PathBuf::from("extra/home").join(rel);
+        }
+    }
+    let rel = p.strip_prefix("/").unwrap_or(p);
+    PathBuf::from("extra/root").join(rel)
+}
+
+/// Copy memsaga's own config file to `<repo>/memsaga/config.toml` and every
+/// `extra_files` entry to its `extra/` path. Missing sources are skipped, and
+/// nothing under `memsaga/` or `extra/` is ever deleted here: an entry removed
+/// from the config keeps its last mirrored copy until the user deletes it.
+pub fn sync_self_and_extras(cfg: &crate::config::Config) -> Result<Stats> {
+    let mut stats = Stats::default();
+    let own = crate::config::config_path();
+    if own.is_file() && copy_if_changed(&own, &cfg.repo.join("memsaga/config.toml"))? {
+        stats.copied += 1;
+    }
+    for src in cfg.extra_files() {
+        if !src.is_file() {
+            continue;
+        }
+        let dst = cfg.repo.join(extra_repo_rel(&src));
+        if copy_if_changed(&src, &dst)? {
+            stats.copied += 1;
+        }
+    }
+    Ok(stats)
+}
+
 /// Mirror every entry of `root` into `repo/<label>/`, then prune project
 /// directories whose memory vanished or became excluded.
 pub fn sync_root(scope: &Scope, root: &Root, repo: &Path) -> Result<Stats> {

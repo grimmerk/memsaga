@@ -120,6 +120,20 @@ impl State {
         self.marker(name).exists()
     }
 
+    /// Contents of a marker file, trimmed; None when absent.
+    pub fn read_marker(&self, name: &str) -> Option<String> {
+        std::fs::read_to_string(self.marker(name))
+            .ok()
+            .map(|s| s.trim().to_string())
+    }
+
+    /// Replace a marker file's contents.
+    pub fn write_marker(&self, name: &str, value: &str) -> Result<()> {
+        self.ensure()?;
+        std::fs::write(self.marker(name), value)?;
+        Ok(())
+    }
+
     pub fn write_dirty(&self, info: &str) -> Result<()> {
         self.ensure()?;
         let mut f = OpenOptions::new()
