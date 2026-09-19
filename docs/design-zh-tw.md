@@ -789,6 +789,14 @@ flowchart LR
 3. `config-history` skill 做；global CLAUDE.md 的三行 pointer 是否要（見 §Phase 1 說明：skill 的 description 已足以讓 Claude 在需要時找到它，pointer 只是保險，代價是 CLAUDE.md 多三行）。
 4. 要不要現在用 `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` 做一個最小 mod 試水溫（只掛 `tool.call` 記事件，不碰 git），主要是為了看 work 帳號有沒有被 managed settings 限制。
 
+### 12.2 Companion 文件（2026-09-19 補記）
+
+- companion 不是 memory：memory 是 Claude 學到的短事實、以 repo 為 key、session 開始時載入索引；companion 是一整份文件的衍生版本（翻譯、註解、先寫的中文草稿）、以**來源檔案的路徑**為 key、只有讀到那個檔時才相關。放進 memory 會撐爆索引（webapp 已 95%），也綁錯層級。
+- 觸發條件是「讀了檔案 F」，不是「session 在哪個路徑」：查 `companion/<repo>/<path>.<lang>.md` 存不存在，一次字串對映加一個 stat，沒有掃描；跨 repo 讀文件自然涵蓋，不需要「在 repo-a 主動翻 repo-b 的 companion」。
+- 來源還不存在（公司 repo 先寫中文草稿、不能 commit）：路徑用來源將來的位置，`status: draft`、`sources` 留空（PR grimmerk/memsaga-private#8）。
+- 先只裝 skill，不掛 Read hook：靠使用者的話（中文版、翻譯）觸發，零成本。Read hook 是一個 stat 加 additionalContext，但每次 Read 多一次 process 啟動（約 5 ms，一個 session 一兩百次 Read），等實際看到 Claude 漏掉 companion 再加，加之前先量 Read 次數。到期檢查記在 `~/.claude` 的 maintenance to-do（2026-10-19）。
+- `index.md` 列出 `companion/` 底下的檔（PR grimmerk/memsaga-private#6），讓人和 Claude 都能瀏覽現有的 companion。
+
 ---
 
 ## 13. 實作紀錄（2026-09-18，Phase 1）

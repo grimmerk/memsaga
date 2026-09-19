@@ -108,6 +108,11 @@ enum Cmd {
         #[arg(long, default_value_t = 120)]
         group_window: i64,
     },
+    /// List companion documents under <repo>/companion/, optionally for one source repository.
+    Companions {
+        /// Source repository name (the first path component under companion/).
+        repo: Option<String>,
+    },
     /// Print the slug -> real path map.
     Paths,
     /// Print the effective configuration.
@@ -303,6 +308,28 @@ fn run(cli: Cli) -> Result<()> {
             let cfg = Config::load()?;
             let r = backfill::backfill(&cfg, group_window)?;
             println!("backfill: {} ops, {} commits, {} versions known / {} unknown, {} failed calls dropped, {} .. {}", r.ops, r.commits, r.known_versions, r.unknown_versions, r.failed_dropped, r.first_ts, r.last_ts);
+            Ok(())
+        }
+        Cmd::Companions { repo } => {
+            let cfg = Config::load()?;
+            let list = memsaga_core::companion::list(&cfg.repo, repo.as_deref());
+            if list.is_empty() {
+                println!(
+                    "no companions{} under {} (the companion-docs skill explains the convention)",
+                    repo.map(|r| format!(" for {r}")).unwrap_or_default(),
+                    cfg.repo.join("companion").display()
+                );
+                return Ok(());
+            }
+            let width = list.iter().map(|c| c.rel.len()).max().unwrap_or(0);
+            for c in &list {
+                let source = if c.source.is_empty() {
+                    "(no source yet)".to_string()
+                } else {
+                    format!("<- {}", c.source)
+                };
+                println!("{:<7} {:<width$}  {}", c.status, c.rel, source);
+            }
             Ok(())
         }
         Cmd::Paths => {

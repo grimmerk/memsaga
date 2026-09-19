@@ -688,6 +688,36 @@ fn config_change_triggers_a_sweep_and_the_config_mirrors_itself() {
 }
 
 #[test]
+fn companions_subcommand_lists_status_and_source() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let out = run(&fx, &["companions"]);
+    assert!(out.starts_with("no companions under"), "{out}");
+    write(
+        &fx.repo.join("companion/webapp/docs/a.zh-tw.md"),
+        "---\ntype: Translation\nsources:\n  - resource: ~/git/webapp/docs/a.md\n    commit: abc\nstatus: stable\n---\n# 中文\n",
+    );
+    write(
+        &fx.repo.join("companion/webapp/docs/new.zh-tw.md"),
+        "---\nstatus: draft\nsources: []\n---\n# 草稿\n",
+    );
+    write(&fx.repo.join("companion/other/x.zh-tw.md"), "plain\n");
+    let out = run(&fx, &["companions"]);
+    assert!(out.contains("stable  webapp/docs/a.zh-tw.md"), "{out}");
+    assert!(out.contains("<- ~/git/webapp/docs/a.md"), "{out}");
+    assert!(out.contains("draft   webapp/docs/new.zh-tw.md"), "{out}");
+    assert!(out.contains("(no source yet)"), "{out}");
+    assert!(out.contains("-       other/x.zh-tw.md"), "{out}");
+    let out = run(&fx, &["companions", "webapp"]);
+    assert!(
+        out.contains("webapp/docs/a.zh-tw.md") && !out.contains("other/"),
+        "{out}"
+    );
+    let out = run(&fx, &["companions", "nope"]);
+    assert!(out.starts_with("no companions for nope"), "{out}");
+}
+
+#[test]
 fn companions_are_listed_in_the_index() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
@@ -844,7 +874,8 @@ fn install_skills_writes_bundled_skills_without_touching_hooks() {
     );
     assert!(
         out.contains("skills/memsaga-history: written")
-            && out.contains("skills/companion-docs: written"),
+            && out.contains("skills/companion-docs: written")
+            && out.contains("skills/companions: written"),
         "{out}"
     );
     assert!(fx.claude.join("skills/memsaga-history/SKILL.md").exists());

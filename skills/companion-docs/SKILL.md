@@ -1,6 +1,6 @@
 ---
 name: companion-docs
-description: Where to put a translated or annotated companion of a document that must not be committed to its own repository (for example a Traditional Chinese version of an English doc in a company repo). Use when the user asks for a translation, a 中文版 / 繁中版, a companion or side-by-side version of a file, or when reading a document that may already have one.
+description: Where to put a translated or annotated companion of a document that must not be committed to its own repository (for example a Traditional Chinese version of an English doc in a company repo). Use when the user asks for a translation, a 中文版 / 繁中版 / 繁中 / zh-tw version, a companion or side-by-side version of a document, when reading a document that may already have one, or when the user mentions a companion, or memsaga's data repo by any name (the memories repo, memsaga KB, memsaga memory, memsaga data, memsaga memories) and its companion/ directory. Not for a request to reply in Chinese (用繁中跟我對話): that is about the conversation language, not a document.
 ---
 
 # Companion docs
@@ -24,6 +24,24 @@ at the end of the turn.
 
 Example: the companion of `~/git/webapp/docs/api.md` is
 `~/git/memories/companion/webapp/docs/api.zh-tw.md`.
+
+### When the source does not exist yet
+
+A document may be drafted in the companion language first (a design written
+in Traditional Chinese to discuss before any English version exists) in a
+repository where it cannot be committed. Use the same path rule with the path
+the source *will* have once it is written, so the companion is found the day
+the source appears: `~/git/memories/companion/webapp/docs/new-design.zh-tw.md`
+for a future `~/git/webapp/docs/new-design.md`. Set `status: draft` and leave
+`sources` empty; fill `sources` in when the source is committed. Ask the user
+where the source will live if it is not obvious.
+
+A draft has no source file for a later session to read, so also add one line
+to that repository's auto-memory index (`MEMORY.md` under
+`~/.claude/projects/<slug>/memory/`): the topic, the companion's path, and
+"no source yet". The pointer is what a fresh session in that repository
+loads; the content stays in the companion. Remove the line once the source
+is committed, since the path rule finds the companion from then on.
 
 ## Frontmatter
 
@@ -58,6 +76,12 @@ Get the source commit with `git -C <source repo> log -1 --format='%h %cI' -- <pa
 3. Do not add anything to the source repository, its `.gitignore`, or its
    docs; the companion is complete on its own.
 4. Nothing else to do: memsaga commits `companion/` at the next `Stop`.
+
+## Listing what exists
+
+`memsaga companions [repo name]` prints every companion with its status and
+source; in a session the user can type `/companions webapp` (or
+`! memsaga companions webapp`) to see the same list directly.
 
 ## When reading a document
 
