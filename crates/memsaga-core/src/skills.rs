@@ -47,3 +47,34 @@ pub fn install_into(root: &Path, skill: &BundledSkill) -> Result<bool> {
     std::fs::rename(&tmp, &path).with_context(|| format!("writing {}", path.display()))?;
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Strict YAML rejects an unquoted value containing `: `; Claude Code's
+    /// parser is lenient, GitHub's is not. Every bundled skill's frontmatter
+    /// must be valid for both.
+    #[test]
+    fn bundled_frontmatter_is_strict_yaml() {
+        for skill in BUNDLED {
+            let mut lines = skill.content.lines();
+            assert_eq!(lines.next(), Some("---"), "{}: no frontmatter", skill.name);
+            for line in lines {
+                if line == "---" {
+                    break;
+                }
+                let (key, value) = line
+                    .split_once(": ")
+                    .unwrap_or_else(|| panic!("{}: not a key: value line: {line}", skill.name));
+                assert!(!key.contains(' '), "{}: bad key {key:?}", skill.name);
+                let quoted = value.starts_with('"') && value.ends_with('"');
+                assert!(
+                    quoted || !value.contains(": "),
+                    "{}: `{key}` contains `: ` and is not quoted",
+                    skill.name
+                );
+            }
+        }
+    }
+}
