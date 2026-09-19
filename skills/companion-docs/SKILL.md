@@ -1,6 +1,6 @@
 ---
 name: companion-docs
-description: Where to put a translated or annotated companion of a document that must not be committed to its own repository (for example a Traditional Chinese version of an English doc in a company repo). Use when the user asks for a translation, a 中文版 / 繁中版 / 繁中 / zh-tw version, a companion or side-by-side version of a document, when reading a document that may already have one, or when the user mentions a companion or the memories repo's companion/ directory. Not for a request to reply in Chinese (用繁中跟我對話): that is about the conversation language, not a document.
+description: Where to put a translated or annotated companion of a document that must not be committed to its own repository (for example a Traditional Chinese version of an English doc in a company repo). Use when the user asks for a translation, a 中文版 / 繁中版 / 繁中 / zh-tw version, a companion or side-by-side version of a document, when reading a document that may already have one, or when the user mentions a companion, or memsaga's data repo by any name (the memories repo, memsaga KB, memsaga memory, memsaga data, memsaga memories) and its companion/ directory. Not for a request to reply in Chinese (用繁中跟我對話): that is about the conversation language, not a document.
 ---
 
 # Companion docs
