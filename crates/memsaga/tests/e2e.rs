@@ -692,10 +692,15 @@ fn companions_are_listed_in_the_index() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
     write(&fx.repo.join("companion/webapp/docs/a.zh-tw.md"), "# 中文\n");
+    write(&fx.repo.join("companion/webapp/docs/b (1).md"), "x\n");
     hook(&fx, &stop("s1"));
     let idx = fs::read_to_string(fx.repo.join("index.md")).unwrap();
     assert!(
         idx.contains("[webapp/docs/a.zh-tw.md](companion/webapp/docs/a.zh-tw.md)"),
+        "{idx}"
+    );
+    assert!(
+        idx.contains("[webapp/docs/b (1).md](companion/webapp/docs/b%20%281%29.md)"),
         "{idx}"
     );
 }

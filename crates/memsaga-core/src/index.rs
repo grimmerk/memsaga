@@ -82,7 +82,7 @@ pub fn write_index(cfg: &Config, scope: &Scope) -> Result<()> {
 "
         )?;
         for c in &companions {
-            writeln!(md, "- [{c}](companion/{c})")?;
+            writeln!(md, "- [{c}](companion/{})", link_dest(c))?;
         }
         writeln!(md)?;
     }
@@ -92,6 +92,21 @@ pub fn write_index(cfg: &Config, scope: &Scope) -> Result<()> {
         serde_json::to_string_pretty(&paths)? + "\n",
     )?;
     Ok(())
+}
+
+/// Percent-encode the characters that would break a Markdown link
+/// destination; `/` and ordinary path characters stay readable.
+fn link_dest(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for b in path.bytes() {
+        match b {
+            b' ' | b'(' | b')' | b'[' | b']' | b'#' | b'%' | b'<' | b'>' | b'?' => {
+                out.push_str(&format!("%{b:02X}"))
+            }
+            _ => out.push(b as char),
+        }
+    }
+    out
 }
 
 /// Every file under `companion/`, relative, sorted.
