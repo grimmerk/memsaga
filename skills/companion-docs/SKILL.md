@@ -25,6 +25,17 @@ at the end of the turn.
 Example: the companion of `~/git/webapp/docs/api.md` is
 `~/git/memories/companion/webapp/docs/api.zh-tw.md`.
 
+### When the source does not exist yet
+
+A document may be drafted in the companion language first (a design written
+in Traditional Chinese to discuss before any English version exists) in a
+repository where it cannot be committed. Use the same path rule with the path
+the source *will* have once it is written, so the companion is found the day
+the source appears: `~/git/memories/companion/webapp/docs/new-design.zh-tw.md`
+for a future `~/git/webapp/docs/new-design.md`. Set `status: draft` and leave
+`sources` empty; fill `sources` in when the source is committed. Ask the user
+where the source will live if it is not obvious.
+
 ## Frontmatter
 
 Every companion starts with YAML frontmatter following the Open Knowledge
