@@ -56,6 +56,11 @@ pub struct Config {
     /// `~/`-prefixed (for example codev's `~/.config/codev/accounts.json`).
     /// Stored under `extra/` in the repo; never deleted by the tool.
     pub extra_files: Vec<String>,
+    /// Top-level keys removed from the mirrored copy of `settings.json`.
+    /// Claude Code rewrites `model`, `effortLevel` and the per-model
+    /// `modelSettings` on every `/model` and `/effort`, which would otherwise
+    /// be a commit per toggle (measured: 17 such commits in two days).
+    pub settings_ignore_keys: Vec<String>,
     pub granularity: Granularity,
     /// Print a one-line terminal notice at the end of a turn that committed.
     pub reporter: bool,
@@ -77,10 +82,16 @@ impl Default for Config {
                 "*.codev-bak*".into(),
                 "*.codev-tmp-*".into(),
                 ".DS_Store".into(),
+                "__pycache__".into(),
             ],
             exclude_projects: Vec::new(),
             exclude_paths: vec!["skills/synced".into()],
             extra_files: Vec::new(),
+            settings_ignore_keys: vec![
+                "model".into(),
+                "effortLevel".into(),
+                "modelSettings".into(),
+            ],
             granularity: Granularity::Turn,
             reporter: true,
             push_min_interval_secs: 600,

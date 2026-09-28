@@ -13,7 +13,7 @@ use crate::git::Git;
 use crate::roots::Scope;
 use crate::state::{self, Event, State};
 use crate::sweep::{self, Attribution, Outcome};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -190,6 +190,12 @@ fn nothing_to_push(git: &Git) -> bool {
 /// `git push origin` now, recording the outcome as an event. The caller has
 /// decided that a push is wanted; this does not consult the throttle.
 pub fn push_now(cfg: &Config, state: &State, attrib: &Attribution) -> Result<bool> {
+    // One push at a time: a Stop push and a deferred push racing each other
+    // made GitHub reject the later one (2026-09-28); harmless, but noisy.
+    // A push-specific lock, so a stalled remote never blocks sweeps.
+    let _guard = state
+        .push_lock(Duration::from_secs(60))
+        .context("push lock")?;
     let git = Git::new(&cfg.repo);
     let mut ev = Event {
         ts: state::now_rfc3339(),

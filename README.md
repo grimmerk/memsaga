@@ -57,6 +57,7 @@ scope ends with a commit, and the terminal shows a one-line notice.
 | `memsaga sweep` | Mirror and commit now |
 | `memsaga push` | Push to `origin` now (pushes also happen on `Stop`, throttled, and on `SessionEnd`) |
 | `memsaga paths` | The slug → real-directory map |
+| `memsaga restore --all --at <rev>` | Every mirrored (in-scope) file of every root as it was at `<rev>`: overwrites what differs, never deletes, skips symlinks, keeps the live `settings_ignore_keys`; shows the diffs, one confirmation |
 | `memsaga companions [repo]` | List companion documents (status, path, source); `/companions` in a session prints the same |
 | `memsaga install --skills` | Write the bundled skills (`memsaga-history`, `companion-docs`, `companions`) into each config directory |
 | `memsaga uninstall` | Remove the hooks |
@@ -102,7 +103,8 @@ repo = "~/git/memories"
 files = ["CLAUDE.md"]
 dirs = ["skills", "hooks", "scripts"]
 memory = true
-exclude = ["*.codev-bak*", "*.codev-tmp-*", ".DS_Store"]
+exclude = ["*.codev-bak*", "*.codev-tmp-*", ".DS_Store", "__pycache__"]
+settings_ignore_keys = ["model", "effortLevel", "modelSettings"]  # dropped from the mirrored settings.json: Claude Code rewrites them on every /model and /effort
 exclude_projects = []            # slug globs
 exclude_paths = ["skills/synced"] # root-relative subtrees
 extra_files = []                  # single files outside every root, e.g. "~/.config/codev/accounts.json"

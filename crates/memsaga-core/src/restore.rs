@@ -69,19 +69,139 @@ pub fn locate(cfg: &Config, input: &str) -> Result<Located> {
     })
 }
 
+/// One file of a whole-tree restore.
+#[derive(Debug)]
+pub struct PlannedFile {
+    pub loc: Located,
+    pub content: Vec<u8>,
+}
+
+/// What `restore --all` would do at `rev`: every blob under a root's subtree
+/// whose content differs from the live file (or which is missing live).
+/// Symlinks and paths outside the allowlist are counted and skipped; nothing
+/// is ever deleted.
+#[derive(Debug, Default)]
+pub struct Plan {
+    pub changed: Vec<PlannedFile>,
+    pub identical: usize,
+    pub symlinks: usize,
+    pub skipped: usize,
+}
+
+pub fn plan_all(cfg: &Config, rev: &str) -> Result<Plan> {
+    let git = Git::new(&cfg.repo);
+    let mut plan = Plan::default();
+    for (mode, kind, path) in git.ls_tree(rev)? {
+        let label = path.split('/').next().unwrap_or("");
+        if !cfg.roots.iter().any(|r| r.label == label) {
+            continue; // index.md, paths.json, companion/, extra/, memsaga/
+        }
+        if mode == "120000" {
+            plan.symlinks += 1;
+            continue;
+        }
+        if kind != "blob" {
+            continue;
+        }
+        let loc = match locate(cfg, &path) {
+            Ok(l) => l,
+            Err(_) => {
+                plan.skipped += 1;
+                continue;
+            }
+        };
+        // A live symlink (the second account's CLAUDE.md, a skill linked
+        // elsewhere) is never written through, whatever the tree had.
+        if std::fs::symlink_metadata(&loc.live)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            plan.symlinks += 1;
+            continue;
+        }
+        let content = match content_at(cfg, &loc.repo_rel, rev)? {
+            Some(c) => c,
+            None => {
+                plan.skipped += 1;
+                continue;
+            }
+        };
+        let content = with_live_ignored_keys(cfg, &loc, content);
+        if std::fs::read(&loc.live).ok().as_deref() == Some(content.as_slice()) {
+            plan.identical += 1;
+        } else {
+            plan.changed.push(PlannedFile { loc, content });
+        }
+    }
+    Ok(plan)
+}
+
+/// The mirror stores `settings.json` without `settings_ignore_keys`
+/// (`model`, `effortLevel`, ...). Restoring it must not delete those from
+/// the live file: carry the live values of the ignored keys into the
+/// candidate. Anything that is not a JSON object is returned unchanged.
+pub fn with_live_ignored_keys(cfg: &Config, loc: &Located, candidate: Vec<u8>) -> Vec<u8> {
+    let is_settings = loc
+        .repo_rel
+        .file_name()
+        .map(|n| n == "settings.json")
+        .unwrap_or(false);
+    if !is_settings || cfg.settings_ignore_keys.is_empty() {
+        return candidate;
+    }
+    let live: serde_json::Value = match std::fs::read_to_string(&loc.live)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+    {
+        Some(v) => v,
+        None => return candidate,
+    };
+    let mut cand: serde_json::Value = match serde_json::from_slice(&candidate) {
+        Ok(v) => v,
+        Err(_) => return candidate,
+    };
+    let (Some(live_obj), Some(cand_obj)) = (live.as_object(), cand.as_object_mut()) else {
+        return candidate;
+    };
+    for k in &cfg.settings_ignore_keys {
+        if let Some(v) = live_obj.get(k) {
+            cand_obj.insert(k.clone(), v.clone());
+        }
+    }
+    match serde_json::to_string_pretty(&cand) {
+        Ok(s) => (s + "\n").into_bytes(),
+        Err(_) => candidate,
+    }
+}
+
 /// Where a write to `live` would really land: the path with every symlink
-/// resolved (the file itself may not exist yet, so its parent is resolved).
-/// Refuses a destination outside every mirrored root, e.g. a skill directory
-/// that is a symlink into `~/.agents/`.
+/// resolved. The file, or any number of its parents, may not exist yet (a
+/// restore into a deleted memory directory): the nearest existing ancestor
+/// is resolved and the missing tail appended. Refuses a destination outside
+/// every mirrored root, e.g. a skill directory that is a symlink into
+/// `~/.agents/`.
 pub fn verify_destination(cfg: &Config, live: &Path) -> Result<PathBuf> {
     let resolved = if live.exists() {
         std::fs::canonicalize(live)?
     } else {
-        let parent = live.parent().context("live path has no parent")?;
-        let name = live.file_name().context("live path has no file name")?;
-        std::fs::canonicalize(parent)
-            .with_context(|| format!("{} does not exist", parent.display()))?
-            .join(name)
+        let mut existing = live.to_path_buf();
+        let mut tail: Vec<std::ffi::OsString> = Vec::new();
+        while !existing.exists() {
+            let name = existing
+                .file_name()
+                .context("live path has no existing ancestor")?
+                .to_os_string();
+            tail.push(name);
+            existing = existing
+                .parent()
+                .context("live path has no existing ancestor")?
+                .to_path_buf();
+        }
+        let mut p = std::fs::canonicalize(&existing)?;
+        for name in tail.iter().rev() {
+            p.push(name);
+        }
+        p
     };
     let inside = cfg.roots.iter().any(|r| {
         std::fs::canonicalize(&r.path)
@@ -152,13 +272,36 @@ pub fn diff_against_live(cfg: &Config, live: &Path, candidate: &[u8]) -> Result<
 /// Write `candidate` to the live path and record the event. The caller has
 /// already shown the diff and obtained confirmation.
 pub fn write_live(cfg: &Config, loc: &Located, rev: &str, candidate: &[u8]) -> Result<()> {
-    let dest = verify_destination(cfg, &loc.live)?;
     let state = State::new(cfg.state_dir());
     // Hold the sweep lock so a concurrent Stop never mirrors a half-written file,
     // and replace atomically for any other reader.
     let _guard = state
         .lock(std::time::Duration::from_secs(20))
         .context("sweep lock")?;
+    write_one(cfg, &state, loc, rev, candidate)
+}
+
+/// `restore --all`: every file under one lock, so a concurrent Stop cannot
+/// commit a half-restored tree between two files.
+pub fn write_live_batch(cfg: &Config, files: &[PlannedFile], rev: &str) -> Result<usize> {
+    let state = State::new(cfg.state_dir());
+    let _guard = state
+        .lock(std::time::Duration::from_secs(60))
+        .context("sweep lock")?;
+    for f in files {
+        write_one(cfg, &state, &f.loc, rev, &f.content)?;
+    }
+    Ok(files.len())
+}
+
+fn write_one(
+    cfg: &Config,
+    state: &State,
+    loc: &Located,
+    rev: &str,
+    candidate: &[u8],
+) -> Result<()> {
+    let dest = verify_destination(cfg, &loc.live)?;
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }

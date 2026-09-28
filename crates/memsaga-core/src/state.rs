@@ -66,12 +66,22 @@ impl State {
 
     /// Acquire the sweep lock, polling until `timeout`.
     pub fn lock(&self, timeout: Duration) -> Result<LockGuard> {
+        self.lock_named("lock", timeout)
+    }
+
+    /// The push lock: pushes serialise among themselves without blocking
+    /// sweeps behind a slow remote.
+    pub fn push_lock(&self, timeout: Duration) -> Result<LockGuard> {
+        self.lock_named("push-lock", timeout)
+    }
+
+    fn lock_named(&self, name: &str, timeout: Duration) -> Result<LockGuard> {
         self.ensure()?;
         let file = OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
-            .open(self.dir.join("lock"))?;
+            .open(self.dir.join(name))?;
         let start = SystemTime::now();
         loop {
             // flock(2): exclusive, non-blocking. EWOULDBLOCK while another process holds it.
