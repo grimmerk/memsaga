@@ -69,6 +69,63 @@ pub fn locate(cfg: &Config, input: &str) -> Result<Located> {
     })
 }
 
+/// One file of a whole-tree restore.
+#[derive(Debug)]
+pub struct PlannedFile {
+    pub loc: Located,
+    pub content: Vec<u8>,
+}
+
+/// What `restore --all` would do at `rev`: every blob under a root's subtree
+/// whose content differs from the live file (or which is missing live).
+/// Symlinks and paths outside the allowlist are counted and skipped; nothing
+/// is ever deleted.
+#[derive(Debug, Default)]
+pub struct Plan {
+    pub changed: Vec<PlannedFile>,
+    pub identical: usize,
+    pub symlinks: usize,
+    pub skipped: usize,
+}
+
+pub fn plan_all(cfg: &Config, rev: &str) -> Result<Plan> {
+    let git = Git::new(&cfg.repo);
+    let mut plan = Plan::default();
+    for (mode, kind, path) in git.ls_tree(rev)? {
+        let label = path.split('/').next().unwrap_or("");
+        if !cfg.roots.iter().any(|r| r.label == label) {
+            continue; // index.md, paths.json, companion/, extra/, memsaga/
+        }
+        if mode == "120000" {
+            plan.symlinks += 1;
+            continue;
+        }
+        if kind != "blob" {
+            continue;
+        }
+        let loc = match locate(cfg, &path) {
+            Ok(l) => l,
+            Err(_) => {
+                plan.skipped += 1;
+                continue;
+            }
+        };
+        let content = match content_at(cfg, &loc.repo_rel, rev)? {
+            Some(c) => c,
+            None => {
+                plan.skipped += 1;
+                continue;
+            }
+        };
+        if std::fs::read(&loc.live).ok().as_deref() == Some(content.as_slice()) {
+            plan.identical += 1;
+        } else {
+            plan.changed.push(PlannedFile { loc, content });
+        }
+    }
+    Ok(plan)
+}
+
 /// Where a write to `live` would really land: the path with every symlink
 /// resolved (the file itself may not exist yet, so its parent is resolved).
 /// Refuses a destination outside every mirrored root, e.g. a skill directory

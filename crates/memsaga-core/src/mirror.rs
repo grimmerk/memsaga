@@ -117,7 +117,13 @@ fn sync_entry(scope: &Scope, root: &Root, entry: &Entry, repo: &Path) -> Result<
         if let Some(p) = dst.parent() {
             fs::create_dir_all(p)?;
         }
-        if copy_if_changed(&src, &dst)? {
+        let is_settings = matches!(entry, Entry::File { rel } if rel == "settings.json");
+        let copied = if is_settings && !scope.cfg.settings_ignore_keys.is_empty() {
+            copy_settings_stripped(&src, &dst, &scope.cfg.settings_ignore_keys)?
+        } else {
+            copy_if_changed(&src, &dst)?
+        };
+        if copied {
             stats.copied += 1;
         }
         return Ok(stats);
@@ -215,6 +221,34 @@ pub fn sync_dir(scope: &Scope, src: &Path, dst: &Path, prefix: &Path) -> Result<
 }
 
 /// Copy when size or mtime differ; keep the source mtime on the copy.
+/// Mirror `settings.json` without the volatile top-level keys, so toggling
+/// `/model` or `/effort` does not produce a commit. Falls back to a plain
+/// copy when the file is not a JSON object. Compared by content, not mtime.
+fn copy_settings_stripped(src: &Path, dst: &Path, ignore: &[String]) -> Result<bool> {
+    let text = fs::read_to_string(src)?;
+    let mut value: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => return copy_if_changed(src, dst),
+    };
+    let Some(obj) = value.as_object_mut() else {
+        return copy_if_changed(src, dst);
+    };
+    for k in ignore {
+        obj.remove(k);
+    }
+    let out = serde_json::to_string_pretty(&value)? + "\n";
+    if fs::read_to_string(dst).map(|d| d == out).unwrap_or(false) {
+        return Ok(false);
+    }
+    if let Ok(dm) = fs::symlink_metadata(dst) {
+        if !dm.is_file() {
+            remove_any(dst)?;
+        }
+    }
+    fs::write(dst, out).with_context(|| format!("writing {}", dst.display()))?;
+    Ok(true)
+}
+
 fn copy_if_changed(src: &Path, dst: &Path) -> Result<bool> {
     let sm = fs::metadata(src)?;
     if let Ok(dm) = fs::symlink_metadata(dst) {

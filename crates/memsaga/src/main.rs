@@ -58,14 +58,18 @@ enum Cmd {
     /// Copy one file from the repo's history back into its live location.
     /// The only command that writes into a config directory.
     Restore {
-        /// Repo-relative path (`claude/CLAUDE.md`) or the live path.
-        path: String,
+        /// Repo-relative path (`claude/CLAUDE.md`) or the live path. Omit with --all.
+        path: Option<String>,
         /// Revision to restore from (default HEAD).
         #[arg(long, default_value = "HEAD")]
         at: String,
         /// Skip the confirmation prompt.
         #[arg(long, short = 'y')]
         yes: bool,
+        /// Restore every file of every root as it was at --at. Overwrites
+        /// differing files, never deletes, skips symlinks.
+        #[arg(long)]
+        all: bool,
     },
     /// Last sweeps, last push, repo state.
     Status {
@@ -212,7 +216,12 @@ fn run(cli: Cli) -> Result<()> {
             }
             Ok(())
         }
-        Cmd::Restore { path, at, yes } => cmd_restore(&path, &at, yes),
+        Cmd::Restore { path, at, yes, all } => match (all, path) {
+            (true, None) => cmd_restore_all(&at, yes),
+            (false, Some(p)) => cmd_restore(&p, &at, yes),
+            (true, Some(_)) => anyhow::bail!("give either a path or --all, not both"),
+            (false, None) => anyhow::bail!("a path is required (or --all)"),
+        },
         Cmd::Status { n } => cmd_status(n),
         Cmd::Log { n } => {
             let cfg = Config::load()?;
@@ -442,6 +451,49 @@ fn cmd_init(no_backfill: bool, dry_run: bool, group_window: i64) -> Result<()> {
     } else {
         println!("import: nothing new to commit");
     }
+    Ok(())
+}
+
+fn cmd_restore_all(at: &str, yes: bool) -> Result<()> {
+    let cfg = Config::load()?;
+    let plan = restore::plan_all(&cfg, at)?;
+    println!(
+        "{} file(s) differ from {at}, {} identical, {} symlink(s) skipped, {} out of scope skipped; nothing is deleted",
+        plan.changed.len(),
+        plan.identical,
+        plan.symlinks,
+        plan.skipped
+    );
+    if plan.changed.is_empty() {
+        println!("nothing to restore");
+        return Ok(());
+    }
+    for f in &plan.changed {
+        println!(
+            "  {}  ->  {}",
+            f.loc.repo_rel.display(),
+            f.loc.live.display()
+        );
+    }
+    if !yes {
+        eprint!(
+            "Overwrite these {} live file(s)? [y/N] ",
+            plan.changed.len()
+        );
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        if !matches!(answer.trim(), "y" | "Y" | "yes") {
+            println!("not restored");
+            return Ok(());
+        }
+    }
+    let mut written = 0;
+    for f in &plan.changed {
+        restore::verify_destination(&cfg, &f.loc.live)?;
+        restore::write_live(&cfg, &f.loc, at, &f.content)?;
+        written += 1;
+    }
+    println!("restored {written} file(s) from {at}; the next Stop commits the live state");
     Ok(())
 }
 

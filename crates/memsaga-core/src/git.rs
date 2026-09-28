@@ -50,6 +50,21 @@ impl<'a> Git<'a> {
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
     }
 
+    /// Every entry of the tree at `rev`: (mode, type, path).
+    pub fn ls_tree(&self, rev: &str) -> Result<Vec<(String, String, String)>> {
+        let out = self.run_ok(&["ls-tree", "-r", "--full-tree", rev])?;
+        Ok(out
+            .lines()
+            .filter_map(|l| {
+                let (meta, path) = l.split_once('\t')?;
+                let mut parts = meta.split_whitespace();
+                let mode = parts.next()?.to_string();
+                let kind = parts.next()?.to_string();
+                Some((mode, kind, path.to_string()))
+            })
+            .collect())
+    }
+
     pub fn is_repo(&self) -> bool {
         self.repo.join(".git").is_dir()
     }

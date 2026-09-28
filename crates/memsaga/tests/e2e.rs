@@ -748,6 +748,85 @@ fn throttled_push_is_deferred_not_dropped() {
 }
 
 #[test]
+fn settings_volatile_keys_are_stripped_from_the_mirror() {
+    let fx = fixture("turn", "files = [\"CLAUDE.md\", \"settings.json\"]\n");
+    write(
+        &fx.claude.join("settings.json"),
+        "{\"model\":\"opus\",\"a\":1,\"effortLevel\":\"high\"}\n",
+    );
+    run(&fx, &["init", "--no-backfill"]);
+    let mirrored = fs::read_to_string(fx.repo.join("claude/settings.json")).unwrap();
+    assert!(
+        !mirrored.contains("model") && !mirrored.contains("effortLevel"),
+        "{mirrored}"
+    );
+    assert!(mirrored.contains("\"a\": 1"), "{mirrored}");
+    // Toggling only the volatile keys is not a commit.
+    let before = commits(&fx);
+    write(
+        &fx.claude.join("settings.json"),
+        "{\"model\":\"sonnet\",\"a\":1,\"effortLevel\":\"low\"}\n",
+    );
+    hook(&fx, &stop("s1"));
+    assert_eq!(
+        commits(&fx),
+        before,
+        "a model/effort toggle must not commit"
+    );
+    // A real change still is.
+    write(
+        &fx.claude.join("settings.json"),
+        "{\"model\":\"sonnet\",\"a\":2,\"effortLevel\":\"low\"}\n",
+    );
+    hook(&fx, &stop("s2"));
+    assert_eq!(commits(&fx), before + 1);
+}
+
+#[test]
+fn restore_all_puts_every_root_back_to_a_revision_without_deleting() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let rev = git(&fx, &["rev-parse", "HEAD"]).trim().to_string();
+    // Change two files, add a third, then commit the new state.
+    write(&fx.claude.join("CLAUDE.md"), "# changed\n");
+    write(
+        &fx.work.join("projects/-h-git-a/memory/w.md"),
+        "work changed\n",
+    );
+    write(&fx.claude.join("projects/-h-git-a/memory/new.md"), "new\n");
+    hook(&fx, &stop("s1"));
+    let out = run(&fx, &["restore", "--all", "--at", &rev, "--yes"]);
+    assert!(out.contains("2 file(s) differ"), "{out}");
+    assert!(out.contains("symlink(s) skipped"), "{out}");
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("CLAUDE.md")).unwrap(),
+        "# global\n"
+    );
+    assert_eq!(
+        fs::read_to_string(fx.work.join("projects/-h-git-a/memory/w.md")).unwrap(),
+        "work fact\n"
+    );
+    // Never deletes: the file added after `rev` survives.
+    assert!(fx.claude.join("projects/-h-git-a/memory/new.md").exists());
+    // Idempotent.
+    let out = run(&fx, &["restore", "--all", "--at", &rev, "--yes"]);
+    assert!(out.contains("nothing to restore"), "{out}");
+    // Both forms of misuse are refused.
+    assert!(!cmd(&fx)
+        .args(["restore"])
+        .output()
+        .unwrap()
+        .status
+        .success());
+    assert!(!cmd(&fx)
+        .args(["restore", "--all", "claude/CLAUDE.md"])
+        .output()
+        .unwrap()
+        .status
+        .success());
+}
+
+#[test]
 fn companions_subcommand_lists_status_and_source() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);

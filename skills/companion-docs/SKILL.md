@@ -1,6 +1,6 @@
 ---
 name: companion-docs
-description: "Where to put a translated or annotated companion of a document that must not be committed to its own repository (for example a Traditional Chinese version of an English doc in a company repo). Use when the user asks for a translation, a 中文版 / 繁中版 / 繁中 / zh-tw version, a companion or side-by-side version of a document, when reading a document that may already have one, or when the user mentions a companion, or memsaga's data repo by any name (the memories repo, memsaga KB, memsaga memory, memsaga data, memsaga memories) and its companion/ directory. Not for a request to reply in Chinese (用繁中跟我對話), which is about the conversation language, not a document."
+description: "Where to put a translated or annotated companion of a document that must not be committed to its own repository (for example a Traditional Chinese version of an English doc in a company repo). Use when the user asks for a translation or a version of a document in another language, however they name it (中文版 / 繁中 / zh-tw, en français, auf Deutsch, 日本語版), a companion or side-by-side version of a document, when reading a document that may already have one, or when the user mentions a companion, or memsaga's data repo by any name (the memories repo, memsaga KB, memsaga memory, memsaga data, memsaga memories) and its companion/ directory. Not for a request to reply in some language (用繁中跟我對話, answer in French), which is about the conversation language, not a document."
 ---
 
 # Companion docs
@@ -21,6 +21,8 @@ at the end of the turn.
   (`webapp`, `docs`), not the GitHub full name.
 - `<path inside that repo>` keeps the source's relative path and extension,
   then adds the language tag: `docs/api.md` -> `docs/api.zh-tw.md`.
+  The tag is the companion's language (`zh-tw`, `ja`, `de`, `fr`); the examples
+  below use `zh-tw` because that is the author's case, not a rule.
 
 Example: the companion of `~/git/webapp/docs/api.md` is
 `~/git/memories/companion/webapp/docs/api.zh-tw.md`.
