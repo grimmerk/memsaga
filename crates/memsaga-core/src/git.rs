@@ -52,9 +52,12 @@ impl<'a> Git<'a> {
 
     /// Every entry of the tree at `rev`: (mode, type, path).
     pub fn ls_tree(&self, rev: &str) -> Result<Vec<(String, String, String)>> {
-        let out = self.run_ok(&["ls-tree", "-r", "--full-tree", rev])?;
+        // -z: raw paths, NUL-separated, so a quoted or escaped name is not
+        // mistaken for the file name.
+        let out = self.run_ok(&["ls-tree", "-r", "-z", "--full-tree", rev])?;
         Ok(out
-            .lines()
+            .split('\0')
+            .filter(|l| !l.is_empty())
             .filter_map(|l| {
                 let (meta, path) = l.split_once('\t')?;
                 let mut parts = meta.split_whitespace();

@@ -192,7 +192,10 @@ fn nothing_to_push(git: &Git) -> bool {
 pub fn push_now(cfg: &Config, state: &State, attrib: &Attribution) -> Result<bool> {
     // One push at a time: a Stop push and a deferred push racing each other
     // made GitHub reject the later one (2026-09-28); harmless, but noisy.
-    let _guard = state.lock(Duration::from_secs(60)).context("push lock")?;
+    // A push-specific lock, so a stalled remote never blocks sweeps.
+    let _guard = state
+        .push_lock(Duration::from_secs(60))
+        .context("push lock")?;
     let git = Git::new(&cfg.repo);
     let mut ev = Event {
         ts: state::now_rfc3339(),

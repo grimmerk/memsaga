@@ -237,15 +237,20 @@ fn copy_settings_stripped(src: &Path, dst: &Path, ignore: &[String]) -> Result<b
         obj.remove(k);
     }
     let out = serde_json::to_string_pretty(&value)? + "\n";
-    if fs::read_to_string(dst).map(|d| d == out).unwrap_or(false) {
-        return Ok(false);
-    }
+    // Only a regular file counts as "already current"; a symlink is replaced.
     if let Ok(dm) = fs::symlink_metadata(dst) {
+        if dm.is_file() && fs::read_to_string(dst).map(|d| d == out).unwrap_or(false) {
+            return Ok(false);
+        }
         if !dm.is_file() {
             remove_any(dst)?;
         }
     }
     fs::write(dst, out).with_context(|| format!("writing {}", dst.display()))?;
+    // Keep the source's mode (a private settings file stays private).
+    if let Ok(sm) = fs::metadata(src) {
+        let _ = fs::set_permissions(dst, sm.permissions());
+    }
     Ok(true)
 }
 

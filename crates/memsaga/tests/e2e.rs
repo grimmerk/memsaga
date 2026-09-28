@@ -783,6 +783,43 @@ fn settings_volatile_keys_are_stripped_from_the_mirror() {
 }
 
 #[test]
+fn restore_keeps_the_live_volatile_settings_keys() {
+    let fx = fixture("turn", "files = [\"CLAUDE.md\", \"settings.json\"]\n");
+    write(
+        &fx.claude.join("settings.json"),
+        "{\"model\":\"opus\",\"a\":1}\n",
+    );
+    run(&fx, &["init", "--no-backfill"]);
+    let rev = git(&fx, &["rev-parse", "HEAD"]).trim().to_string();
+    write(
+        &fx.claude.join("settings.json"),
+        "{\"model\":\"sonnet\",\"a\":2}\n",
+    );
+    hook(&fx, &stop("s1"));
+    // Single-file and whole-tree restore both bring `a` back and keep `model`.
+    run(
+        &fx,
+        &["restore", "claude/settings.json", "--at", &rev, "--yes"],
+    );
+    let live: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(fx.claude.join("settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(live["a"], 1);
+    assert_eq!(live["model"], "sonnet");
+    write(
+        &fx.claude.join("settings.json"),
+        "{\"model\":\"haiku\",\"a\":3}\n",
+    );
+    hook(&fx, &stop("s2"));
+    run(&fx, &["restore", "--all", "--at", &rev, "--yes"]);
+    let live: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(fx.claude.join("settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(live["a"], 1);
+    assert_eq!(live["model"], "haiku");
+}
+
+#[test]
 fn restore_all_puts_every_root_back_to_a_revision_without_deleting() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
@@ -795,6 +832,24 @@ fn restore_all_puts_every_root_back_to_a_revision_without_deleting() {
     );
     write(&fx.claude.join("projects/-h-git-a/memory/new.md"), "new\n");
     hook(&fx, &stop("s1"));
+    // Declining leaves everything as it is.
+    let declined = cmd(&fx)
+        .args(["restore", "--all", "--at", &rev])
+        .write_stdin("n\n")
+        .output()
+        .unwrap();
+    let declined_out = String::from_utf8_lossy(&declined.stdout);
+    assert!(
+        declined_out.contains("not restored") && declined_out.contains("-# changed"),
+        "{declined_out}"
+    );
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("CLAUDE.md")).unwrap(),
+        "# changed\n"
+    );
+    // A deleted memory directory is recreated on the way back.
+    fs::remove_dir_all(fx.work.join("projects/-h-git-a/memory")).unwrap();
+    hook(&fx, &stop("s2"));
     let out = run(&fx, &["restore", "--all", "--at", &rev, "--yes"]);
     assert!(out.contains("2 file(s) differ"), "{out}");
     assert!(out.contains("symlink(s) skipped"), "{out}");

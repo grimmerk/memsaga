@@ -476,6 +476,13 @@ fn cmd_restore_all(at: &str, yes: bool) -> Result<()> {
         );
     }
     if !yes {
+        // Show what would change before asking, like the single-file restore.
+        for f in &plan.changed {
+            print!(
+                "{}",
+                restore::diff_against_live(&cfg, &f.loc.live, &f.content)?
+            );
+        }
         eprint!(
             "Overwrite these {} live file(s)? [y/N] ",
             plan.changed.len()
@@ -487,12 +494,10 @@ fn cmd_restore_all(at: &str, yes: bool) -> Result<()> {
             return Ok(());
         }
     }
-    let mut written = 0;
     for f in &plan.changed {
         restore::verify_destination(&cfg, &f.loc.live)?;
-        restore::write_live(&cfg, &f.loc, at, &f.content)?;
-        written += 1;
     }
+    let written = restore::write_live_batch(&cfg, &plan.changed, at)?;
     println!("restored {written} file(s) from {at}; the next Stop commits the live state");
     Ok(())
 }
@@ -503,6 +508,7 @@ fn cmd_restore(path: &str, at: &str, yes: bool) -> Result<()> {
     restore::verify_destination(&cfg, &loc.live)?;
     let candidate = restore::content_at(&cfg, &loc.repo_rel, at)?
         .with_context(|| format!("{} does not exist at {at}", loc.repo_rel.display()))?;
+    let candidate = restore::with_live_ignored_keys(&cfg, &loc, candidate);
     let current = std::fs::read(&loc.live).ok();
     if current.as_deref() == Some(candidate.as_slice()) {
         println!("{} already matches {at}; nothing to do", loc.live.display());
