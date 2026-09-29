@@ -423,7 +423,9 @@ fn user_owned_paths_in_the_repo_are_committed_and_kept() {
     hook(&fx, &stop("s3"));
     assert_eq!(commits(&fx), 2);
     let files = head_files(&fx);
-    assert!(files.iter().any(|f| f == "companion/webapp/docs/x.zh-tw.md"));
+    assert!(files
+        .iter()
+        .any(|f| f == "companion/webapp/docs/x.zh-tw.md"));
     assert!(files.iter().any(|f| f == "manual/note.md"));
     // a later sweep must not delete them
     run(&fx, &["sweep"]);
@@ -923,7 +925,10 @@ fn companions_subcommand_lists_status_and_source() {
 fn companions_are_listed_in_the_index() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
-    write(&fx.repo.join("companion/webapp/docs/a.zh-tw.md"), "# 中文\n");
+    write(
+        &fx.repo.join("companion/webapp/docs/a.zh-tw.md"),
+        "# 中文\n",
+    );
     write(&fx.repo.join("companion/webapp/docs/b (1).md"), "x\n");
     hook(&fx, &stop("s1"));
     let idx = fs::read_to_string(fx.repo.join("index.md")).unwrap();

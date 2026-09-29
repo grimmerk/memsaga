@@ -83,7 +83,10 @@ mod tests {
     #[test]
     fn encode_replaces_every_non_alphanumeric() {
         assert_eq!(encode("/Users/me/git/webapp"), "-Users-me-git-webapp");
-        assert_eq!(encode("/Users/me/git/webapp.wiki"), "-Users-me-git-webapp-wiki");
+        assert_eq!(
+            encode("/Users/me/git/webapp.wiki"),
+            "-Users-me-git-webapp-wiki"
+        );
         assert_eq!(encode("/private/tmp/x y"), "-private-tmp-x-y");
         // One dash per UTF-16 code unit: a BMP character is one, an emoji two.
         assert_eq!(encode("/h/café"), "-h-caf-");

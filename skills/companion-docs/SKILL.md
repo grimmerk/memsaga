@@ -1,6 +1,6 @@
 ---
 name: companion-docs
-description: "Where to put a document that belongs with a repository but must not be committed to it: a translation or annotated copy of one of its files (for example a Traditional Chinese version of an English doc in a company repo), or a note about the repository that maps to no single file (an evaluation, a review write-up, a hand-off). Use when the user asks for a translation or a version of a document in another language, in any language however they name it (中文版, 日本語版, 한국어판, en français; examples only), a companion or side-by-side version of a document, a note / write-up / evaluation about a repository that should not be committed to it, when reading a document that may already have one, or when the user mentions a companion, or memsaga's data repo by any name (the memories repo, memsaga KB, memsaga memory, memsaga data, memsaga memories) and its companion/ directory. Not for a request to reply in some language (用繁中跟我對話, answer in French), which is about the conversation language, not a document."
+description: "Where to put a document that belongs with a repository but must not be committed to it: a translation or annotated copy of one of its files (for example a Traditional Chinese version of an English doc in a repository you cannot commit personal documents to (an employer's, a client's)), or a note about the repository that maps to no single file (an evaluation, a review write-up, a hand-off). Use when the user asks for a translation or a version of a document in another language, in any language however they name it (中文版, 日本語版, 한국어판, en français; examples only), a companion or side-by-side version of a document, a note / write-up / evaluation about a repository that should not be committed to it, when reading a document that may already have one, or when the user mentions a companion, or memsaga's data repo by any name (the memories repo, memsaga KB, memsaga memory, memsaga data, memsaga memories) and its companion/ directory. Not for a request to reply in some language (用繁中跟我對話, answer in French), which is about the conversation language, not a document."
 ---
 
 # Companion docs
@@ -27,12 +27,12 @@ end of the turn.
 - `<repo name>` is the source repository's directory name under `~/git`
   (`webapp`, `docs`), not the GitHub full name.
 - `<path inside that repo>` keeps the source's relative path and extension,
-  then adds the language tag: `docs/api.md` -> `docs/api.zh-tw.md`.
+  then adds the language tag: `docs/architecture.md` -> `docs/architecture.zh-tw.md`.
   The tag is the companion's language (`zh-tw`, `ja`, `de`, `fr`); the examples
   below use `zh-tw` because that is the author's case, not a rule.
 
-Example: the companion of `~/git/webapp/docs/api.md` is
-`~/git/memories/companion/webapp/docs/api.zh-tw.md`.
+Example: the companion of `~/git/webapp/docs/architecture.md` is
+`~/git/memories/companion/webapp/docs/architecture.zh-tw.md`.
 
 ### Notes about a repository
 
@@ -90,10 +90,10 @@ recorded and any OKF consumer can read it:
 ```yaml
 ---
 type: Translation            # or Commentary, Summary; Note for _notes/ (with relates_to instead of sources)
-title: api (zh-TW)
-description: Traditional Chinese translation of webapp docs/api.md
+title: architecture (zh-TW)
+description: Traditional Chinese translation of webapp docs/architecture.md
 sources:
-  - resource: ~/git/webapp/docs/api.md
+  - resource: ~/git/webapp/docs/architecture.md
     last_modified: 2026-09-18T09:12:00Z     # commit time of the source revision translated
     commit: 3f9a85f6                         # source repo commit the companion was made from
 generated:
