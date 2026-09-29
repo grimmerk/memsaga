@@ -423,7 +423,9 @@ fn user_owned_paths_in_the_repo_are_committed_and_kept() {
     hook(&fx, &stop("s3"));
     assert_eq!(commits(&fx), 2);
     let files = head_files(&fx);
-    assert!(files.iter().any(|f| f == "companion/webapp/docs/x.zh-tw.md"));
+    assert!(files
+        .iter()
+        .any(|f| f == "companion/webapp/docs/x.zh-tw.md"));
     assert!(files.iter().any(|f| f == "manual/note.md"));
     // a later sweep must not delete them
     run(&fx, &["sweep"]);
@@ -896,12 +898,20 @@ fn companions_subcommand_lists_status_and_source() {
         "---\nstatus: draft\nsources: []\n---\n# 草稿\n",
     );
     write(&fx.repo.join("companion/other/x.zh-tw.md"), "plain\n");
+    write(
+        &fx.repo.join("companion/webapp/_notes/eval.md"),
+        "---\ntype: Note\nrelates_to:\n  - docs/a.md\n  - acme/webapp#7\nstatus: stable\n---\n# eval\n",
+    );
     let out = run(&fx, &["companions"]);
     assert!(out.contains("stable  webapp/docs/a.zh-tw.md"), "{out}");
     assert!(out.contains("<- ~/git/webapp/docs/a.md"), "{out}");
     assert!(out.contains("draft   webapp/docs/new.zh-tw.md"), "{out}");
     assert!(out.contains("(no source yet)"), "{out}");
     assert!(out.contains("-       other/x.zh-tw.md"), "{out}");
+    assert!(
+        out.contains("webapp/_notes/eval.md") && out.contains("~ docs/a.md, acme/webapp#7"),
+        "{out}"
+    );
     let out = run(&fx, &["companions", "webapp"]);
     assert!(
         out.contains("webapp/docs/a.zh-tw.md") && !out.contains("other/"),
@@ -915,7 +925,10 @@ fn companions_subcommand_lists_status_and_source() {
 fn companions_are_listed_in_the_index() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
-    write(&fx.repo.join("companion/webapp/docs/a.zh-tw.md"), "# 中文\n");
+    write(
+        &fx.repo.join("companion/webapp/docs/a.zh-tw.md"),
+        "# 中文\n",
+    );
     write(&fx.repo.join("companion/webapp/docs/b (1).md"), "x\n");
     hook(&fx, &stop("s1"));
     let idx = fs::read_to_string(fx.repo.join("index.md")).unwrap();

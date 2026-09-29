@@ -353,10 +353,12 @@ fn run(cli: Cli) -> Result<()> {
             }
             let width = list.iter().map(|c| c.rel.len()).max().unwrap_or(0);
             for c in &list {
-                let source = if c.source.is_empty() {
-                    "(no source yet)".to_string()
-                } else {
+                let source = if !c.source.is_empty() {
                     format!("<- {}", c.source)
+                } else if !c.relates_to.is_empty() {
+                    format!("~ {}", c.relates_to.join(", "))
+                } else {
+                    "(no source yet)".to_string()
                 };
                 println!("{:<7} {:<width$}  {}", c.status, c.rel, source);
             }
