@@ -41,9 +41,10 @@ Example: the companion of `~/git/webapp/docs/api.md` is
 ```
 
 `<name>` is short and descriptive (`open-code-review-evaluation.md`,
-`pr-2107-review.md`). Frontmatter: `type: Note`, `status`, and `relates_to`
+`pr-2107-review.md`). Frontmatter is the same as for any companion (see
+Frontmatter below) with two differences: `type: Note`, and `relates_to`
 listing what it concerns (files relative to the repository, PRs and issues as
-`owner/repo#N`). A note has no source file for a later session to read, so
+`owner/repo#N`) in place of `sources`. A note has no source file for a later session to read, so
 add the same one-line pointer to the repository's `MEMORY.md` as for a draft
 (below), and keep it while the note is still useful.
 
@@ -51,9 +52,13 @@ add the same one-line pointer to the repository's `MEMORY.md` as for a draft
 ---
 type: Note
 title: open-code-review evaluation
+description: Whether open-code-review could replace the bot reviewers on webapp
 relates_to:
   - docs/review-process.md
   - acme/webapp#2107
+generated:
+  by: claude-code/claude-opus-5-5
+  at: 2026-09-30T10:00:00Z
 status: stable
 ---
 ```
