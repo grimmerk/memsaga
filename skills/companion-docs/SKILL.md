@@ -1,14 +1,21 @@
 ---
 name: companion-docs
-description: "Where to put a translated or annotated companion of a document that must not be committed to its own repository (for example a Traditional Chinese version of an English doc in a company repo). Use when the user asks for a translation or a version of a document in another language, however they name it (中文版 / 繁中 / zh-tw, en français, auf Deutsch, 日本語版), a companion or side-by-side version of a document, when reading a document that may already have one, or when the user mentions a companion, or memsaga's data repo by any name (the memories repo, memsaga KB, memsaga memory, memsaga data, memsaga memories) and its companion/ directory. Not for a request to reply in some language (用繁中跟我對話, answer in French), which is about the conversation language, not a document."
+description: "Where to put a document that belongs with a repository but must not be committed to it: a translation or annotated copy of one of its files (for example a Traditional Chinese version of an English doc in a company repo), or a note about the repository that maps to no single file (an evaluation, a review write-up, a hand-off). Use when the user asks for a translation or a version of a document in another language, in any language however they name it (中文版, 日本語版, 한국어판, en français; examples only), a companion or side-by-side version of a document, a note / write-up / evaluation about a repository that should not be committed to it, when reading a document that may already have one, or when the user mentions a companion, or memsaga's data repo by any name (the memories repo, memsaga KB, memsaga memory, memsaga data, memsaga memories) and its companion/ directory. Not for a request to reply in some language (用繁中跟我對話, answer in French), which is about the conversation language, not a document."
 ---
 
 # Companion docs
 
-A companion is a second file about the same document: a translation, a
-commentary, a summary in another language. It must not land in the source
-repository, so it lives in the memsaga data repo, which commits it automatically
-at the end of the turn.
+A companion is a file that belongs with a repository but must not land in it.
+Two kinds:
+
+- **A companion of one file**: a translation, a commentary, a summary of a
+  specific document. Its path mirrors the source's path.
+- **A note about the repository**: an evaluation, a review write-up, a
+  hand-off, anything tied to the repository (or to several of its files, a
+  PR, an issue) but not to one file. It lives under `_notes/`.
+
+Both live in the memsaga data repo, which commits them automatically at the
+end of the turn.
 
 ## Path convention
 
@@ -26,6 +33,30 @@ at the end of the turn.
 
 Example: the companion of `~/git/webapp/docs/api.md` is
 `~/git/memories/companion/webapp/docs/api.zh-tw.md`.
+
+### Notes about a repository
+
+```
+<memsaga repo>/companion/<repo name>/_notes/<name>.md
+```
+
+`<name>` is short and descriptive (`open-code-review-evaluation.md`,
+`pr-2107-review.md`). Frontmatter: `type: Note`, `status`, and `relates_to`
+listing what it concerns (files relative to the repository, PRs and issues as
+`owner/repo#N`). A note has no source file for a later session to read, so
+add the same one-line pointer to the repository's `MEMORY.md` as for a draft
+(below), and keep it while the note is still useful.
+
+```yaml
+---
+type: Note
+title: open-code-review evaluation
+relates_to:
+  - docs/review-process.md
+  - acme/webapp#2107
+status: stable
+---
+```
 
 ### When the source does not exist yet
 
@@ -53,7 +84,7 @@ recorded and any OKF consumer can read it:
 
 ```yaml
 ---
-type: Translation            # or Commentary, Summary
+type: Translation            # or Commentary, Summary; Note for _notes/ (with relates_to instead of sources)
 title: api (zh-TW)
 description: Traditional Chinese translation of webapp docs/api.md
 sources:
@@ -82,7 +113,7 @@ Get the source commit with `git -C <source repo> log -1 --format='%h %cI' -- <pa
 ## Listing what exists
 
 `memsaga companions [repo name]` prints every companion with its status and
-source; in a session the user can type `/companions webapp` (or
+source (for a note, what it relates to); in a session the user can type `/companions webapp` (or
 `! memsaga companions webapp`) to see the same list directly.
 
 ## When reading a document

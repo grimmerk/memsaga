@@ -13,6 +13,8 @@ pub struct Companion {
     pub status: String,
     /// First `resource:` under `sources` in the frontmatter, or empty.
     pub source: String,
+    /// Entries of `relates_to` (a note about the repository), in order.
+    pub relates_to: Vec<String>,
 }
 
 /// Every companion file, sorted by path. `filter` keeps only those whose
@@ -41,30 +43,45 @@ pub fn list(repo: &Path, filter: Option<&str>) -> Vec<Companion> {
             }
         }
         let text = std::fs::read_to_string(item.path()).unwrap_or_default();
-        let (status, source) = frontmatter_fields(&text);
+        let (status, source, relates_to) = frontmatter_fields(&text);
         out.push(Companion {
             rel,
             status,
             source,
+            relates_to,
         });
     }
     out.sort_by(|a, b| a.rel.cmp(&b.rel));
     out
 }
 
-/// `status` and the first `resource` inside a leading `---` block. A file
-/// without frontmatter yields `-` and an empty source.
-fn frontmatter_fields(text: &str) -> (String, String) {
+/// `status`, the first `resource`, and the `relates_to` list inside a
+/// leading `---` block. A file without frontmatter yields `-` and nothing.
+fn frontmatter_fields(text: &str) -> (String, String, Vec<String>) {
     let mut status = "-".to_string();
     let mut source = String::new();
+    let mut relates_to = Vec::new();
+    let mut in_relates = false;
     let mut lines = text.lines();
     if lines.next().map(str::trim) != Some("---") {
-        return (status, source);
+        return (status, source, relates_to);
     }
     for line in lines {
         let t = line.trim();
         if t == "---" {
             break;
+        }
+        // `relates_to:` followed by `  - item` lines; any other key ends it.
+        if in_relates {
+            if let Some(v) = t.strip_prefix("- ") {
+                relates_to.push(v.trim().to_string());
+                continue;
+            }
+            in_relates = false;
+        }
+        if t == "relates_to:" {
+            in_relates = true;
+            continue;
         }
         if let Some(v) = t.strip_prefix("status:") {
             status = v.trim().to_string();
@@ -77,7 +94,7 @@ fn frontmatter_fields(text: &str) -> (String, String) {
             }
         }
     }
-    (status, source)
+    (status, source, relates_to)
 }
 
 #[cfg(test)]
@@ -89,15 +106,24 @@ mod tests {
         let text = "---\ntype: Translation\nsources:\n  - resource: ~/git/webapp/docs/a.md\n    commit: abc\n  - resource: other\nstatus: stable\n---\nbody\n";
         assert_eq!(
             frontmatter_fields(text),
-            ("stable".into(), "~/git/webapp/docs/a.md".into())
+            ("stable".into(), "~/git/webapp/docs/a.md".into(), vec![])
         );
         assert_eq!(
             frontmatter_fields("no frontmatter\n"),
-            ("-".into(), String::new())
+            ("-".into(), String::new(), vec![])
         );
         assert_eq!(
             frontmatter_fields("---\nstatus: draft\nsources: []\n---\n"),
-            ("draft".into(), String::new())
+            ("draft".into(), String::new(), vec![])
+        );
+        let note = "---\ntype: Note\nrelates_to:\n  - docs/a.md\n  - acme/x#3\nstatus: stable\n---\nbody\n";
+        assert_eq!(
+            frontmatter_fields(note),
+            (
+                "stable".into(),
+                String::new(),
+                vec!["docs/a.md".to_string(), "acme/x#3".to_string()]
+            )
         );
     }
 }
