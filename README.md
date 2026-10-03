@@ -129,6 +129,33 @@ second account shares through symlinks (a common pattern for `CLAUDE.md` and
 stored once. Hooks are registered per directory; the commit's `Account:`
 trailer comes from `CLAUDE_CONFIG_DIR`.
 
+## Restoring on another machine
+
+To set up a new machine from the data repository (tested with the same
+username and the same `~/git` layout, so memory directory names match):
+
+1. Install Claude Code and sign in once, so `~/.claude` exists. Create the
+   directory of every other account in your config (for example
+   `~/.claude-work`); a root that does not exist is skipped, with a count.
+2. Clone the data repository: `gh repo clone <you>/memories ~/git/memories`.
+   Do **not** run `memsaga init` there: it would commit the new machine's
+   empty state on top of your history.
+3. Install memsaga and copy the config:
+   `cp ~/git/memories/memsaga/config.toml ~/.config/memsaga/config.toml`.
+4. `memsaga restore --all --at HEAD`: read the list and the diffs, answer
+   `n`; then run it again with `--yes`. Files get their content, executable
+   bits and commit time back; links that share files between accounts are
+   recreated; links that point outside the mirrored directories are listed
+   and skipped. Nothing is deleted.
+5. Verify: `memsaga sweep --event verify` should report `no changes`, and
+   `memsaga diff --stat` should print `no changes since the last commit`.
+
+Restoring `settings.json` also registers the hooks, so new sessions on that
+machine start committing at once. Sweeps are one-way (live files into the
+repository) and never pull, so do not use two machines at the same time: the
+second one's pushes would be rejected. If the new machine is only a backup,
+run `memsaga uninstall` there.
+
 ## Tests
 
 `cargo test` runs behaviour tests that drive the real binary against fake
