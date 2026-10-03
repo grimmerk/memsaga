@@ -848,6 +848,13 @@ fn restore_all_on_a_new_machine_skips_a_missing_root_and_needs_a_clone() {
         !fx.work.exists(),
         "a restore never creates a config directory"
     );
+    // A sweep while the work root is absent keeps its recorded slug map.
+    let before_paths = fs::read_to_string(fx.repo.join("paths.json")).unwrap();
+    run(&fx, &["sweep", "--event", "partial"]);
+    assert_eq!(
+        fs::read_to_string(fx.repo.join("paths.json")).unwrap(),
+        before_paths
+    );
     // The work account signs in later: its links come back, the hook is
     // executable again, and the first sweep finds nothing to commit even
     // though this machine has no prompt history to resolve slugs from.

@@ -150,8 +150,9 @@ username and the same `~/git` layout, so memory directory names match):
 5. Verify: `memsaga sweep --event verify` should report `no changes`, and
    `memsaga diff --stat` should print `no changes since the last commit`.
 
-Restoring `settings.json` also registers the hooks, so new sessions on that
-machine start committing at once. Sweeps are one-way (live files into the
+If `settings.json` is in your `files` (it is not by default), restoring it
+also registers the hooks, so new sessions on that machine start committing at
+once; otherwise run `memsaga install` after the restore. Sweeps are one-way (live files into the
 repository) and never pull, so do not use two machines at the same time: the
 second one's pushes would be rejected. If the new machine is only a backup,
 run `memsaga uninstall` there.

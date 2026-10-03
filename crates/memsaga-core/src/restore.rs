@@ -237,19 +237,25 @@ fn live_executable(p: &Path) -> bool {
 /// the machine the file came from.
 fn committed_at(cfg: &Config, repo_rel: &Path, rev: &str) -> Option<std::time::SystemTime> {
     let git = Git::new(&cfg.repo);
-    let out = git
-        .run_ok(&[
-            "log",
-            "-1",
-            "--follow",
-            "--format=%at",
-            rev,
-            "--",
-            &repo_rel.to_string_lossy(),
-        ])
-        .ok()?;
-    let secs: u64 = out.trim().parse().ok()?;
-    Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+    let mut candidates = vec![repo_rel.to_path_buf()];
+    candidates.extend(roots::legacy_repo_path(repo_rel));
+    for p in candidates {
+        let out = git
+            .run_ok(&[
+                "log",
+                "-1",
+                "--follow",
+                "--format=%at",
+                rev,
+                "--",
+                &p.to_string_lossy(),
+            ])
+            .ok();
+        if let Some(secs) = out.and_then(|o| o.trim().parse::<u64>().ok()) {
+            return Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs));
+        }
+    }
+    None
 }
 
 /// Git mode of `repo_rel` at `rev` (also under the pre-2026-09-18 path).
