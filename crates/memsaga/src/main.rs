@@ -459,6 +459,17 @@ fn cmd_init(no_backfill: bool, dry_run: bool, group_window: i64) -> Result<()> {
 fn cmd_restore_all(at: &str, yes: bool) -> Result<()> {
     let cfg = Config::load()?;
     let plan = restore::plan_all(&cfg, at)?;
+    for (label, n) in &plan.missing_roots {
+        let path = cfg
+            .roots
+            .iter()
+            .find(|r| &r.label == label)
+            .map(|r| r.path.display().to_string())
+            .unwrap_or_default();
+        println!(
+            "root {label} ({path}) does not exist on this machine: {n} file(s) skipped; create it (sign in to that account) and run restore again to include them"
+        );
+    }
     println!(
         "{} file(s) differ from {at}, {} identical, {} symlink(s) skipped, {} out of scope skipped; nothing is deleted",
         plan.changed.len(),

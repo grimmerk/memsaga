@@ -822,6 +822,43 @@ fn restore_keeps_the_live_volatile_settings_keys() {
 }
 
 #[test]
+fn restore_all_on_a_new_machine_skips_a_missing_root_and_needs_a_clone() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let rev = git(&fx, &["rev-parse", "HEAD"]).trim().to_string();
+    // A second machine: the main account exists but is empty, the work account does not.
+    fs::remove_dir_all(&fx.work).unwrap();
+    fs::remove_dir_all(&fx.claude).unwrap();
+    fs::create_dir_all(&fx.claude).unwrap();
+    let out = run(&fx, &["restore", "--all", "--at", &rev, "--yes"]);
+    assert!(
+        out.contains("root claude-work") && out.contains("does not exist on this machine"),
+        "{out}"
+    );
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("CLAUDE.md")).unwrap(),
+        "# global\n"
+    );
+    assert!(fx.claude.join("projects/-h-git-a/memory/one.md").exists());
+    assert!(
+        !fx.work.exists(),
+        "a restore never creates a config directory"
+    );
+    // No clone at all: a clear message instead of a raw git error.
+    let moved = fx.repo.with_file_name("repo-moved");
+    fs::rename(&fx.repo, &moved).unwrap();
+    let err = cmd(&fx)
+        .args(["restore", "--all", "--at", "HEAD"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&err.stderr);
+    assert!(
+        !err.status.success() && stderr.contains("clone the data repository"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn restore_all_puts_every_root_back_to_a_revision_without_deleting() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);

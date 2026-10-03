@@ -86,15 +86,33 @@ pub struct Plan {
     pub identical: usize,
     pub symlinks: usize,
     pub skipped: usize,
+    /// Roots (by label) whose directory does not exist on this machine, with
+    /// how many files of theirs were skipped. A restore never creates a
+    /// config directory: that is setting up an account, not restoring one.
+    pub missing_roots: Vec<(String, usize)>,
 }
 
 pub fn plan_all(cfg: &Config, rev: &str) -> Result<Plan> {
     let git = Git::new(&cfg.repo);
+    if !git.is_repo() {
+        bail!(
+            "{} is not a git repository. On a new machine, clone the data repository there first (do not run `memsaga init`, which would commit this machine's empty state)",
+            cfg.repo.display()
+        );
+    }
     let mut plan = Plan::default();
     for (mode, kind, path) in git.ls_tree(rev)? {
         let label = path.split('/').next().unwrap_or("");
-        if !cfg.roots.iter().any(|r| r.label == label) {
-            continue; // index.md, paths.json, companion/, extra/, memsaga/
+        let root = match cfg.roots.iter().find(|r| r.label == label) {
+            Some(r) => r,
+            None => continue, // index.md, paths.json, companion/, extra/, memsaga/
+        };
+        if !root.path.is_dir() {
+            match plan.missing_roots.iter_mut().find(|(l, _)| l == label) {
+                Some((_, n)) => *n += 1,
+                None => plan.missing_roots.push((label.to_string(), 1)),
+            }
+            continue;
         }
         if mode == "120000" {
             plan.symlinks += 1;
