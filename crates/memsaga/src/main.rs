@@ -477,7 +477,10 @@ fn cmd_restore_all(at: &str, yes: bool) -> Result<()> {
         plan.symlinks,
         plan.skipped
     );
-    if plan.changed.is_empty() {
+    for l in &plan.links {
+        println!("  link  {}  ->  {}", l.live.display(), l.target.display());
+    }
+    if plan.changed.is_empty() && plan.links.is_empty() {
         println!("nothing to restore");
         return Ok(());
     }
@@ -497,8 +500,9 @@ fn cmd_restore_all(at: &str, yes: bool) -> Result<()> {
             );
         }
         eprint!(
-            "Overwrite these {} live file(s)? [y/N] ",
-            plan.changed.len()
+            "Overwrite these {} live file(s) and create {} link(s)? [y/N] ",
+            plan.changed.len(),
+            plan.links.len()
         );
         let mut answer = String::new();
         std::io::stdin().read_line(&mut answer)?;
@@ -510,7 +514,7 @@ fn cmd_restore_all(at: &str, yes: bool) -> Result<()> {
     for f in &plan.changed {
         restore::verify_destination(&cfg, &f.loc.live)?;
     }
-    let written = restore::write_live_batch(&cfg, &plan.changed, at)?;
+    let written = restore::write_live_batch(&cfg, &plan.changed, &plan.links, at)?;
     println!("restored {written} file(s) from {at}; the next Stop commits the live state");
     Ok(())
 }

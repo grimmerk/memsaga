@@ -51,6 +51,10 @@ fn fixture(granularity: &str, extra_toml: &str) -> Fx {
     write(&claude.join("plugins/p"), "plugin\n");
     write(&claude.join(".claude.json"), "{\"oauth\":\"SECRET\"}\n");
     write(&claude.join("hooks/x.sh"), "hook\n");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(claude.join("hooks/x.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+    }
     // second account: links to the anchor, own memory
     fs::create_dir_all(&work).unwrap();
     std::os::unix::fs::symlink(claude.join("CLAUDE.md"), work.join("CLAUDE.md")).unwrap();
@@ -843,6 +847,32 @@ fn restore_all_on_a_new_machine_skips_a_missing_root_and_needs_a_clone() {
     assert!(
         !fx.work.exists(),
         "a restore never creates a config directory"
+    );
+    // The work account signs in later: its links come back, the hook is
+    // executable again, and the first sweep finds nothing to commit even
+    // though this machine has no prompt history to resolve slugs from.
+    fs::create_dir_all(&fx.work).unwrap();
+    let out = run(&fx, &["restore", "--all", "--at", &rev, "--yes"]);
+    assert!(out.contains("link"), "{out}");
+    assert_eq!(
+        fs::read_link(fx.work.join("CLAUDE.md")).unwrap(),
+        fx.claude.join("CLAUDE.md")
+    );
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(fx.claude.join("hooks/x.sh"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert!(mode & 0o111 != 0, "hook not executable: {mode:o}");
+    }
+    let before = commits(&fx);
+    run(&fx, &["sweep", "--event", "verify"]);
+    assert_eq!(
+        commits(&fx),
+        before,
+        "a faithful restore leaves nothing to commit: {}",
+        git(&fx, &["show", "--stat", "HEAD"])
     );
     // No clone at all: a clear message instead of a raw git error.
     let moved = fx.repo.with_file_name("repo-moved");
