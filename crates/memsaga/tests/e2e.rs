@@ -51,6 +51,10 @@ fn fixture(granularity: &str, extra_toml: &str) -> Fx {
     write(&claude.join("plugins/p"), "plugin\n");
     write(&claude.join(".claude.json"), "{\"oauth\":\"SECRET\"}\n");
     write(&claude.join("hooks/x.sh"), "hook\n");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(claude.join("hooks/x.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+    }
     // second account: links to the anchor, own memory
     fs::create_dir_all(&work).unwrap();
     std::os::unix::fs::symlink(claude.join("CLAUDE.md"), work.join("CLAUDE.md")).unwrap();
@@ -819,6 +823,76 @@ fn restore_keeps_the_live_volatile_settings_keys() {
             .unwrap();
     assert_eq!(live["a"], 1);
     assert_eq!(live["model"], "haiku");
+}
+
+#[test]
+fn restore_all_on_a_new_machine_skips_a_missing_root_and_needs_a_clone() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let rev = git(&fx, &["rev-parse", "HEAD"]).trim().to_string();
+    // A second machine: the main account exists but is empty, the work account does not.
+    fs::remove_dir_all(&fx.work).unwrap();
+    fs::remove_dir_all(&fx.claude).unwrap();
+    fs::create_dir_all(&fx.claude).unwrap();
+    let out = run(&fx, &["restore", "--all", "--at", &rev, "--yes"]);
+    assert!(
+        out.contains("root claude-work") && out.contains("does not exist on this machine"),
+        "{out}"
+    );
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("CLAUDE.md")).unwrap(),
+        "# global\n"
+    );
+    assert!(fx.claude.join("projects/-h-git-a/memory/one.md").exists());
+    assert!(
+        !fx.work.exists(),
+        "a restore never creates a config directory"
+    );
+    // A sweep while the work root is absent keeps its recorded slug map.
+    let before_paths = fs::read_to_string(fx.repo.join("paths.json")).unwrap();
+    run(&fx, &["sweep", "--event", "partial"]);
+    assert_eq!(
+        fs::read_to_string(fx.repo.join("paths.json")).unwrap(),
+        before_paths
+    );
+    // The work account signs in later: its links come back, the hook is
+    // executable again, and the first sweep finds nothing to commit even
+    // though this machine has no prompt history to resolve slugs from.
+    fs::create_dir_all(&fx.work).unwrap();
+    let out = run(&fx, &["restore", "--all", "--at", &rev, "--yes"]);
+    assert!(out.contains("link"), "{out}");
+    assert_eq!(
+        fs::read_link(fx.work.join("CLAUDE.md")).unwrap(),
+        fx.claude.join("CLAUDE.md")
+    );
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(fx.claude.join("hooks/x.sh"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert!(mode & 0o111 != 0, "hook not executable: {mode:o}");
+    }
+    let before = commits(&fx);
+    run(&fx, &["sweep", "--event", "verify"]);
+    assert_eq!(
+        commits(&fx),
+        before,
+        "a faithful restore leaves nothing to commit: {}",
+        git(&fx, &["show", "--stat", "HEAD"])
+    );
+    // No clone at all: a clear message instead of a raw git error.
+    let moved = fx.repo.with_file_name("repo-moved");
+    fs::rename(&fx.repo, &moved).unwrap();
+    let err = cmd(&fx)
+        .args(["restore", "--all", "--at", "HEAD"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&err.stderr);
+    assert!(
+        !err.status.success() && stderr.contains("clone the data repository"),
+        "{stderr}"
+    );
 }
 
 #[test]

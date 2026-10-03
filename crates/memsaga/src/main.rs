@@ -459,6 +459,17 @@ fn cmd_init(no_backfill: bool, dry_run: bool, group_window: i64) -> Result<()> {
 fn cmd_restore_all(at: &str, yes: bool) -> Result<()> {
     let cfg = Config::load()?;
     let plan = restore::plan_all(&cfg, at)?;
+    for (label, n) in &plan.missing_roots {
+        let path = cfg
+            .roots
+            .iter()
+            .find(|r| &r.label == label)
+            .map(|r| r.path.display().to_string())
+            .unwrap_or_default();
+        println!(
+            "root {label} ({path}) does not exist on this machine: {n} file(s) skipped; create it (sign in to that account) and run restore again to include them"
+        );
+    }
     println!(
         "{} file(s) differ from {at}, {} identical, {} symlink(s) skipped, {} out of scope skipped; nothing is deleted",
         plan.changed.len(),
@@ -466,7 +477,10 @@ fn cmd_restore_all(at: &str, yes: bool) -> Result<()> {
         plan.symlinks,
         plan.skipped
     );
-    if plan.changed.is_empty() {
+    for l in &plan.links {
+        println!("  link  {}  ->  {}", l.live.display(), l.target.display());
+    }
+    if plan.changed.is_empty() && plan.links.is_empty() {
         println!("nothing to restore");
         return Ok(());
     }
@@ -486,8 +500,9 @@ fn cmd_restore_all(at: &str, yes: bool) -> Result<()> {
             );
         }
         eprint!(
-            "Overwrite these {} live file(s)? [y/N] ",
-            plan.changed.len()
+            "Overwrite these {} live file(s) and create {} link(s)? [y/N] ",
+            plan.changed.len(),
+            plan.links.len()
         );
         let mut answer = String::new();
         std::io::stdin().read_line(&mut answer)?;
@@ -499,7 +514,7 @@ fn cmd_restore_all(at: &str, yes: bool) -> Result<()> {
     for f in &plan.changed {
         restore::verify_destination(&cfg, &f.loc.live)?;
     }
-    let written = restore::write_live_batch(&cfg, &plan.changed, at)?;
+    let written = restore::write_live_batch(&cfg, &plan.changed, &plan.links, at)?;
     println!("restored {written} file(s) from {at}; the next Stop commits the live state");
     Ok(())
 }

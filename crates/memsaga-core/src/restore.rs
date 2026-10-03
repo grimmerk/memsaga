@@ -74,6 +74,17 @@ pub fn locate(cfg: &Config, input: &str) -> Result<Located> {
 pub struct PlannedFile {
     pub loc: Located,
     pub content: Vec<u8>,
+    /// Git mode 100755: the live file gets its executable bits back.
+    pub executable: bool,
+}
+
+/// A symlink to recreate: the mirror stores a link from one root into
+/// another (`claude-work/CLAUDE.md -> ../claude/CLAUDE.md`), restored as an
+/// absolute link to the other root's live path.
+#[derive(Debug)]
+pub struct PlannedLink {
+    pub live: PathBuf,
+    pub target: PathBuf,
 }
 
 /// What `restore --all` would do at `rev`: every blob under a root's subtree
@@ -84,20 +95,46 @@ pub struct PlannedFile {
 pub struct Plan {
     pub changed: Vec<PlannedFile>,
     pub identical: usize,
+    /// Symlinks not restored: pointing outside every root, or the live path
+    /// already holds something else (never overwritten).
     pub symlinks: usize,
     pub skipped: usize,
+    /// Cross-root symlinks to create.
+    pub links: Vec<PlannedLink>,
+    /// Roots (by label) whose directory does not exist on this machine, with
+    /// how many files of theirs were skipped. A restore never creates a
+    /// config directory: that is setting up an account, not restoring one.
+    pub missing_roots: Vec<(String, usize)>,
 }
 
 pub fn plan_all(cfg: &Config, rev: &str) -> Result<Plan> {
     let git = Git::new(&cfg.repo);
+    if !git.is_repo() {
+        bail!(
+            "{} is not a git repository. On a new machine, clone the data repository there first (do not run `memsaga init`, which would commit this machine's empty state)",
+            cfg.repo.display()
+        );
+    }
     let mut plan = Plan::default();
     for (mode, kind, path) in git.ls_tree(rev)? {
         let label = path.split('/').next().unwrap_or("");
-        if !cfg.roots.iter().any(|r| r.label == label) {
-            continue; // index.md, paths.json, companion/, extra/, memsaga/
+        let root = match cfg.roots.iter().find(|r| r.label == label) {
+            Some(r) => r,
+            None => continue, // index.md, paths.json, companion/, extra/, memsaga/
+        };
+        if !root.path.is_dir() {
+            match plan.missing_roots.iter_mut().find(|(l, _)| l == label) {
+                Some((_, n)) => *n += 1,
+                None => plan.missing_roots.push((label.to_string(), 1)),
+            }
+            continue;
         }
         if mode == "120000" {
-            plan.symlinks += 1;
+            match plan_link(cfg, &git, rev, &path)? {
+                LinkPlan::Create(l) => plan.links.push(l),
+                LinkPlan::Identical => plan.identical += 1,
+                LinkPlan::Skip => plan.symlinks += 1,
+            }
             continue;
         }
         if kind != "blob" {
@@ -127,13 +164,113 @@ pub fn plan_all(cfg: &Config, rev: &str) -> Result<Plan> {
             }
         };
         let content = with_live_ignored_keys(cfg, &loc, content);
-        if std::fs::read(&loc.live).ok().as_deref() == Some(content.as_slice()) {
+        let executable = mode == "100755";
+        let same_content = std::fs::read(&loc.live).ok().as_deref() == Some(content.as_slice());
+        if same_content && live_executable(&loc.live) == executable {
             plan.identical += 1;
         } else {
-            plan.changed.push(PlannedFile { loc, content });
+            plan.changed.push(PlannedFile {
+                loc,
+                content,
+                executable,
+            });
         }
     }
     Ok(plan)
+}
+
+enum LinkPlan {
+    Create(PlannedLink),
+    Identical,
+    Skip,
+}
+
+/// Decide what to do with a symlink stored at `path` in the tree. Only a
+/// relative link that lands inside another root's subtree is restorable;
+/// an absolute link points outside the mirror (another tool's directory)
+/// and is left to the user.
+fn plan_link(cfg: &Config, git: &Git, rev: &str, path: &str) -> Result<LinkPlan> {
+    let raw = git.run_ok(&["cat-file", "blob", &format!("{rev}:{path}")])?;
+    let target = Path::new(raw.trim_end_matches('\n'));
+    if target.is_absolute() {
+        return Ok(LinkPlan::Skip);
+    }
+    let repo_target = crate::mirror::normalize(
+        &Path::new(path)
+            .parent()
+            .unwrap_or(Path::new(""))
+            .join(target),
+    );
+    let (Ok(link), Ok(dest)) = (
+        locate(cfg, path),
+        locate(cfg, &repo_target.to_string_lossy()),
+    ) else {
+        return Ok(LinkPlan::Skip);
+    };
+    match std::fs::symlink_metadata(&link.live) {
+        Ok(m) if m.file_type().is_symlink() => {
+            let current = std::fs::read_link(&link.live)?;
+            Ok(if current == dest.live {
+                LinkPlan::Identical
+            } else {
+                LinkPlan::Skip
+            })
+        }
+        Ok(_) => Ok(LinkPlan::Skip), // a real file or directory: never replaced
+        Err(_) => Ok(LinkPlan::Create(PlannedLink {
+            live: link.live,
+            target: dest.live,
+        })),
+    }
+}
+
+fn live_executable(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p)
+        .map(|m| m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+/// Author time of the last commit at or before `rev` that changed `repo_rel`
+/// (following the 2026-09-18 rename). Restored files get it as their mtime,
+/// so mtime-derived views such as the index's "Last modified" column match
+/// the machine the file came from.
+fn committed_at(cfg: &Config, repo_rel: &Path, rev: &str) -> Option<std::time::SystemTime> {
+    let git = Git::new(&cfg.repo);
+    let mut candidates = vec![repo_rel.to_path_buf()];
+    candidates.extend(roots::legacy_repo_path(repo_rel));
+    for p in candidates {
+        let out = git
+            .run_ok(&[
+                "log",
+                "-1",
+                "--follow",
+                "--format=%at",
+                rev,
+                "--",
+                &p.to_string_lossy(),
+            ])
+            .ok();
+        if let Some(secs) = out.and_then(|o| o.trim().parse::<u64>().ok()) {
+            return Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs));
+        }
+    }
+    None
+}
+
+/// Git mode of `repo_rel` at `rev` (also under the pre-2026-09-18 path).
+fn executable_at(cfg: &Config, repo_rel: &Path, rev: &str) -> bool {
+    let git = Git::new(&cfg.repo);
+    let mut candidates = vec![repo_rel.to_path_buf()];
+    candidates.extend(roots::legacy_repo_path(repo_rel));
+    for p in candidates {
+        if let Ok(out) = git.run_ok(&["ls-tree", rev, "--", &p.to_string_lossy()]) {
+            if let Some(line) = out.lines().next() {
+                return line.starts_with("100755");
+            }
+        }
+    }
+    false
 }
 
 /// The mirror stores `settings.json` without `settings_ignore_keys`
@@ -278,20 +415,37 @@ pub fn write_live(cfg: &Config, loc: &Located, rev: &str, candidate: &[u8]) -> R
     let _guard = state
         .lock(std::time::Duration::from_secs(20))
         .context("sweep lock")?;
-    write_one(cfg, &state, loc, rev, candidate)
+    let executable = executable_at(cfg, &loc.repo_rel, rev);
+    write_one(cfg, &state, loc, rev, candidate, executable)
 }
 
 /// `restore --all`: every file under one lock, so a concurrent Stop cannot
 /// commit a half-restored tree between two files.
-pub fn write_live_batch(cfg: &Config, files: &[PlannedFile], rev: &str) -> Result<usize> {
+pub fn write_live_batch(
+    cfg: &Config,
+    files: &[PlannedFile],
+    links: &[PlannedLink],
+    rev: &str,
+) -> Result<usize> {
     let state = State::new(cfg.state_dir());
     let _guard = state
         .lock(std::time::Duration::from_secs(60))
         .context("sweep lock")?;
     for f in files {
-        write_one(cfg, &state, &f.loc, rev, &f.content)?;
+        write_one(cfg, &state, &f.loc, rev, &f.content, f.executable)?;
     }
-    Ok(files.len())
+    for l in links {
+        verify_destination(cfg, &l.live)?;
+        if let Some(parent) = l.live.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::os::unix::fs::symlink(&l.target, &l.live)
+            .with_context(|| format!("linking {} -> {}", l.live.display(), l.target.display()))?;
+    }
+    if !links.is_empty() {
+        state.write_dirty(&format!("{} restore {} links", state::now_rfc3339(), rev))?;
+    }
+    Ok(files.len() + links.len())
 }
 
 fn write_one(
@@ -300,6 +454,7 @@ fn write_one(
     loc: &Located,
     rev: &str,
     candidate: &[u8],
+    executable: bool,
 ) -> Result<()> {
     let dest = verify_destination(cfg, &loc.live)?;
     if let Some(parent) = dest.parent() {
@@ -313,7 +468,18 @@ fn write_one(
         std::process::id()
     ));
     std::fs::write(&tmp, candidate).with_context(|| format!("writing {}", tmp.display()))?;
+    if executable {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perm = std::fs::metadata(&tmp)?.permissions();
+        perm.set_mode(perm.mode() | 0o111);
+        std::fs::set_permissions(&tmp, perm)?;
+    }
     std::fs::rename(&tmp, &dest).with_context(|| format!("writing {}", dest.display()))?;
+    if let Some(t) = committed_at(cfg, &loc.repo_rel, rev) {
+        if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&dest) {
+            let _ = f.set_modified(t);
+        }
+    }
     // The live file now differs from the mirror: make sure the next Stop commits it.
     state.write_dirty(&format!(
         "{} restore {} {}",
