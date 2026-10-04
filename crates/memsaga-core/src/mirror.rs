@@ -261,7 +261,13 @@ fn copy_if_changed(src: &Path, dst: &Path) -> Result<bool> {
             && dm.len() == sm.len()
             && same_second(dm.modified().ok(), sm.modified().ok())
         {
-            return Ok(false);
+            // Equal to the nanosecond: this is our own copy (we set the
+            // source mtime on it). Same second only: a second edit of the
+            // same length within that second, or a filesystem that keeps
+            // whole seconds; the contents decide (the files are small).
+            if dm.modified().ok() == sm.modified().ok() || same_contents(src, dst) {
+                return Ok(false);
+            }
         }
         if !dm.is_file() {
             remove_any(dst)?;
@@ -277,6 +283,13 @@ fn copy_if_changed(src: &Path, dst: &Path) -> Result<bool> {
         let _ = f.set_modified(t);
     }
     Ok(true)
+}
+
+fn same_contents(a: &Path, b: &Path) -> bool {
+    match (fs::read(a), fs::read(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
 }
 
 fn same_second(a: Option<std::time::SystemTime>, b: Option<std::time::SystemTime>) -> bool {

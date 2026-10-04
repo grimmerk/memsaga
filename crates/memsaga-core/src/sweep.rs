@@ -21,6 +21,9 @@ pub struct Attribution {
     pub session: String,
     pub cwd: String,
     pub agent: String,
+    /// The session transcript, when the hook event named one: the commit
+    /// message carries the session's title from it.
+    pub transcript: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -240,7 +243,8 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
             .filter_map(|l| l.split('\t').next_back().map(|s| s.to_string()))
             .collect();
         let shortstat = git.staged_shortstat()?;
-        let msg = commit_message(cfg, attrib, &files, &name_status, &shortstat);
+        let title = session_title(Path::new(&attrib.transcript));
+        let msg = commit_message(cfg, attrib, &title, &files, &name_status, &shortstat);
         let sha = git.commit(&msg, None)?;
         out.committed = true;
         out.sha = sha;
@@ -266,6 +270,10 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         message: out.shortstat.clone(),
     };
     state.append_event(&ev)?;
+    // Still under the sweep lock, so no other sweep rotates at the same time.
+    if let Err(e) = state.rotate_events_if_over(state::events_max_bytes()) {
+        state.log(&format!("events.jsonl rotation failed: {e:#}"));
+    }
     Ok(out)
 }
 
@@ -278,10 +286,65 @@ fn set_marker(state: &State, at: SystemTime) -> Result<()> {
     Ok(())
 }
 
-/// Subject: `<event>: <label>:<area>, …`; body: name-status; trailers.
+/// The session's title (set by `/rename`, or generated), read from the end
+/// of its transcript: Claude Code appends `custom-title` and `agent-name`
+/// entries as the session goes, so the last megabyte holds the current one.
+/// Not a documented format; anything unexpected yields an empty title. The
+/// prompt text is deliberately not read: a first line may carry a pasted
+/// secret, and the repo is pushed.
+pub fn session_title(transcript: &Path) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    const TAIL: u64 = 1 << 20;
+    let Ok(mut f) = std::fs::File::open(transcript) else {
+        return String::new();
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let mut buf = Vec::new();
+    if f.seek(SeekFrom::Start(len.saturating_sub(TAIL))).is_err()
+        || f.read_to_end(&mut buf).is_err()
+    {
+        return String::new();
+    }
+    let text = String::from_utf8_lossy(&buf);
+    let mut agent_name = String::new();
+    for line in text.lines().rev() {
+        // Skip the bulk of the tail (messages, tool output) without parsing it.
+        if !(line.contains("\"custom-title\"") || line.contains("\"agent-name\"")) {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let field = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default();
+        match field("type") {
+            "custom-title" => return one_line(field("customTitle")),
+            "agent-name" if agent_name.is_empty() => agent_name = one_line(field("agentName")),
+            _ => {}
+        }
+    }
+    agent_name
+}
+
+/// The first non-blank line, trimmed, at most 100 characters.
+fn one_line(s: &str) -> String {
+    let line = s
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    if line.chars().count() > 100 {
+        line.chars().take(97).collect::<String>() + "..."
+    } else {
+        line.to_string()
+    }
+}
+
+/// Subject: `<event>: <label>:<area>, …`; body: name-status; trailers,
+/// with `Session-Title` when the transcript gave one.
 pub fn commit_message(
     cfg: &Config,
     attrib: &Attribution,
+    title: &str,
     files: &[String],
     name_status: &str,
     shortstat: &str,
@@ -294,14 +357,18 @@ pub fn commit_message(
         subject = subject.chars().take(69).collect::<String>() + "...";
     }
     let body: String = name_status.lines().take(40).collect::<Vec<_>>().join("\n");
-    format!(
+    let mut msg = format!(
         "{subject}\n\n{shortstat}\n{body}\n\nEvent: {}\nAccount: {}\nSession: {}\nCwd: {}\nAgent: {}\n",
         attrib.event,
         or_none(&attrib.account),
         or_none(&attrib.session),
         or_none(&attrib.cwd),
         if attrib.agent.is_empty() { "main" } else { &attrib.agent },
-    )
+    );
+    if !title.is_empty() {
+        msg.push_str(&format!("Session-Title: {title}\n"));
+    }
+    msg
 }
 
 fn or_none(s: &str) -> &str {
