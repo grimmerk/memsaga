@@ -29,8 +29,10 @@ common dir, so every worktree and subdirectory of `~/git/webapp` shares
 `-Users-me-git-webapp-<worktree>-packages-api` are per-cwd leftovers from
 before that change; their files are still mirrored but no longer loaded.
 
-Commit messages carry trailers `Event:` (PostToolUse / Stop / SessionEnd / backfill / import),
-`Account:`, `Session:` (the Claude session id), `Cwd:`, `Agent:`.
+A commit's subject is `[<session title>] <account>:<area>, …` (the title cut to 32
+characters), or `<event>: …` when the session had no title. Commit messages carry trailers
+`Event:` (PostToolUse / Stop / SessionEnd / backfill / import), `Account:`, `Session:` (the
+Claude session id), `Cwd:`, `Agent:`, and `Session-Title:` (full title, since 2026-10-05).
 
 ## Recipes (all read-only)
 
@@ -43,6 +45,7 @@ git -C $R log --diff-filter=D --since='30 days ago' --name-only --format='%h %ad
 git -C $R show <sha>^:claude/memory/<slug>/<file>.md        # content before a commit
 git -C $R diff <sha1> <sha2> -- claude/CLAUDE.md
 git -C $R log --format='%h %ad %s%n  %(trailers:key=Session,valueonly)' --date=short -n 20   # which session changed what
+git -C $R log --grep='^Session-Title: <name>$' --format='%h %ad %s' --date=short   # every commit of one named session (a regex: escape . [ * in the name)
 ```
 
 Before 2026-09-18 the repo stored memory at `claude/projects/<slug>/memory/`; that commit is

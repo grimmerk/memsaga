@@ -16,6 +16,7 @@
 //! - `mirror`   copying a root into its repo subtree (rsync-like, one way)
 //! - `git`      thin wrapper around the system `git` binary
 //! - `state`    small files under `.git/memsaga/`: lock, markers, events log
+//! - `status`   the read-only state report behind `status` and `status --json`
 //! - `sweep`    the orchestration: lock, mirror, index, commit, events
 //! - `hook`     parsing a hook event and deciding what to do
 //! - `index`    `index.md` and `paths.json` generation
@@ -37,6 +38,7 @@ pub mod roots;
 pub mod skills;
 pub mod slug;
 pub mod state;
+pub mod status;
 pub mod sweep;
 
 pub use config::Config;

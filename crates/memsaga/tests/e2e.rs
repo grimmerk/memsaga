@@ -1285,3 +1285,240 @@ fn dirs_may_not_name_memory_or_projects() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+fn status_json(fx: &Fx) -> serde_json::Value {
+    serde_json::from_str(&run(fx, &["status", "--json"])).unwrap()
+}
+
+#[test]
+fn status_json_reports_state_and_a_failing_push_without_sweeping() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let v = status_json(&fx);
+    assert_eq!(v["schema"], 1);
+    assert_eq!(v["initialised"], true);
+    assert!(!v["head"].as_str().unwrap().is_empty(), "{v}");
+    assert_eq!(v["config"]["present"], true);
+    assert_eq!(v["config"]["missing"], false);
+    assert!(v["origin"].is_null(), "{v}");
+    assert_eq!(v["roots"].as_array().unwrap().len(), 2);
+    assert_eq!(v["roots"][0]["memory_dirs"], 1);
+    assert_eq!(v["events"][0]["kind"], "commit");
+    assert_eq!(v["events"][0]["event"], "import");
+
+    // Read-only: an edit is not swept by asking for the status.
+    let before = commits(&fx);
+    write(&fx.claude.join("CLAUDE.md"), "# edited\n");
+    status_json(&fx);
+    assert_eq!(commits(&fx), before);
+
+    // An origin that cannot be reached: the push fails and status says so.
+    git(&fx, &["remote", "add", "origin", "/nonexistent/origin.git"]);
+    assert!(!cmd(&fx).arg("push").output().unwrap().status.success());
+    let v = status_json(&fx);
+    assert_eq!(v["origin"]["push_failing"], true, "{v}");
+    assert!(!v["origin"]["push_error"].as_str().unwrap().is_empty());
+    assert!(run(&fx, &["status"]).contains("the last push failed"));
+}
+
+#[test]
+fn a_missing_config_file_is_reported_until_it_is_back() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    run(&fx, &["report"]); // consumes the import notice
+    let moved = fx.cfg.with_extension("moved");
+    fs::rename(&fx.cfg, &moved).unwrap();
+    // The env stands in for a default config that finds the same repo.
+    let roots = format!("{}:{}", fx.claude.display(), fx.work.display());
+    let without_file = |args: &[&str]| {
+        let out = cmd(&fx)
+            .env("MEMSAGA_REPO", &fx.repo)
+            .env("MEMSAGA_ROOTS", &roots)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+    let r = without_file(&["report"]);
+    assert!(
+        r.contains("is missing") && r.contains("show HEAD:memsaga/config.toml"),
+        "{r}"
+    );
+    assert!(
+        without_file(&["report"]).contains("is missing"),
+        "every turn"
+    );
+    let v: serde_json::Value = serde_json::from_str(&without_file(&["status", "--json"])).unwrap();
+    assert_eq!(v["config"]["present"], false);
+    assert_eq!(v["config"]["missing"], true);
+    assert!(without_file(&["status"]).contains("is missing"));
+    fs::rename(&moved, &fx.cfg).unwrap();
+    assert!(run(&fx, &["report"]).trim().is_empty());
+}
+
+#[test]
+fn the_reporter_follows_events_across_log_rotation() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    run(&fx, &["report"]);
+    let state = fx.repo.join(".git/memsaga");
+    let memory = fx.claude.join("projects/-h-git-a/memory/one.md");
+    // A one-byte limit: each of these sweeps rotates the log right after
+    // recording its commit, so the reporter's file is gone twice over.
+    for (i, session) in ["s1", "s2"].iter().enumerate() {
+        write(&memory, &format!("edit {i}\n"));
+        let out = cmd(&fx)
+            .env("MEMSAGA_EVENTS_MAX_BYTES", "1")
+            .arg("hook")
+            .write_stdin(stop(session))
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    }
+    let rotated = fs::read_dir(&state)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("events-"))
+        .count();
+    assert_eq!(rotated, 2);
+    assert!(!state.join("events.jsonl").exists());
+    let r = run(&fx, &["report"]);
+    assert!(r.contains("2 files committed"), "{r}");
+    // Next turn, no rotation: a fresh events.jsonl, read from its start.
+    write(&memory, "edit 3\n");
+    hook(&fx, &stop("s3"));
+    let r = run(&fx, &["report"]);
+    assert!(r.contains("1 file committed"), "{r}");
+    assert!(run(&fx, &["report"]).trim().is_empty());
+}
+
+#[test]
+fn a_pre_rotation_offset_still_finds_commits_in_the_rotated_log() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    run(&fx, &["report"]);
+    // What a binary from before rotation existed left behind: a bare offset.
+    let state = fx.repo.join(".git/memsaga");
+    let len = fs::metadata(state.join("events.jsonl")).unwrap().len();
+    fs::write(state.join("report-offset"), len.to_string()).unwrap();
+    // The first sweep after the upgrade rotates before the reporter runs.
+    write(&fx.claude.join("projects/-h-git-a/memory/one.md"), "edit\n");
+    let out = cmd(&fx)
+        .env("MEMSAGA_EVENTS_MAX_BYTES", "1")
+        .arg("hook")
+        .write_stdin(stop("s1"))
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(!state.join("events.jsonl").exists());
+    let r = run(&fx, &["report"]);
+    assert!(r.contains("1 file committed"), "{r}");
+}
+
+#[test]
+fn two_same_length_edits_within_one_second_are_both_mirrored() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let memory = fx.claude.join("projects/-h-git-a/memory/one.md");
+    let at = |content: &str, nanos: u32| {
+        write(&memory, content);
+        let t = std::time::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, nanos);
+        fs::File::options()
+            .write(true)
+            .open(&memory)
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
+        hook(&fx, &post_tool_use(&memory, "s1"));
+        hook(&fx, &stop("s1"));
+    };
+    at("aaaa\n", 100_000_000);
+    at("bbbb\n", 600_000_000);
+    let mirrored = git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]);
+    assert_eq!(mirrored, "bbbb\n");
+    // A filesystem that keeps whole seconds: both edits read back with the
+    // same mtime, so only the contents can tell them apart.
+    at("cccc\n", 0);
+    at("dddd\n", 0);
+    let mirrored = git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]);
+    assert_eq!(mirrored, "dddd\n");
+}
+
+#[test]
+fn a_commit_names_the_session_title_but_not_the_prompt() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let transcript = fx.repo.parent().unwrap().join("t.jsonl");
+    write(
+        &transcript,
+        concat!(
+            "{\"type\":\"custom-title\",\"customTitle\":\"old title\"}\n",
+            "{\"type\":\"last-prompt\",\"lastPrompt\":\"older prompt\"}\n",
+            "{\"type\":\"user\",\"message\":{\"content\":\"noise\"}}\n",
+            "{\"type\":\"custom-title\",\"customTitle\":\"memsaga work\"}\n",
+            "{\"type\":\"last-prompt\",\"lastPrompt\":\"\\n  fix the reporter  \\nsecond line\"}\n",
+        ),
+    );
+    write(&fx.claude.join("CLAUDE.md"), "# changed\n");
+    hook(
+        &fx,
+        &format!(
+            "{{\"hook_event_name\":\"Stop\",\"session_id\":\"s1\",\"cwd\":\"/h/git/a\",\"transcript_path\":\"{}\"}}",
+            transcript.display()
+        ),
+    );
+    let msg = git(&fx, &["log", "-1", "--format=%B"]);
+    assert!(
+        msg.starts_with("[memsaga work] claude:CLAUDE.md\n"),
+        "{msg}"
+    );
+    assert!(msg.contains("\nSession-Title: memsaga work\n"), "{msg}");
+    assert!(!msg.contains("fix the reporter"), "{msg}");
+    // Large tool output after the title: it lies megabytes back, and the
+    // 1 MiB chunk boundary falls inside its line.
+    let line = "{\"type\":\"user\",\"message\":{\"content\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}\n";
+    let mut text = String::from("{\"type\":\"custom-title\",\"customTitle\":\"far back\"}\n");
+    let mut filler = line.repeat((2 << 20) / line.len());
+    filler.push_str(&"y".repeat((1 << 20) - 10 - (filler.len() % (1 << 20))));
+    filler.push('\n');
+    text.push_str(&filler);
+    write(&transcript, &text);
+    write(&fx.claude.join("CLAUDE.md"), "# far\n");
+    hook(
+        &fx,
+        &format!(
+            "{{\"hook_event_name\":\"Stop\",\"session_id\":\"s1\",\"cwd\":\"/h/git/a\",\"transcript_path\":\"{}\"}}",
+            transcript.display()
+        ),
+    );
+    let msg = git(&fx, &["log", "-1", "--format=%B"]);
+    assert!(msg.contains("\nSession-Title: far back\n"), "{msg}");
+    // A long title is cut in the subject, kept whole in the trailer.
+    let long = "a session title that is much longer than the subject can hold";
+    write(
+        &transcript,
+        &format!("{{\"type\":\"custom-title\",\"customTitle\":\"{long}\"}}\n"),
+    );
+    write(&fx.claude.join("CLAUDE.md"), "# long\n");
+    hook(
+        &fx,
+        &format!(
+            "{{\"hook_event_name\":\"Stop\",\"session_id\":\"s1\",\"cwd\":\"/h/git/a\",\"transcript_path\":\"{}\"}}",
+            transcript.display()
+        ),
+    );
+    let subject = git(&fx, &["log", "-1", "--format=%s"]);
+    assert_eq!(
+        subject.trim_end(),
+        "[a session title that is much...] claude:CLAUDE.md"
+    );
+    let msg = git(&fx, &["log", "-1", "--format=%B"]);
+    assert!(msg.contains(&format!("\nSession-Title: {long}\n")), "{msg}");
+    // Without a transcript the trailer is simply absent.
+    write(&fx.claude.join("CLAUDE.md"), "# changed again\n");
+    hook(&fx, &stop("s2"));
+    let msg = git(&fx, &["log", "-1", "--format=%B"]);
+    assert!(msg.starts_with("Stop: claude:CLAUDE.md\n"), "{msg}");
+    assert!(!msg.contains("Session-Title:"), "{msg}");
+}

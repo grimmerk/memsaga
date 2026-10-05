@@ -75,6 +75,9 @@ enum Cmd {
     Status {
         #[arg(short, default_value_t = 10)]
         n: usize,
+        /// Print one JSON object (for scripts, CodeV, a Claude Code mod).
+        #[arg(long)]
+        json: bool,
     },
     /// Recent commits.
     Log {
@@ -222,7 +225,7 @@ fn run(cli: Cli) -> Result<()> {
             (true, Some(_)) => anyhow::bail!("give either a path or --all, not both"),
             (false, None) => anyhow::bail!("a path is required (or --all)"),
         },
-        Cmd::Status { n } => cmd_status(n),
+        Cmd::Status { n, json } => cmd_status(n, json),
         Cmd::Log { n } => {
             let cfg = Config::load()?;
             print!("{}", Git::new(&cfg.repo).recent(n)?);
@@ -555,62 +558,63 @@ fn cmd_restore(path: &str, at: &str, yes: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_status(n: usize) -> Result<()> {
+fn cmd_status(n: usize, json: bool) -> Result<()> {
     let cfg = Config::load()?;
-    let git = Git::new(&cfg.repo);
-    let state = State::new(cfg.state_dir());
-    println!("repo: {}", cfg.repo.display());
-    if !git.is_repo() {
+    let st = memsaga_core::status::collect(&cfg, n);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&st)?);
+        return Ok(());
+    }
+    if st.config.missing {
+        if let Some(w) = memsaga_core::status::config_missing_warning(&cfg) {
+            println!("{w}");
+        }
+    }
+    println!("repo: {}", st.repo.display());
+    if !st.initialised {
         println!("not initialised (run memsaga init)");
         return Ok(());
     }
     println!(
         "head: {}",
-        git.head_short().unwrap_or_else(|_| "none".into())
+        if st.head.is_empty() { "none" } else { &st.head }
     );
-    let last_sweep = state
-        .mtime("last-sweep")
-        .map(fmt_time)
-        .unwrap_or_else(|| "never".into());
-    println!("last sweep: {last_sweep}");
-    if git.has_remote("origin") {
-        let last_push = state
-            .mtime("last-push")
-            .map(fmt_time)
-            .unwrap_or_else(|| "never".into());
-        println!(
-            "origin: ahead by {} commit(s); last push {}",
-            git.ahead_of("origin"),
-            last_push
-        );
-    } else {
-        println!("origin: none configured");
+    println!("last sweep: {}", fmt_stamp(&st.last_sweep));
+    match &st.origin {
+        Some(o) => {
+            println!(
+                "origin: ahead by {} commit(s); last push {}",
+                o.ahead,
+                fmt_stamp(&o.last_push)
+            );
+            if o.push_failing {
+                println!("origin: the last push failed: {}", o.push_error);
+            }
+            if let Some(at) = &o.push_pending {
+                println!("origin: deferred push scheduled for {at}");
+            }
+        }
+        None => println!("origin: none configured"),
     }
     println!(
         "dirty marker: {}",
-        if state.exists("dirty") {
+        if st.dirty {
             "set (sweep pending at next Stop)"
         } else {
             "clear"
         }
     );
-    let scope = Scope::new(&cfg);
-    for root in &cfg.roots {
-        let n = scope
-            .entries(root)
-            .iter()
-            .filter(|e| matches!(e, Entry::Memory { .. }))
-            .count();
+    for r in &st.roots {
         println!(
-            "root {}: {} memory dir(s) ({})",
-            root.label,
-            n,
-            root.path.display()
+            "root {}: {} memory dir(s) ({}){}",
+            r.label,
+            r.memory_dirs,
+            r.path.display(),
+            if r.exists { "" } else { " (missing)" }
         );
     }
-    let events = state.read_events();
     println!("recent events:");
-    for ev in events.iter().rev().take(n) {
+    for ev in &st.events {
         println!(
             "  {}  {:<12} {:<12} {:<8} {} {}",
             &ev.ts[..19.min(ev.ts.len())],
@@ -628,20 +632,11 @@ fn cmd_status(n: usize) -> Result<()> {
     Ok(())
 }
 
-fn fmt_time(t: std::time::SystemTime) -> String {
-    chrono_fmt(t)
-}
-
-fn chrono_fmt(t: std::time::SystemTime) -> String {
-    let secs = t
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let ago = std::time::SystemTime::now()
-        .duration_since(t)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    format!("{} ({}s ago)", secs, ago)
+fn fmt_stamp(s: &Option<memsaga_core::status::Stamp>) -> String {
+    match s {
+        Some(s) => format!("{} ({}s ago)", s.at, s.age_secs),
+        None => "never".into(),
+    }
 }
 
 fn count_files(dir: &std::path::Path) -> usize {

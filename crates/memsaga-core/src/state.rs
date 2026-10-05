@@ -10,6 +10,8 @@
 //! - `dirty`: appended by the hook when an in-scope file was edited during
 //!   the turn; the Stop sweep consumes it.
 //! - `events.jsonl`: one JSON object per sweep or push; `status` reads it.
+//!   A sweep moves it aside as `events-<time>.jsonl` past 1 MiB.
+//! - `report-offset`: how far the reporter has read (`<inode>:<offset>`).
 //! - `last-push`: mtime = last successful push (throttling).
 //! - `memsaga.log`: free-form log lines for debugging.
 
@@ -184,22 +186,123 @@ impl State {
             .collect()
     }
 
-    /// Events appended after byte offset `from`, plus the new end offset.
-    pub fn read_events_since(&self, from: u64) -> (Vec<Event>, u64) {
-        let text = std::fs::read_to_string(self.marker("events.jsonl")).unwrap_or_default();
-        let total = text.len() as u64;
-        if from as usize >= text.len() {
-            return (Vec::new(), total);
+    /// Events appended after position `from` (from an earlier call; empty
+    /// means the start), and the position to pass next time.
+    ///
+    /// A position is `<inode>:<offset>` of the file it points into. When
+    /// `events.jsonl` has another inode, the log was rotated in between: the
+    /// rest of the rotated file it pointed into (a rename keeps the inode) is
+    /// read, then every file rotated after it, then the current file from its
+    /// start. A bare offset from before rotation existed points into the
+    /// oldest rotated log when there is one, else into the current file.
+    pub fn read_events_since(&self, from: &str) -> (Vec<Event>, String) {
+        use std::os::unix::fs::MetadataExt;
+        let (mut from_ino, from_off) = match from.split_once(':') {
+            Some((i, o)) => (i.parse::<u64>().ok(), o.parse::<u64>().unwrap_or(0)),
+            None => (None, from.parse::<u64>().unwrap_or(0)),
+        };
+        // A bare offset was written before rotation existed, so if any log
+        // has been rotated since, the oldest one is the file it points into.
+        if from_ino.is_none() && !from.is_empty() {
+            from_ino = self.rotated_logs().first().map(|(_, ino)| *ino);
         }
-        let slice = &text[from as usize..];
-        (
-            slice
-                .lines()
-                .filter_map(|l| serde_json::from_str(l).ok())
-                .collect(),
-            total,
-        )
+        let current = std::fs::metadata(self.marker("events.jsonl")).ok();
+        let cur_ino = current.as_ref().map(|m| m.ino());
+        let bytes = std::fs::read(self.marker("events.jsonl")).unwrap_or_default();
+        let mut events = Vec::new();
+        let mut position = None;
+        let start = match from_ino {
+            Some(ino) if Some(ino) != cur_ino => {
+                let rotated = self.rotated_logs();
+                if let Some(i) = rotated.iter().position(|(_, rino)| *rino == ino) {
+                    for (k, (path, rino)) in rotated[i..].iter().enumerate() {
+                        let b = std::fs::read(path).unwrap_or_default();
+                        let off = if k == 0 { from_off } else { 0 };
+                        events.extend(parse_events(tail(&b, off)));
+                        position = Some(format!("{rino}:{}", b.len()));
+                    }
+                }
+                0
+            }
+            _ if from_off > bytes.len() as u64 => 0,
+            _ => from_off,
+        };
+        events.extend(parse_events(tail(&bytes, start)));
+        let position = match cur_ino {
+            Some(ino) => format!("{ino}:{}", bytes.len()),
+            // No current file (just rotated): stay where the reading ended.
+            None => position.unwrap_or_else(|| from.to_string()),
+        };
+        (events, position)
     }
+
+    /// Rotated logs (`events-*.jsonl`) with their inodes, oldest first.
+    fn rotated_logs(&self) -> Vec<(PathBuf, u64)> {
+        use std::os::unix::fs::MetadataExt;
+        let mut out: Vec<(SystemTime, PathBuf, u64)> = std::fs::read_dir(&self.dir)
+            .map(|rd| rd.filter_map(|e| e.ok()).collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy())
+                    .is_some_and(|n| n.starts_with("events-") && n.ends_with(".jsonl"))
+            })
+            .filter_map(|p| {
+                let m = std::fs::metadata(&p).ok()?;
+                Some((m.modified().ok()?, p, m.ino()))
+            })
+            .collect();
+        out.sort();
+        out.into_iter().map(|(_, p, ino)| (p, ino)).collect()
+    }
+
+    /// Move `events.jsonl` aside as `events-<local time>.jsonl` once it is
+    /// larger than `max` bytes; the next event starts a new file. The caller
+    /// holds the sweep lock, so two sweeps cannot rotate at once. Rotated
+    /// files are kept: about 20 MB a year at the measured rate.
+    pub fn rotate_events_if_over(&self, max: u64) -> Result<Option<PathBuf>> {
+        let current = self.marker("events.jsonl");
+        let len = std::fs::metadata(&current).map(|m| m.len()).unwrap_or(0);
+        if len <= max {
+            return Ok(None);
+        }
+        let stem = format!(
+            "events-{}",
+            chrono::Local::now().format("%Y%m%d-%H%M%S%.3f")
+        );
+        let mut target = self.dir.join(format!("{stem}.jsonl"));
+        let mut n = 1;
+        while target.exists() {
+            target = self.dir.join(format!("{stem}-{n}.jsonl"));
+            n += 1;
+        }
+        std::fs::rename(&current, &target)
+            .with_context(|| format!("rotating {}", current.display()))?;
+        Ok(Some(target))
+    }
+}
+
+/// Size above which a sweep rotates `events.jsonl`: 1 MiB (about three
+/// weeks at the measured 45 KB a day), or `MEMSAGA_EVENTS_MAX_BYTES`.
+pub fn events_max_bytes() -> u64 {
+    std::env::var("MEMSAGA_EVENTS_MAX_BYTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1 << 20)
+}
+
+/// `bytes` from `offset` on, or nothing when the offset is past the end.
+fn tail(bytes: &[u8], offset: u64) -> &[u8] {
+    bytes.get(offset as usize..).unwrap_or_default()
+}
+
+fn parse_events(bytes: &[u8]) -> Vec<Event> {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
 }
 
 pub fn now_rfc3339() -> String {

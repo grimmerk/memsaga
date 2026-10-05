@@ -132,9 +132,11 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
                 session: last.session.clone(),
                 cwd: last.cwd.clone(),
                 agent: String::new(),
+                transcript: String::new(),
             };
             let shortstat = git.staged_shortstat()?;
-            let msg = crate::sweep::commit_message(cfg, &attrib, &files, &name_status, &shortstat);
+            let msg =
+                crate::sweep::commit_message(cfg, &attrib, "", &files, &name_status, &shortstat);
             git.commit(&msg, Some(&last.ts))?;
             report.commits += 1;
         }

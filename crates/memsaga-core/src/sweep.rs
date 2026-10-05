@@ -21,6 +21,9 @@ pub struct Attribution {
     pub session: String,
     pub cwd: String,
     pub agent: String,
+    /// The session transcript, when the hook event named one: the commit
+    /// message carries the session's title from it.
+    pub transcript: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -139,21 +142,23 @@ fn tree_newer_than(dir: &Path, marker: SystemTime) -> bool {
 
 /// Copy every root into the repo and regenerate the index, without touching
 /// git. Shared by `sweep` and `diff`. The caller holds the lock.
-pub fn refresh_mirror(cfg: &Config, scope: &Scope) -> Result<(usize, usize)> {
-    let mut copied = 0;
-    let mut deleted = 0;
+pub fn refresh_mirror(cfg: &Config, scope: &Scope) -> Result<mirror::Stats> {
+    let mut stats = mirror::Stats::default();
     for root in &cfg.roots {
         if !root.path.is_dir() {
             continue;
         }
         let s = mirror::sync_root(scope, root, &cfg.repo)
             .with_context(|| format!("mirroring {}", root.path.display()))?;
-        copied += s.copied + s.linked;
-        deleted += s.deleted;
+        stats.copied += s.copied + s.linked;
+        stats.deleted += s.deleted;
+        stats.restat.extend(s.restat);
     }
-    copied += mirror::sync_self_and_extras(cfg)?.copied;
+    let s = mirror::sync_self_and_extras(cfg)?;
+    stats.copied += s.copied;
+    stats.restat.extend(s.restat);
     index::write_index(cfg, scope)?;
-    Ok((copied, deleted))
+    Ok(stats)
 }
 
 /// Refresh the mirror and return git's view of what a sweep would commit:
@@ -169,7 +174,7 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
     }
     let state = State::new(cfg.state_dir());
     let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
-    refresh_mirror(cfg, &scope)?;
+    let restat = refresh_mirror(cfg, &scope)?.restat;
     // Stage into a throwaway index so new files show up in the diff without
     // touching whatever the user may have staged in the real one.
     let temp_index = |args: &[&str]| -> Result<String> {
@@ -186,18 +191,29 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
     if real.exists() {
         std::fs::copy(&real, &tmp)?;
     }
-    let run = |args: &[&str]| -> Result<String> {
-        let out = std::process::Command::new("git")
-            .arg("-C")
+    let git_cmd = || {
+        let mut c = std::process::Command::new("git");
+        c.arg("-C")
             .arg(&cfg.repo)
             .env("GIT_INDEX_FILE", &tmp)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .args(args)
-            .output()?;
+            .env("GIT_TERMINAL_PROMPT", "0");
+        c
+    };
+    let run = |args: &[&str]| -> Result<String> {
+        let out = git_cmd().args(args).output()?;
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
     };
     let _ = temp_index; // keep the helper for callers that need a single command
     run(&["add", "-A", "--", "."])?;
+    for args in crate::git::renormalize_args(&cfg.repo, &restat) {
+        let out = git_cmd().args(&args).output()?;
+        if !out.status.success() {
+            anyhow::bail!(
+                "git add --renormalize failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+    }
     let status = run(&["status", "--short"])?;
     let diff = if stat_only {
         run(&["diff", "--cached", "--stat"])?
@@ -223,12 +239,12 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
     let sweep_start = SystemTime::now();
 
-    let (copied, deleted) = refresh_mirror(cfg, &scope)?;
-
+    let stats = refresh_mirror(cfg, &scope)?;
+    git.add_renormalize(&stats.restat)?;
     let changed = git.add_all_and_check()?;
     let mut out = Outcome {
-        copied,
-        deleted,
+        copied: stats.copied,
+        deleted: stats.deleted,
         ..Default::default()
     };
     if changed {
@@ -240,7 +256,8 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
             .filter_map(|l| l.split('\t').next_back().map(|s| s.to_string()))
             .collect();
         let shortstat = git.staged_shortstat()?;
-        let msg = commit_message(cfg, attrib, &files, &name_status, &shortstat);
+        let title = session_title(Path::new(&attrib.transcript));
+        let msg = commit_message(cfg, attrib, &title, &files, &name_status, &shortstat);
         let sha = git.commit(&msg, None)?;
         out.committed = true;
         out.sha = sha;
@@ -266,6 +283,10 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         message: out.shortstat.clone(),
     };
     state.append_event(&ev)?;
+    // Still under the sweep lock, so no other sweep rotates at the same time.
+    if let Err(e) = state.rotate_events_if_over(state::events_max_bytes()) {
+        state.log(&format!("events.jsonl rotation failed: {e:#}"));
+    }
     Ok(out)
 }
 
@@ -278,10 +299,97 @@ fn set_marker(state: &State, at: SystemTime) -> Result<()> {
     Ok(())
 }
 
-/// Subject: `<event>: <label>:<area>, …`; body: name-status; trailers.
+/// The session's title (set by `/rename`, or generated), read backwards from
+/// the end of its transcript: Claude Code appends `custom-title` and
+/// `agent-name` entries as the session goes, so the latest one is the
+/// current title. They usually sit within the last few kilobytes, but large
+/// tool output can push them further back (measured up to 4.2 MB), so the
+/// search walks back in 1 MiB chunks and gives up after 8 MiB. Not a
+/// documented format; anything unexpected yields an empty title. The prompt
+/// text is deliberately not read: a first line may carry a pasted secret,
+/// and the repo is pushed.
+pub fn session_title(transcript: &Path) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    const CHUNK: u64 = 1 << 20;
+    const LIMIT: u64 = 8 << 20;
+    let Ok(mut f) = std::fs::File::open(transcript) else {
+        return String::new();
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let floor = len.saturating_sub(LIMIT);
+    let mut end = len;
+    // The start of the line that straddles the previous chunk's start.
+    let mut carry: Vec<u8> = Vec::new();
+    while end > floor {
+        let start = end.saturating_sub(CHUNK).max(floor);
+        let mut buf = vec![0u8; (end - start) as usize];
+        if f.seek(SeekFrom::Start(start)).is_err() || f.read_exact(&mut buf).is_err() {
+            return String::new();
+        }
+        buf.extend_from_slice(&carry);
+        // Unless this chunk starts the file, its first line may be partial:
+        // keep it for the next (earlier) chunk.
+        let first_complete = if start == 0 {
+            0
+        } else {
+            match buf.iter().position(|&b| b == b'\n') {
+                Some(i) => i + 1,
+                None => buf.len(),
+            }
+        };
+        carry = buf[..first_complete].to_vec();
+        let text = String::from_utf8_lossy(&buf[first_complete..]);
+        for line in text.lines().rev() {
+            if let Some(title) = title_entry(line) {
+                return title;
+            }
+        }
+        end = start;
+    }
+    if floor == 0 {
+        return title_entry(&String::from_utf8_lossy(&carry)).unwrap_or_default();
+    }
+    String::new()
+}
+
+/// The title a `custom-title` or `agent-name` entry carries, if `line` is one.
+fn title_entry(line: &str) -> Option<String> {
+    // Skip the bulk (messages, tool output) without parsing it.
+    if !(line.contains("\"custom-title\"") || line.contains("\"agent-name\"")) {
+        return None;
+    }
+    let v = serde_json::from_str::<serde_json::Value>(line.trim()).ok()?;
+    let field = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default();
+    let title = match field("type") {
+        "custom-title" => one_line(field("customTitle")),
+        "agent-name" => one_line(field("agentName")),
+        _ => return None,
+    };
+    (!title.is_empty()).then_some(title)
+}
+
+/// The first non-blank line, trimmed, at most 100 characters.
+fn one_line(s: &str) -> String {
+    let line = s
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    if line.chars().count() > 100 {
+        line.chars().take(97).collect::<String>() + "..."
+    } else {
+        line.to_string()
+    }
+}
+
+/// Subject: `[<session title>] <label>:<area>, …`, or `<event>: …` when the
+/// session has no title; at most 72 characters, the title cut to 32 so the
+/// areas keep room (the full title is in the trailer). Body: name-status;
+/// trailers, with `Session-Title` when the transcript gave one.
 pub fn commit_message(
     cfg: &Config,
     attrib: &Attribution,
+    title: &str,
     files: &[String],
     name_status: &str,
     shortstat: &str,
@@ -289,19 +397,40 @@ pub fn commit_message(
     let mut areas: Vec<String> = files.iter().map(|f| area_of(cfg, f)).collect();
     areas.sort();
     areas.dedup();
-    let mut subject = format!("{}: {}", attrib.event, areas.join(", "));
-    if subject.chars().count() > 72 {
-        subject = subject.chars().take(69).collect::<String>() + "...";
-    }
+    let head = if title.is_empty() {
+        format!("{}:", attrib.event)
+    } else {
+        format!("[{}]", truncate_chars(title, 32))
+    };
+    let subject = truncate_chars(&format!("{head} {}", areas.join(", ")), 72);
     let body: String = name_status.lines().take(40).collect::<Vec<_>>().join("\n");
-    format!(
+    let mut msg = format!(
         "{subject}\n\n{shortstat}\n{body}\n\nEvent: {}\nAccount: {}\nSession: {}\nCwd: {}\nAgent: {}\n",
         attrib.event,
         or_none(&attrib.account),
         or_none(&attrib.session),
         or_none(&attrib.cwd),
         if attrib.agent.is_empty() { "main" } else { &attrib.agent },
-    )
+    );
+    if !title.is_empty() {
+        msg.push_str(&format!("Session-Title: {title}\n"));
+    }
+    msg
+}
+
+/// At most `max` characters, ending in `...` when cut (with no space
+/// before the dots).
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() > max {
+        s.chars()
+            .take(max - 3)
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+            + "..."
+    } else {
+        s.to_string()
+    }
 }
 
 fn or_none(s: &str) -> &str {

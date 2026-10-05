@@ -50,7 +50,7 @@ scope ends with a commit, and the terminal shows a one-line notice.
 
 | Command | What it does |
 |---|---|
-| `memsaga status` | Last sweep, pending dirty marker, push state, recent events |
+| `memsaga status [--json]` | Last sweep, pending dirty marker, push state (including a failing or deferred push), a missing config file, recent events; `--json` prints the same as one object for scripts and tools. Read-only |
 | `memsaga log` | Recent commits |
 | `memsaga diff [--stat]` | What the next sweep would commit (refreshes the mirror, commits nothing) |
 | `memsaga restore <path> [--at <rev>] [-y]` | Copy one file from history back to its live location, diff first |
@@ -127,7 +127,16 @@ Each Claude Code config directory is a root with its own subtree. Files the
 second account shares through symlinks (a common pattern for `CLAUDE.md` and
 `skills/`) are mirrored as relative symlinks inside the repo, so content is
 stored once. Hooks are registered per directory; the commit's `Account:`
-trailer comes from `CLAUDE_CONFIG_DIR`.
+trailer comes from `CLAUDE_CONFIG_DIR`, and `Session-Title:` (when the session
+has one) from the end of the session's transcript. The title also starts the
+subject line, `[<title>] claude:memory:<slug>`, cut to 32 characters there so
+the subject stays within 72. The prompt text is never copied into a commit.
+
+If the config file disappears while the repo still holds its mirrored copy,
+memsaga runs on its defaults: fewer files are mirrored, and copies of files
+that drop out of scope are left in the repo (the usual mirror deletions still
+apply to what stays in scope). The reporter prints a warning with the restore
+command after every turn until the file is back.
 
 ## Restoring on another machine
 

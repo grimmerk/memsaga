@@ -5,8 +5,36 @@
 //! hang a TTY-less hook) and interactive prompts.
 
 use anyhow::{bail, Context, Result};
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+
+/// `git add --renormalize` argument lists for `paths` (files inside `repo`),
+/// at most 200 paths each. Each path is a literal pathspec built from the raw
+/// OS bytes, so a name holding `*`, `[` or invalid UTF-8 means exactly that
+/// file. Shared by the sweep and the `diff` preview.
+pub fn renormalize_args(repo: &Path, paths: &[PathBuf]) -> Vec<Vec<OsString>> {
+    let specs: Vec<OsString> = paths
+        .iter()
+        .filter_map(|p| p.strip_prefix(repo).ok())
+        .map(|rel| {
+            let mut s = OsString::from(":(literal)");
+            s.push(rel.as_os_str());
+            s
+        })
+        .collect();
+    specs
+        .chunks(200)
+        .map(|chunk| {
+            let mut args: Vec<OsString> = ["add", "--renormalize", "--"]
+                .iter()
+                .map(OsString::from)
+                .collect();
+            args.extend(chunk.iter().cloned());
+            args
+        })
+        .collect()
+}
 
 pub struct Git<'a> {
     pub repo: &'a Path,
@@ -75,6 +103,25 @@ impl<'a> Git<'a> {
     pub fn init(&self) -> Result<()> {
         std::fs::create_dir_all(self.repo)?;
         self.run_ok(&["init", "-q"])?;
+        Ok(())
+    }
+
+    /// Re-read these files' contents into the index whatever their stat
+    /// data says (see `mirror::Stats::restat`). Paths inside the repo.
+    pub fn add_renormalize(&self, paths: &[PathBuf]) -> Result<()> {
+        for args in renormalize_args(self.repo, paths) {
+            let out = self
+                .cmd()
+                .args(&args)
+                .output()
+                .context("running git add --renormalize")?;
+            if !out.status.success() {
+                bail!(
+                    "git add --renormalize failed: {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                );
+            }
+        }
         Ok(())
     }
 
@@ -225,5 +272,24 @@ impl<'a> Git<'a> {
             "--date=format:%Y-%m-%d %H:%M",
             "--format=%h  %ad  %s",
         ])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn renormalize_paths_are_literal_raw_bytes() {
+        let repo = Path::new("/r");
+        let odd = std::ffi::OsStr::from_bytes(b"/r/claude/x[1]\xff.md");
+        let args = renormalize_args(repo, &[PathBuf::from(odd), PathBuf::from("/elsewhere/y")]);
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].len(), 4, "outside paths are dropped: {args:?}");
+        assert_eq!(
+            args[0][3].as_bytes(),
+            b":(literal)claude/x[1]\xff.md".as_slice()
+        );
     }
 }

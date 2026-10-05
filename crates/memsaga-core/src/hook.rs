@@ -81,6 +81,7 @@ impl HookInput {
             session: self.session_id.clone(),
             cwd: self.cwd.clone(),
             agent: self.agent_type.clone(),
+            transcript: self.transcript_path.clone(),
         }
     }
 }
@@ -122,13 +123,12 @@ pub fn handle(cfg: &Config, input: &HookInput) -> Result<Action> {
         }
         "Stop" | "SessionEnd" => {
             let mut action = Action::Ignored;
+            let attrib = input.attribution(cfg);
             if sweep::needs_sweep(cfg, &scope, &state) {
-                action = Action::Swept(sweep::sweep(cfg, &input.attribution(cfg))?);
+                action = Action::Swept(sweep::sweep(cfg, &attrib)?);
             }
             let session_end = input.hook_event_name == "SessionEnd";
-            if maybe_push(cfg, &state, session_end, &input.attribution(cfg))?
-                && matches!(action, Action::Ignored)
-            {
+            if maybe_push(cfg, &state, session_end, &attrib)? && matches!(action, Action::Ignored) {
                 action = Action::Pushed;
             }
             Ok(action)
@@ -208,6 +208,7 @@ pub fn push_now(cfg: &Config, state: &State, attrib: &Attribution) -> Result<boo
     match git.push("origin") {
         Ok(()) => {
             state.touch("last-push")?;
+            state.remove("push-error");
             ev.kind = "push".into();
             state.append_event(&ev)?;
             Ok(true)
@@ -217,6 +218,7 @@ pub fn push_now(cfg: &Config, state: &State, attrib: &Attribution) -> Result<boo
             ev.message = e.to_string();
             state.append_event(&ev)?;
             state.log(&format!("push failed: {e}"));
+            state.write_marker("push-error", &e.to_string())?;
             Ok(false)
         }
     }
@@ -313,29 +315,31 @@ pub fn deferred_push(cfg: &Config, after_secs: u64) -> Result<()> {
     Ok(())
 }
 
-/// The reporter: commits since the last report, as a one-line notice, or None.
+/// The reporter: a one-line notice for commits since the last report, and
+/// a warning while the config file is missing; None when there is neither.
 /// Kept to a few milliseconds: reads a byte offset and the tail of events.jsonl.
 pub fn report(cfg: &Config) -> Option<String> {
+    let warning = crate::status::config_missing_warning(cfg);
     if !cfg.reporter {
-        return None;
+        return warning;
     }
     let state = State::new(cfg.state_dir());
-    let offset: u64 = std::fs::read_to_string(state.marker("report-offset"))
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-    let (events, new_offset) = state.read_events_since(offset);
-    let _ = std::fs::write(state.marker("report-offset"), new_offset.to_string());
+    let offset = state.read_marker("report-offset").unwrap_or_default();
+    let (events, new_offset) = state.read_events_since(&offset);
+    let _ = state.write_marker("report-offset", &new_offset);
     let commits: Vec<&Event> = events.iter().filter(|e| e.kind == "commit").collect();
-    if commits.is_empty() {
-        return None;
+    let notice = (!commits.is_empty()).then(|| {
+        let files: usize = commits.iter().map(|e| e.files.len()).sum();
+        let shas: Vec<&str> = commits.iter().map(|e| e.sha.as_str()).collect();
+        format!(
+            "memsaga: {} file{} committed ({})",
+            files,
+            if files == 1 { "" } else { "s" },
+            shas.join(", ")
+        )
+    });
+    match (warning, notice) {
+        (Some(w), Some(n)) => Some(format!("{w}\n{n}")),
+        (w, n) => w.or(n),
     }
-    let files: usize = commits.iter().map(|e| e.files.len()).sum();
-    let shas: Vec<&str> = commits.iter().map(|e| e.sha.as_str()).collect();
-    Some(format!(
-        "memsaga: {} file{} committed ({})",
-        files,
-        if files == 1 { "" } else { "s" },
-        shas.join(", ")
-    ))
 }
