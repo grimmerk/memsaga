@@ -191,20 +191,28 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
     if real.exists() {
         std::fs::copy(&real, &tmp)?;
     }
-    let run = |args: &[&str]| -> Result<String> {
-        let out = std::process::Command::new("git")
-            .arg("-C")
+    let git_cmd = || {
+        let mut c = std::process::Command::new("git");
+        c.arg("-C")
             .arg(&cfg.repo)
             .env("GIT_INDEX_FILE", &tmp)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .args(args)
-            .output()?;
+            .env("GIT_TERMINAL_PROMPT", "0");
+        c
+    };
+    let run = |args: &[&str]| -> Result<String> {
+        let out = git_cmd().args(args).output()?;
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
     };
     let _ = temp_index; // keep the helper for callers that need a single command
     run(&["add", "-A", "--", "."])?;
-    for p in restat.iter().filter_map(|p| p.strip_prefix(&cfg.repo).ok()) {
-        run(&["add", "--renormalize", "--", &p.to_string_lossy()])?;
+    for args in crate::git::renormalize_args(&cfg.repo, &restat) {
+        let out = git_cmd().args(&args).output()?;
+        if !out.status.success() {
+            anyhow::bail!(
+                "git add --renormalize failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
     }
     let status = run(&["status", "--short"])?;
     let diff = if stat_only {

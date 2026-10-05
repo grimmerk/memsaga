@@ -334,10 +334,40 @@ fn has_subsecond(t: Option<std::time::SystemTime>) -> bool {
         .is_some_and(|d| d.subsec_nanos() != 0)
 }
 
+/// Byte-for-byte equal, read in 64 KiB chunks so a large file never sits in
+/// memory twice. Any read error counts as "different" (the caller copies).
 fn same_contents(a: &Path, b: &Path) -> bool {
-    match (fs::read(a), fs::read(b)) {
-        (Ok(x), Ok(y)) => x == y,
-        _ => false,
+    use std::io::Read;
+    let (Ok(mut fa), Ok(mut fb)) = (fs::File::open(a), fs::File::open(b)) else {
+        return false;
+    };
+    let mut ba = vec![0u8; 64 << 10];
+    let mut bb = vec![0u8; 64 << 10];
+    loop {
+        let Ok(na) = read_full(&mut fa, &mut ba) else {
+            return false;
+        };
+        let Ok(nb) = read_full(&mut fb, &mut bb) else {
+            return false;
+        };
+        if na != nb || ba[..na] != bb[..nb] {
+            return false;
+        }
+        if na == 0 {
+            return true;
+        }
+    }
+
+    /// Fill `buf` as far as the file allows; fewer bytes only at the end.
+    fn read_full(f: &mut fs::File, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut n = 0;
+        while n < buf.len() {
+            match f.read(&mut buf[n..])? {
+                0 => break,
+                k => n += k,
+            }
+        }
+        Ok(n)
     }
 }
 
@@ -487,6 +517,22 @@ pub fn relative_path(from_dir: &Path, to: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn same_contents_compares_across_chunk_boundaries() {
+        let dir = std::env::temp_dir().join(format!("memsaga-same-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        let mut big = vec![b'x'; (64 << 10) * 2 + 7];
+        fs::write(&a, &big).unwrap();
+        fs::write(&b, &big).unwrap();
+        assert!(same_contents(&a, &b));
+        // Differ only in the last byte, past two full chunks.
+        *big.last_mut().unwrap() = b'y';
+        fs::write(&b, &big).unwrap();
+        assert!(!same_contents(&a, &b));
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn extra_repo_rel_stays_inside_the_repo() {
