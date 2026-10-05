@@ -45,7 +45,7 @@ git -C $R log --diff-filter=D --since='30 days ago' --name-only --format='%h %ad
 git -C $R show <sha>^:claude/memory/<slug>/<file>.md        # content before a commit
 git -C $R diff <sha1> <sha2> -- claude/CLAUDE.md
 git -C $R log --format='%h %ad %s%n  %(trailers:key=Session,valueonly)' --date=short -n 20   # which session changed what
-git -C $R log --grep='^Session-Title: <name>' --format='%h %ad %s' --date=short   # every commit of one named session
+git -C $R log --grep='^Session-Title: <name>$' --format='%h %ad %s' --date=short   # every commit of one named session (a regex: escape . [ * in the name)
 ```
 
 Before 2026-09-18 the repo stored memory at `claude/projects/<slug>/memory/`; that commit is
