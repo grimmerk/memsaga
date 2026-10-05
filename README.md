@@ -128,8 +128,9 @@ second account shares through symlinks (a common pattern for `CLAUDE.md` and
 `skills/`) are mirrored as relative symlinks inside the repo, so content is
 stored once. Hooks are registered per directory; the commit's `Account:`
 trailer comes from `CLAUDE_CONFIG_DIR`, and `Session-Title:` (when the session
-has one) from the end of the session's transcript. The prompt text is never
-copied into a commit.
+has one) from the end of the session's transcript. The title also starts the
+subject line, `[<title>] claude:memory:<slug>`, cut to 32 characters there so
+the subject stays within 72. The prompt text is never copied into a commit.
 
 If the config file disappears while the repo still holds its mirrored copy,
 memsaga runs on its defaults: fewer files are mirrored, and copies of files

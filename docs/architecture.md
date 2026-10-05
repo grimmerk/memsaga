@@ -66,7 +66,8 @@ Claude Code ─────────┬────────────�
 - `memsaga hook` reads one JSON object on stdin with the Claude Code hook fields
   (`hook_event_name`, `session_id`, `cwd`, `tool_input.file_path`,
   `tool_calls[]`, `agent_type`, `file_path`).
-- Commit trailers: `Event`, `Account`, `Session`, `Cwd`, `Agent`.
+- Commit subject: `[<session title>] <label>:<area>, …` (title cut to 32 characters, whole line to 72), or `<event>: …` without a title.
+- Commit trailers: `Event`, `Account`, `Session`, `Cwd`, `Agent`, and `Session-Title` when the transcript names one.
 - Repo layout: `<label>/CLAUDE.md`, `<label>/<dir>/…`,
   `<label>/memory/<slug>/…` (live `projects/<slug>/memory/`; the mapping is
   `roots::repo_rel_of_live` and its inverse), plus `index.md`, `paths.json`,

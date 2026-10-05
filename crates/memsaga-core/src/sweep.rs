@@ -382,8 +382,10 @@ fn one_line(s: &str) -> String {
     }
 }
 
-/// Subject: `<event>: <label>:<area>, …`; body: name-status; trailers,
-/// with `Session-Title` when the transcript gave one.
+/// Subject: `[<session title>] <label>:<area>, …`, or `<event>: …` when the
+/// session has no title; at most 72 characters, the title cut to 32 so the
+/// areas keep room (the full title is in the trailer). Body: name-status;
+/// trailers, with `Session-Title` when the transcript gave one.
 pub fn commit_message(
     cfg: &Config,
     attrib: &Attribution,
@@ -395,10 +397,12 @@ pub fn commit_message(
     let mut areas: Vec<String> = files.iter().map(|f| area_of(cfg, f)).collect();
     areas.sort();
     areas.dedup();
-    let mut subject = format!("{}: {}", attrib.event, areas.join(", "));
-    if subject.chars().count() > 72 {
-        subject = subject.chars().take(69).collect::<String>() + "...";
-    }
+    let head = if title.is_empty() {
+        format!("{}:", attrib.event)
+    } else {
+        format!("[{}]", truncate_chars(title, 32))
+    };
+    let subject = truncate_chars(&format!("{head} {}", areas.join(", ")), 72);
     let body: String = name_status.lines().take(40).collect::<Vec<_>>().join("\n");
     let mut msg = format!(
         "{subject}\n\n{shortstat}\n{body}\n\nEvent: {}\nAccount: {}\nSession: {}\nCwd: {}\nAgent: {}\n",
@@ -412,6 +416,21 @@ pub fn commit_message(
         msg.push_str(&format!("Session-Title: {title}\n"));
     }
     msg
+}
+
+/// At most `max` characters, ending in `...` when cut (with no space
+/// before the dots).
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() > max {
+        s.chars()
+            .take(max - 3)
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+            + "..."
+    } else {
+        s.to_string()
+    }
 }
 
 fn or_none(s: &str) -> &str {

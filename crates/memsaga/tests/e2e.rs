@@ -1469,6 +1469,10 @@ fn a_commit_names_the_session_title_but_not_the_prompt() {
         ),
     );
     let msg = git(&fx, &["log", "-1", "--format=%B"]);
+    assert!(
+        msg.starts_with("[memsaga work] claude:CLAUDE.md\n"),
+        "{msg}"
+    );
     assert!(msg.contains("\nSession-Title: memsaga work\n"), "{msg}");
     assert!(!msg.contains("fix the reporter"), "{msg}");
     // Large tool output after the title: it lies megabytes back, and the
@@ -1490,9 +1494,31 @@ fn a_commit_names_the_session_title_but_not_the_prompt() {
     );
     let msg = git(&fx, &["log", "-1", "--format=%B"]);
     assert!(msg.contains("\nSession-Title: far back\n"), "{msg}");
+    // A long title is cut in the subject, kept whole in the trailer.
+    let long = "a session title that is much longer than the subject can hold";
+    write(
+        &transcript,
+        &format!("{{\"type\":\"custom-title\",\"customTitle\":\"{long}\"}}\n"),
+    );
+    write(&fx.claude.join("CLAUDE.md"), "# long\n");
+    hook(
+        &fx,
+        &format!(
+            "{{\"hook_event_name\":\"Stop\",\"session_id\":\"s1\",\"cwd\":\"/h/git/a\",\"transcript_path\":\"{}\"}}",
+            transcript.display()
+        ),
+    );
+    let subject = git(&fx, &["log", "-1", "--format=%s"]);
+    assert_eq!(
+        subject.trim_end(),
+        "[a session title that is much...] claude:CLAUDE.md"
+    );
+    let msg = git(&fx, &["log", "-1", "--format=%B"]);
+    assert!(msg.contains(&format!("\nSession-Title: {long}\n")), "{msg}");
     // Without a transcript the trailer is simply absent.
     write(&fx.claude.join("CLAUDE.md"), "# changed again\n");
     hook(&fx, &stop("s2"));
     let msg = git(&fx, &["log", "-1", "--format=%B"]);
+    assert!(msg.starts_with("Stop: claude:CLAUDE.md\n"), "{msg}");
     assert!(!msg.contains("Session-Title:"), "{msg}");
 }
