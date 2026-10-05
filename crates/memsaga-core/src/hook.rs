@@ -208,6 +208,7 @@ pub fn push_now(cfg: &Config, state: &State, attrib: &Attribution) -> Result<boo
     match git.push("origin") {
         Ok(()) => {
             state.touch("last-push")?;
+            state.remove("push-error");
             ev.kind = "push".into();
             state.append_event(&ev)?;
             Ok(true)
@@ -217,6 +218,7 @@ pub fn push_now(cfg: &Config, state: &State, attrib: &Attribution) -> Result<boo
             ev.message = e.to_string();
             state.append_event(&ev)?;
             state.log(&format!("push failed: {e}"));
+            state.write_marker("push-error", &e.to_string())?;
             Ok(false)
         }
     }

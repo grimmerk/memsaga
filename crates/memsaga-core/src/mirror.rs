@@ -16,11 +16,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 pub struct Stats {
     pub copied: usize,
     pub deleted: usize,
     pub linked: usize,
+    /// Copies git's stat cache cannot see: the new contents have the old
+    /// size and an mtime in the same second. `git add` skips such a file
+    /// unless told to re-read it (`git add --renormalize`).
+    pub restat: Vec<PathBuf>,
 }
 
 impl Stats {
@@ -28,6 +32,44 @@ impl Stats {
         self.copied += o.copied;
         self.deleted += o.deleted;
         self.linked += o.linked;
+        self.restat.extend(o.restat);
+    }
+
+    fn count(&mut self, c: Copied, dst: &Path) {
+        match c {
+            Copied::No => {}
+            Copied::Yes => self.copied += 1,
+            Copied::SameStat => {
+                self.copied += 1;
+                self.restat.push(dst.to_path_buf());
+            }
+        }
+    }
+}
+
+/// What a copy did to the destination.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Copied {
+    No,
+    Yes,
+    /// Rewritten with the same size and an mtime in the same second.
+    SameStat,
+}
+
+impl Copied {
+    /// After writing `dst`: same size and second as before the write?
+    fn of(before: Option<&fs::Metadata>, dst: &Path) -> Copied {
+        let after = fs::metadata(dst).ok();
+        match (before, after) {
+            (Some(b), Some(a))
+                if b.is_file()
+                    && b.len() == a.len()
+                    && same_second(b.modified().ok(), a.modified().ok()) =>
+            {
+                Copied::SameStat
+            }
+            _ => Copied::Yes,
+        }
     }
 }
 
@@ -52,17 +94,16 @@ pub fn extra_repo_rel(p: &Path) -> PathBuf {
 pub fn sync_self_and_extras(cfg: &crate::config::Config) -> Result<Stats> {
     let mut stats = Stats::default();
     let own = crate::config::config_path();
-    if own.is_file() && copy_if_changed(&own, &cfg.repo.join("memsaga/config.toml"))? {
-        stats.copied += 1;
+    if own.is_file() {
+        let dst = cfg.repo.join("memsaga/config.toml");
+        stats.count(copy_if_changed(&own, &dst)?, &dst);
     }
     for src in cfg.extra_files() {
         if !src.is_file() {
             continue;
         }
         let dst = cfg.repo.join(extra_repo_rel(&src));
-        if copy_if_changed(&src, &dst)? {
-            stats.copied += 1;
-        }
+        stats.count(copy_if_changed(&src, &dst)?, &dst);
     }
     Ok(stats)
 }
@@ -123,9 +164,7 @@ fn sync_entry(scope: &Scope, root: &Root, entry: &Entry, repo: &Path) -> Result<
         } else {
             copy_if_changed(&src, &dst)?
         };
-        if copied {
-            stats.copied += 1;
-        }
+        stats.count(copied, &dst);
         return Ok(stats);
     }
     if meta.is_dir() {
@@ -197,8 +236,8 @@ pub fn sync_dir(scope: &Scope, src: &Path, dst: &Path, prefix: &Path) -> Result<
             if replace_symlink(&target, &link)? {
                 stats.linked += 1;
             }
-        } else if ft.is_file() && copy_if_changed(item.path(), &target)? {
-            stats.copied += 1;
+        } else if ft.is_file() {
+            stats.count(copy_if_changed(item.path(), &target)?, &target);
         }
     }
     // Delete what is no longer in the source. Deepest first so dirs empty out.
@@ -224,7 +263,7 @@ pub fn sync_dir(scope: &Scope, src: &Path, dst: &Path, prefix: &Path) -> Result<
 /// Mirror `settings.json` without the volatile top-level keys, so toggling
 /// `/model` or `/effort` does not produce a commit. Falls back to a plain
 /// copy when the file is not a JSON object. Compared by content, not mtime.
-fn copy_settings_stripped(src: &Path, dst: &Path, ignore: &[String]) -> Result<bool> {
+fn copy_settings_stripped(src: &Path, dst: &Path, ignore: &[String]) -> Result<Copied> {
     let text = fs::read_to_string(src)?;
     let mut value: serde_json::Value = match serde_json::from_str(&text) {
         Ok(v) => v,
@@ -238,9 +277,10 @@ fn copy_settings_stripped(src: &Path, dst: &Path, ignore: &[String]) -> Result<b
     }
     let out = serde_json::to_string_pretty(&value)? + "\n";
     // Only a regular file counts as "already current"; a symlink is replaced.
-    if let Ok(dm) = fs::symlink_metadata(dst) {
+    let before = fs::symlink_metadata(dst).ok();
+    if let Some(dm) = &before {
         if dm.is_file() && fs::read_to_string(dst).map(|d| d == out).unwrap_or(false) {
-            return Ok(false);
+            return Ok(Copied::No);
         }
         if !dm.is_file() {
             remove_any(dst)?;
@@ -251,22 +291,26 @@ fn copy_settings_stripped(src: &Path, dst: &Path, ignore: &[String]) -> Result<b
     if let Ok(sm) = fs::metadata(src) {
         let _ = fs::set_permissions(dst, sm.permissions());
     }
-    Ok(true)
+    Ok(Copied::of(before.as_ref(), dst))
 }
 
-fn copy_if_changed(src: &Path, dst: &Path) -> Result<bool> {
+fn copy_if_changed(src: &Path, dst: &Path) -> Result<Copied> {
     let sm = fs::metadata(src)?;
-    if let Ok(dm) = fs::symlink_metadata(dst) {
+    let before = fs::symlink_metadata(dst).ok();
+    if let Some(dm) = &before {
         if dm.is_file()
             && dm.len() == sm.len()
             && same_second(dm.modified().ok(), sm.modified().ok())
         {
-            // Equal to the nanosecond: this is our own copy (we set the
-            // source mtime on it). Same second only: a second edit of the
-            // same length within that second, or a filesystem that keeps
-            // whole seconds; the contents decide (the files are small).
-            if dm.modified().ok() == sm.modified().ok() || same_contents(src, dst) {
-                return Ok(false);
+            // Equal to the nanosecond, with a sub-second part: this is our
+            // own copy (we set the source mtime on it). Otherwise, a second
+            // edit of the same length within that second, or a filesystem
+            // that keeps whole seconds (where equal says nothing): the
+            // contents decide (the files are small).
+            let exact =
+                dm.modified().ok() == sm.modified().ok() && has_subsecond(sm.modified().ok());
+            if exact || same_contents(src, dst) {
+                return Ok(Copied::No);
             }
         }
         if !dm.is_file() {
@@ -282,7 +326,12 @@ fn copy_if_changed(src: &Path, dst: &Path) -> Result<bool> {
         let f = fs::OpenOptions::new().write(true).open(dst)?;
         let _ = f.set_modified(t);
     }
-    Ok(true)
+    Ok(Copied::of(before.as_ref(), dst))
+}
+
+fn has_subsecond(t: Option<std::time::SystemTime>) -> bool {
+    t.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .is_some_and(|d| d.subsec_nanos() != 0)
 }
 
 fn same_contents(a: &Path, b: &Path) -> bool {

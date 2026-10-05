@@ -54,7 +54,8 @@ pub struct OriginStatus {
     /// Commits on HEAD that origin's tracking branch lacks.
     pub ahead: usize,
     pub last_push: Option<Stamp>,
-    /// The latest push attempt in the event log failed.
+    /// The latest push attempt failed (marker `push-error`, cleared by the
+    /// next successful push).
     pub push_failing: bool,
     /// Its error text, when failing.
     pub push_error: String,
@@ -77,12 +78,25 @@ pub fn config_missing_warning(cfg: &Config) -> Option<String> {
     if path.exists() || !cfg.repo.join("memsaga/config.toml").is_file() {
         return None;
     }
+    let path = path.display().to_string();
     Some(format!(
-        "memsaga: config file {} is missing, running on defaults (fewer files are mirrored); restore it with: git -C {} show HEAD:memsaga/config.toml > {}",
-        path.display(),
-        cfg.repo.display(),
-        path.display()
+        "memsaga: config file {path} is missing, running on defaults (fewer files are mirrored); restore it with: git -C {} show HEAD:memsaga/config.toml > {}",
+        shell_quote(&cfg.repo.display().to_string()),
+        shell_quote(&path)
     ))
+}
+
+/// `s` as one shell word: unchanged when it is plainly safe, else in single
+/// quotes (with any `'` written as `'\''`).
+fn shell_quote(s: &str) -> String {
+    let safe = !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-+:@,".contains(c));
+    if safe {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
 }
 
 pub fn collect(cfg: &Config, n_events: usize) -> Status {
@@ -127,19 +141,13 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
     let mut events = state.read_events();
     events.reverse();
     let origin = git.has_remote("origin").then(|| {
-        let last_attempt = events
-            .iter()
-            .find(|e| e.kind == "push" || e.kind == "push-failed");
-        let push_failing = last_attempt.is_some_and(|e| e.kind == "push-failed");
+        // A marker, not the event log: rotation must not hide a failure.
+        let push_error = state.read_marker("push-error");
         OriginStatus {
             ahead: git.ahead_of("origin"),
             last_push: state.mtime("last-push").map(stamp),
-            push_failing,
-            push_error: if push_failing {
-                last_attempt.map(|e| e.message.clone()).unwrap_or_default()
-            } else {
-                String::new()
-            },
+            push_failing: push_error.is_some(),
+            push_error: push_error.unwrap_or_default(),
             push_pending: state
                 .read_marker("push-pending")
                 .and_then(|s| s.parse::<i64>().ok())
@@ -173,5 +181,22 @@ fn stamp(t: SystemTime) -> Stamp {
             .duration_since(t)
             .map(|d| d.as_secs())
             .unwrap_or(0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shell_quote;
+
+    #[test]
+    fn shell_quote_leaves_plain_paths_and_quotes_the_rest() {
+        assert_eq!(
+            shell_quote("/Users/me/git/memories"),
+            "/Users/me/git/memories"
+        );
+        assert_eq!(shell_quote("/Users/me/My Repo"), "'/Users/me/My Repo'");
+        assert_eq!(shell_quote("/a/it's"), "'/a/it'\\''s'");
+        assert_eq!(shell_quote("~/x"), "'~/x'");
+        assert_eq!(shell_quote("/a/$(rm)"), "'/a/$(rm)'");
     }
 }

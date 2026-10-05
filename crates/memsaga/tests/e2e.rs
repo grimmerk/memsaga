@@ -1394,6 +1394,29 @@ fn the_reporter_follows_events_across_log_rotation() {
 }
 
 #[test]
+fn a_pre_rotation_offset_still_finds_commits_in_the_rotated_log() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    run(&fx, &["report"]);
+    // What a binary from before rotation existed left behind: a bare offset.
+    let state = fx.repo.join(".git/memsaga");
+    let len = fs::metadata(state.join("events.jsonl")).unwrap().len();
+    fs::write(state.join("report-offset"), len.to_string()).unwrap();
+    // The first sweep after the upgrade rotates before the reporter runs.
+    write(&fx.claude.join("projects/-h-git-a/memory/one.md"), "edit\n");
+    let out = cmd(&fx)
+        .env("MEMSAGA_EVENTS_MAX_BYTES", "1")
+        .arg("hook")
+        .write_stdin(stop("s1"))
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(!state.join("events.jsonl").exists());
+    let r = run(&fx, &["report"]);
+    assert!(r.contains("1 file committed"), "{r}");
+}
+
+#[test]
 fn two_same_length_edits_within_one_second_are_both_mirrored() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
@@ -1414,6 +1437,12 @@ fn two_same_length_edits_within_one_second_are_both_mirrored() {
     at("bbbb\n", 600_000_000);
     let mirrored = git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]);
     assert_eq!(mirrored, "bbbb\n");
+    // A filesystem that keeps whole seconds: both edits read back with the
+    // same mtime, so only the contents can tell them apart.
+    at("cccc\n", 0);
+    at("dddd\n", 0);
+    let mirrored = git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]);
+    assert_eq!(mirrored, "dddd\n");
 }
 
 #[test]
@@ -1442,6 +1471,25 @@ fn a_commit_names_the_session_title_but_not_the_prompt() {
     let msg = git(&fx, &["log", "-1", "--format=%B"]);
     assert!(msg.contains("\nSession-Title: memsaga work\n"), "{msg}");
     assert!(!msg.contains("fix the reporter"), "{msg}");
+    // Large tool output after the title: it lies megabytes back, and the
+    // 1 MiB chunk boundary falls inside its line.
+    let line = "{\"type\":\"user\",\"message\":{\"content\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}\n";
+    let mut text = String::from("{\"type\":\"custom-title\",\"customTitle\":\"far back\"}\n");
+    let mut filler = line.repeat((2 << 20) / line.len());
+    filler.push_str(&"y".repeat((1 << 20) - 10 - (filler.len() % (1 << 20))));
+    filler.push('\n');
+    text.push_str(&filler);
+    write(&transcript, &text);
+    write(&fx.claude.join("CLAUDE.md"), "# far\n");
+    hook(
+        &fx,
+        &format!(
+            "{{\"hook_event_name\":\"Stop\",\"session_id\":\"s1\",\"cwd\":\"/h/git/a\",\"transcript_path\":\"{}\"}}",
+            transcript.display()
+        ),
+    );
+    let msg = git(&fx, &["log", "-1", "--format=%B"]);
+    assert!(msg.contains("\nSession-Title: far back\n"), "{msg}");
     // Without a transcript the trailer is simply absent.
     write(&fx.claude.join("CLAUDE.md"), "# changed again\n");
     hook(&fx, &stop("s2"));

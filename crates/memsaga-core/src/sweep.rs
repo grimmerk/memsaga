@@ -142,21 +142,23 @@ fn tree_newer_than(dir: &Path, marker: SystemTime) -> bool {
 
 /// Copy every root into the repo and regenerate the index, without touching
 /// git. Shared by `sweep` and `diff`. The caller holds the lock.
-pub fn refresh_mirror(cfg: &Config, scope: &Scope) -> Result<(usize, usize)> {
-    let mut copied = 0;
-    let mut deleted = 0;
+pub fn refresh_mirror(cfg: &Config, scope: &Scope) -> Result<mirror::Stats> {
+    let mut stats = mirror::Stats::default();
     for root in &cfg.roots {
         if !root.path.is_dir() {
             continue;
         }
         let s = mirror::sync_root(scope, root, &cfg.repo)
             .with_context(|| format!("mirroring {}", root.path.display()))?;
-        copied += s.copied + s.linked;
-        deleted += s.deleted;
+        stats.copied += s.copied + s.linked;
+        stats.deleted += s.deleted;
+        stats.restat.extend(s.restat);
     }
-    copied += mirror::sync_self_and_extras(cfg)?.copied;
+    let s = mirror::sync_self_and_extras(cfg)?;
+    stats.copied += s.copied;
+    stats.restat.extend(s.restat);
     index::write_index(cfg, scope)?;
-    Ok((copied, deleted))
+    Ok(stats)
 }
 
 /// Refresh the mirror and return git's view of what a sweep would commit:
@@ -172,7 +174,7 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
     }
     let state = State::new(cfg.state_dir());
     let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
-    refresh_mirror(cfg, &scope)?;
+    let restat = refresh_mirror(cfg, &scope)?.restat;
     // Stage into a throwaway index so new files show up in the diff without
     // touching whatever the user may have staged in the real one.
     let temp_index = |args: &[&str]| -> Result<String> {
@@ -201,6 +203,9 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
     };
     let _ = temp_index; // keep the helper for callers that need a single command
     run(&["add", "-A", "--", "."])?;
+    for p in restat.iter().filter_map(|p| p.strip_prefix(&cfg.repo).ok()) {
+        run(&["add", "--renormalize", "--", &p.to_string_lossy()])?;
+    }
     let status = run(&["status", "--short"])?;
     let diff = if stat_only {
         run(&["diff", "--cached", "--stat"])?
@@ -226,12 +231,12 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
     let sweep_start = SystemTime::now();
 
-    let (copied, deleted) = refresh_mirror(cfg, &scope)?;
-
+    let stats = refresh_mirror(cfg, &scope)?;
+    git.add_renormalize(&stats.restat)?;
     let changed = git.add_all_and_check()?;
     let mut out = Outcome {
-        copied,
-        deleted,
+        copied: stats.copied,
+        deleted: stats.deleted,
         ..Default::default()
     };
     if changed {
@@ -286,43 +291,73 @@ fn set_marker(state: &State, at: SystemTime) -> Result<()> {
     Ok(())
 }
 
-/// The session's title (set by `/rename`, or generated), read from the end
-/// of its transcript: Claude Code appends `custom-title` and `agent-name`
-/// entries as the session goes, so the last megabyte holds the current one.
-/// Not a documented format; anything unexpected yields an empty title. The
-/// prompt text is deliberately not read: a first line may carry a pasted
-/// secret, and the repo is pushed.
+/// The session's title (set by `/rename`, or generated), read backwards from
+/// the end of its transcript: Claude Code appends `custom-title` and
+/// `agent-name` entries as the session goes, so the latest one is the
+/// current title. They usually sit within the last few kilobytes, but large
+/// tool output can push them further back (measured up to 4.2 MB), so the
+/// search walks back in 1 MiB chunks and gives up after 8 MiB. Not a
+/// documented format; anything unexpected yields an empty title. The prompt
+/// text is deliberately not read: a first line may carry a pasted secret,
+/// and the repo is pushed.
 pub fn session_title(transcript: &Path) -> String {
     use std::io::{Read, Seek, SeekFrom};
-    const TAIL: u64 = 1 << 20;
+    const CHUNK: u64 = 1 << 20;
+    const LIMIT: u64 = 8 << 20;
     let Ok(mut f) = std::fs::File::open(transcript) else {
         return String::new();
     };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-    let mut buf = Vec::new();
-    if f.seek(SeekFrom::Start(len.saturating_sub(TAIL))).is_err()
-        || f.read_to_end(&mut buf).is_err()
-    {
-        return String::new();
-    }
-    let text = String::from_utf8_lossy(&buf);
-    let mut agent_name = String::new();
-    for line in text.lines().rev() {
-        // Skip the bulk of the tail (messages, tool output) without parsing it.
-        if !(line.contains("\"custom-title\"") || line.contains("\"agent-name\"")) {
-            continue;
+    let floor = len.saturating_sub(LIMIT);
+    let mut end = len;
+    // The start of the line that straddles the previous chunk's start.
+    let mut carry: Vec<u8> = Vec::new();
+    while end > floor {
+        let start = end.saturating_sub(CHUNK).max(floor);
+        let mut buf = vec![0u8; (end - start) as usize];
+        if f.seek(SeekFrom::Start(start)).is_err() || f.read_exact(&mut buf).is_err() {
+            return String::new();
         }
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
+        buf.extend_from_slice(&carry);
+        // Unless this chunk starts the file, its first line may be partial:
+        // keep it for the next (earlier) chunk.
+        let first_complete = if start == 0 {
+            0
+        } else {
+            match buf.iter().position(|&b| b == b'\n') {
+                Some(i) => i + 1,
+                None => buf.len(),
+            }
         };
-        let field = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default();
-        match field("type") {
-            "custom-title" => return one_line(field("customTitle")),
-            "agent-name" if agent_name.is_empty() => agent_name = one_line(field("agentName")),
-            _ => {}
+        carry = buf[..first_complete].to_vec();
+        let text = String::from_utf8_lossy(&buf[first_complete..]);
+        for line in text.lines().rev() {
+            if let Some(title) = title_entry(line) {
+                return title;
+            }
         }
+        end = start;
     }
-    agent_name
+    if floor == 0 {
+        return title_entry(&String::from_utf8_lossy(&carry)).unwrap_or_default();
+    }
+    String::new()
+}
+
+/// The title a `custom-title` or `agent-name` entry carries, if `line` is one.
+fn title_entry(line: &str) -> Option<String> {
+    // Skip the bulk (messages, tool output) without parsing it.
+    if !(line.contains("\"custom-title\"") || line.contains("\"agent-name\"")) {
+        return None;
+    }
+    let v = serde_json::from_str::<serde_json::Value>(line.trim()).ok()?;
+    let field = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default();
+    let title = match field("type") {
+        "custom-title" => one_line(field("customTitle")),
+        "agent-name" => one_line(field("agentName")),
+        _ => return None,
+    };
+    (!title.is_empty()).then_some(title)
 }
 
 /// The first non-blank line, trimmed, at most 100 characters.

@@ -132,9 +132,10 @@ has one) from the end of the session's transcript. The prompt text is never
 copied into a commit.
 
 If the config file disappears while the repo still holds its mirrored copy,
-memsaga runs on its defaults (fewer files are mirrored, nothing is deleted),
-and the reporter prints a warning with the restore command after every turn
-until the file is back.
+memsaga runs on its defaults: fewer files are mirrored, and copies of files
+that drop out of scope are left in the repo (the usual mirror deletions still
+apply to what stays in scope). The reporter prints a warning with the restore
+command after every turn until the file is back.
 
 ## Restoring on another machine
 

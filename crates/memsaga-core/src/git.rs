@@ -78,6 +78,22 @@ impl<'a> Git<'a> {
         Ok(())
     }
 
+    /// Re-read these files' contents into the index whatever their stat
+    /// data says (see `mirror::Stats::restat`). Paths inside the repo.
+    pub fn add_renormalize(&self, paths: &[std::path::PathBuf]) -> Result<()> {
+        let rel: Vec<String> = paths
+            .iter()
+            .filter_map(|p| p.strip_prefix(self.repo).ok())
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        for chunk in rel.chunks(200) {
+            let mut args = vec!["add", "--renormalize", "--"];
+            args.extend(chunk.iter().map(String::as_str));
+            self.run_ok(&args)?;
+        }
+        Ok(())
+    }
+
     /// Stage everything and report whether the index differs from HEAD.
     pub fn add_all_and_check(&self) -> Result<bool> {
         self.run_ok(&["add", "-A", "--", "."])?;

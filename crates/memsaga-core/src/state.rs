@@ -193,14 +193,19 @@ impl State {
     /// `events.jsonl` has another inode, the log was rotated in between: the
     /// rest of the rotated file it pointed into (a rename keeps the inode) is
     /// read, then every file rotated after it, then the current file from its
-    /// start. A bare offset from before rotation existed is still accepted;
-    /// one past the end is taken as "rotated, which file unknown".
+    /// start. A bare offset from before rotation existed points into the
+    /// oldest rotated log when there is one, else into the current file.
     pub fn read_events_since(&self, from: &str) -> (Vec<Event>, String) {
         use std::os::unix::fs::MetadataExt;
-        let (from_ino, from_off) = match from.split_once(':') {
+        let (mut from_ino, from_off) = match from.split_once(':') {
             Some((i, o)) => (i.parse::<u64>().ok(), o.parse::<u64>().unwrap_or(0)),
             None => (None, from.parse::<u64>().unwrap_or(0)),
         };
+        // A bare offset was written before rotation existed, so if any log
+        // has been rotated since, the oldest one is the file it points into.
+        if from_ino.is_none() && !from.is_empty() {
+            from_ino = self.rotated_logs().first().map(|(_, ino)| *ino);
+        }
         let current = std::fs::metadata(self.marker("events.jsonl")).ok();
         let cur_ino = current.as_ref().map(|m| m.ino());
         let bytes = std::fs::read(self.marker("events.jsonl")).unwrap_or_default();
