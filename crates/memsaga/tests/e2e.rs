@@ -2523,6 +2523,11 @@ fn live_names_from_before_are_renamed_once_and_stay_restorable() {
         "{files}"
     );
     assert!(!files.contains(&old_name), "{files}");
+    let subject = plain_git(&m.repo, &["log", "-1", "--format=%s"]);
+    assert!(
+        subject.starts_with("layout: 1 memory directories renamed"),
+        "{subject}"
+    );
     let log = plain_git(
         &m.repo,
         &[

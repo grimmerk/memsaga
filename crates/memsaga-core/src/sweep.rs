@@ -72,14 +72,8 @@ pub fn needs_sweep(cfg: &Config, scope: &Scope, state: &State) -> bool {
         }
         // A memory directory still under its live name (before grimmerk/memsaga-private#25):
         // rename it even when nothing live changed.
-        if let Ok(rd) = std::fs::read_dir(cfg.repo.join(&root.label).join(crate::roots::MEMORY_DIR))
-        {
-            if rd.flatten().any(|e| {
-                let n = e.file_name().to_string_lossy().to_string();
-                crate::roots::repo_name_of_slug(&n) != n
-            }) {
-                return true;
-            }
+        if memory_renames_pending(cfg, root) > 0 {
+            return true;
         }
         for e in scope.entries(root) {
             let src = e.source(root);
@@ -124,6 +118,21 @@ pub fn needs_sweep(cfg: &Config, scope: &Scope, state: &State) -> bool {
         }
     }
     false
+}
+
+/// Memory directories of `root` in the repository still under a live name
+/// that now maps to a home-relative one (grimmerk/memsaga-private#25).
+fn memory_renames_pending(cfg: &Config, root: &crate::config::Root) -> usize {
+    std::fs::read_dir(cfg.repo.join(&root.label).join(crate::roots::MEMORY_DIR))
+        .map(|rd| {
+            rd.flatten()
+                .filter(|e| {
+                    let n = e.file_name().to_string_lossy().to_string();
+                    crate::roots::repo_name_of_slug(&n) != n
+                })
+                .count()
+        })
+        .unwrap_or(0)
 }
 
 /// Any file or directory under `dir` (following the top-level symlink, not
@@ -267,6 +276,11 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         state.mtime("last-sweep"),
         &incoming,
     ));
+    let renames: usize = cfg
+        .roots
+        .iter()
+        .map(|r| memory_renames_pending(cfg, r))
+        .sum();
     let stats = refresh_mirror(cfg, &scope)?;
     if let Some(g) = &scope.guard {
         if crate::sync::record_hand_edits(&mut incoming, g.take_found()) > 0 {
@@ -290,7 +304,14 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
             .collect();
         let shortstat = git.staged_shortstat()?;
         let title = session_title(Path::new(&attrib.transcript));
-        let msg = commit_message(cfg, attrib, &title, &files, &name_status, &shortstat);
+        let mut msg = commit_message(cfg, attrib, &title, &files, &name_status, &shortstat);
+        if renames > 0 {
+            // The one-time rename gets a subject that says what it is.
+            let body = msg.split_once('\n').map(|(_, b)| b).unwrap_or_default();
+            msg = format!(
+                "layout: {renames} memory directories renamed home-relative (grimmerk/memsaga-private#25)\n{body}"
+            );
+        }
         let sha = git.commit(&msg, None)?;
         out.committed = true;
         out.sha = sha;

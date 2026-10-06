@@ -108,12 +108,12 @@ fn prefix_is_ambiguous(home: &Path, encoded: &str) -> bool {
                 if walk(&path, &enc_here, home, encoded, target, budget) {
                     return true;
                 }
-            } else if enc_here == encoded || enc_here.starts_with(target) {
+            } else if enc_here == encoded
+                || enc_here.starts_with(target)
+                || (target.starts_with(&format!("{enc_here}-"))
+                    && walk(&path, &enc_here, home, encoded, target, budget))
+            {
                 return true;
-            } else if target.starts_with(&format!("{enc_here}-")) {
-                if walk(&path, &enc_here, home, encoded, target, budget) {
-                    return true;
-                }
             }
         }
         false
