@@ -132,7 +132,7 @@ it waits on a list (`memsaga status` shows it) until `memsaga sync` brings it
 to the live file. When only the repository changed, its version is written;
 when both sides changed different lines, the texts are merged; the same lines
 changed on both sides are left alone and reported. A file deleted in the
-repository is deleted live if it was not changed there.
+repository is deleted live when the live file was unchanged.
 
 Three synchronous hooks do this without being asked: at session start and at
 each prompt they pull when origin moved and tell the model which files it
@@ -186,8 +186,8 @@ once; otherwise run `memsaga install` after the restore. Two machines can be
 used side by side: a push that origin rejects merges origin first, and edits
 from the other machine reach the live files through `memsaga sync` or the
 hooks (see [Edits made elsewhere](#edits-made-elsewhere-two-way-sync)).
-Memory directories are named after the absolute project path, so the same
-project only shares memory between machines with the same home directory.
+Memory directories are named after the absolute project path, so a project
+shares its memory between machines only when it sits at the same path on both.
 
 ## Tests
 

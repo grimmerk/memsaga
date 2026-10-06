@@ -103,7 +103,8 @@ moved. The read side (step 3) is where an up-front check belongs.
   ④ git merge --no-edit origin/<branch>
         │
         ├── conflict only in generated files (index.md, paths.json)
-        │     └── keep ours, regenerate after the merge, finish the merge
+        │     └── keep ours and finish the merge; the next sweep rebuilds
+        │         them (the push that follows may carry our older copy)
         │
         ├── any other conflict
         │     └── git merge --abort; record a push error naming the files;
@@ -132,23 +133,25 @@ Notes:
 
 ## 4. Step 1b: the sweep stops overwriting repository-side edits
 
-At the start of each sweep, before mirroring:
+The sweep hands the mirror a guard, and the mirror asks it before it
+overwrites or deletes any repository file:
 
-1. Run `git status --porcelain -z` limited to the live-mapped paths. A sweep
-   ends with a clean working tree, so anything listed here changed after the
-   last sweep: a hand edit (case 2), or a sweep that crashed half-way.
-2. For each listed file, compare the working-tree file with the mirror form of
-   the live file. Equal means a crashed sweep had already copied it: nothing
-   to do. Different means a hand edit: add the file to the incoming list with
-   base = `HEAD:<path>`.
-3. Mirror as today, **except for files on the incoming list**. Those are not
-   copied over and not deleted.
+1. A file on the incoming list is never overwritten or deleted.
+2. Any other file whose mtime is older than the start of the last sweep was
+   not touched since: go ahead. memsaga's own copies carry their source's
+   mtime, so this is the common case, and it costs one `stat`.
+3. A newer file is a candidate. It is not a hand edit when its content equals
+   `HEAD` (memsaga committed it) or equals what the mirror would write now
+   (memsaga copied it, for example during a `memsaga diff` preview, without
+   committing). Otherwise it is a hand edit: it goes on the incoming list with
+   base = `HEAD:<path>` (none for a new file), and is left as it is.
 4. Commit. A hand edit is committed by this sweep like any other change, so it
    enters history at once.
 
-`git status` is how the hash comparison is done: git compares mtime and size
-first and reads the content only when they differ, so the common case costs
-one process start (a few milliseconds) and reads no file.
+The same check runs before a Read, Write or Edit of one file (step 3), so a
+hand edit made since the last sweep reaches the live file before it is used.
+A deletion made by hand in the clone is not detected: the next sweep copies
+the live file back. Delete on the live side, or on GitHub.
 
 ## 5. The incoming list
 
@@ -245,10 +248,17 @@ hosts, in both accounts.
 | Hook | What it does | Cost |
 |---|---|---|
 | `SessionStart` (start, `/compact`, `/clear`) | The check, waiting for it. When origin moved or the incoming list is non-empty: `memsaga pull`, and a notice (`additionalContext`) naming the changed CLAUDE.md and MEMORY.md files. | Reading the shared answer when another session checked recently; else about 0.5 s; a fetch and a pull only when origin moved. |
-| `PreToolUse` for Read, Write and Edit | Ignore a file outside memsaga's scope. Otherwise: note the file as used by this session; note a hand edit when its repository copy is newer than the last sweep; start a background check when the shared answer is older than 2 minutes, without waiting for it; and when **this** file is on the incoming list or among the files origin changed, `memsaga pull` first, then let the tool run on the fresh file. | One `memsaga` process start (about 10 ms) per Read, Write or Edit, since a hook matcher selects tools, not paths; a pull only when this very file changed. |
+| `PreToolUse` for Read, Write and Edit | Ignore a file outside memsaga's scope. Otherwise: note the file as used by this session; note a hand edit when its repository copy is newer than the last sweep; when the shared answer is older than 2 minutes, a Read starts a background check without waiting, while a Write or Edit waits for the check (an edit built on an outdated copy would end in a merge conflict, or drop the other side's change); and when **this** file is on the incoming list or among the files origin changed, `memsaga pull` first. Then a Read goes ahead on the fresh file. A Write is refused when the pull just changed the file (its content was prepared from the old copy), and a Write or Edit is refused when origin's change could not be merged; the reason tells the model to read again or to tell the user. An Edit otherwise goes ahead: it fails on its own when its old text is gone. | One `memsaga` process start (about 10 ms) per Read, Write or Edit, since a hook matcher selects tools, not paths; about 0.5 s for a Write or Edit when the shared answer is old; a pull only when this very file changed. |
 | `UserPromptSubmit` | Start a background check when the shared answer is old. When origin moved or the incoming list is non-empty: `memsaga pull`, and a notice naming the changed files this session used plus any changed CLAUDE.md and MEMORY.md. | Nothing in the common case beyond the process start; a pull only after origin moved. |
 
-Notices go to the model only; the Stop reporter (§5) tells the person.
+Notices go to the model only; the Stop reporter (§5) tells the person. A
+notice names each file, quotes the changed lines (up to 20 per file; a longer
+change asks for a fresh Read), and says that from now on the current file is
+the only version that counts, in answers and in instructions alike. The last
+part was added after a session that had re-read the file still answered from
+the copy loaded at start. Each hook waits at most 20 s for the sweep lock, well
+inside its 30 s timeout: a busy lock makes it skip the pull rather than be
+stopped half-way.
 A change that lands in the middle of a turn is announced at the next prompt;
 until then, touching that file blocks on the pull as above, so a stale copy is
 never read or edited.
@@ -292,8 +302,8 @@ so they can be called from a mod unchanged.
 ## 8. Edge cases
 
 - **Generated files.** `index.md` and `paths.json` are rebuilt by every sweep.
-  In a merge conflict memsaga keeps its own version and regenerates them; they
-  never go on the incoming list.
+  In a merge conflict memsaga keeps its own version, and the next sweep
+  rebuilds them from both sides' files; they never go on the incoming list.
 - **Symlinks in the repository** (a second account sharing a file with the
   first) are skipped by pull, as `restore --all` already does for external
   links.

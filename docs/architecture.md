@@ -48,9 +48,12 @@ Claude Code ─────────┬────────────�
 
 ## Invariants
 
-1. **A root is read-only** except in `restore`, which shows a diff and asks.
-   Test: `mirror_is_one_way_and_never_touches_roots` snapshots both roots
-   before and after sweeps.
+1. **A sweep never writes a root.** Only two paths do, on purpose: `restore`,
+   which shows a diff and asks, and two-way sync (`sync` / `pull` and the
+   session hooks), which writes a live file only when the repository holds a
+   newer version and the three-way decision allows it (`two-way-sync.md`).
+   Test: `sweeps_never_touch_roots_and_keep_a_repository_side_edit`
+   snapshots both roots before and after sweeps.
 2. **Deletion never leaves a tool-owned subtree.** `mirror::sync_dir` only
    deletes under the destination it was given; `prune_memory` only under
    `<label>/memory/` (and the pre-2026-09-18 `<label>/projects/`, which it
