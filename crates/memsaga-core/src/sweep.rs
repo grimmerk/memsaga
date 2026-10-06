@@ -70,6 +70,17 @@ pub fn needs_sweep(cfg: &Config, scope: &Scope, state: &State) -> bool {
         {
             return true;
         }
+        // A memory directory still under its live name (before grimmerk/memsaga-private#25):
+        // rename it even when nothing live changed.
+        if let Ok(rd) = std::fs::read_dir(cfg.repo.join(&root.label).join(crate::roots::MEMORY_DIR))
+        {
+            if rd.flatten().any(|e| {
+                let n = e.file_name().to_string_lossy().to_string();
+                crate::roots::repo_name_of_slug(&n) != n
+            }) {
+                return true;
+            }
+        }
         for e in scope.entries(root) {
             let src = e.source(root);
             match e {
@@ -248,6 +259,9 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     // Files changed on the repository side are not overwritten (step 1b of
     // docs/two-way-sync.md); hand edits found on the way join the list.
     let mut incoming = crate::sync::load_incoming(&state);
+    if crate::sync::rename_incoming(&mut incoming) {
+        crate::sync::save_incoming(&state, &incoming)?;
+    }
     let scope = Scope::new(cfg).with_guard(crate::sync::Guard::new(
         cfg,
         state.mtime("last-sweep"),

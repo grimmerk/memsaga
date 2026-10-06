@@ -47,6 +47,36 @@ pub fn load_incoming(state: &State) -> Incoming {
         .unwrap_or_default()
 }
 
+/// Rewrite entries recorded under a memory directory's live name to its
+/// repository name (grimmerk/memsaga-private#25), so the sweep that renames the directory
+/// protects and settles the same files. True when anything changed.
+pub fn rename_incoming(incoming: &mut Incoming) -> bool {
+    let renamed: Vec<(String, String)> = incoming
+        .keys()
+        .filter_map(|k| {
+            let parts: Vec<&str> = k.splitn(4, '/').collect();
+            if parts.len() >= 3 && parts[1] == crate::roots::MEMORY_DIR {
+                let name = crate::roots::repo_name_of_slug(parts[2]);
+                if name != parts[2] {
+                    let mut new = format!("{}/{}/{}", parts[0], parts[1], name);
+                    if let Some(rest) = parts.get(3) {
+                        new.push('/');
+                        new.push_str(rest);
+                    }
+                    return Some((k.clone(), new));
+                }
+            }
+            None
+        })
+        .collect();
+    for (old, new) in &renamed {
+        if let Some(e) = incoming.remove(old) {
+            incoming.entry(new.clone()).or_insert(e);
+        }
+    }
+    !renamed.is_empty()
+}
+
 /// The caller holds the sweep lock. An empty list removes the file.
 pub fn save_incoming(state: &State, incoming: &Incoming) -> Result<()> {
     if incoming.is_empty() {

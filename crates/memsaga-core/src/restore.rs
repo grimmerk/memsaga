@@ -239,7 +239,7 @@ fn live_executable(p: &Path) -> bool {
 fn committed_at(cfg: &Config, repo_rel: &Path, rev: &str) -> Option<std::time::SystemTime> {
     let git = Git::new(&cfg.repo);
     let mut candidates = vec![repo_rel.to_path_buf()];
-    candidates.extend(roots::legacy_repo_path(repo_rel));
+    candidates.extend(roots::legacy_repo_paths(repo_rel));
     for p in candidates {
         let out = git
             .run_ok(&[
@@ -263,7 +263,7 @@ fn committed_at(cfg: &Config, repo_rel: &Path, rev: &str) -> Option<std::time::S
 fn executable_at(cfg: &Config, repo_rel: &Path, rev: &str) -> bool {
     let git = Git::new(&cfg.repo);
     let mut candidates = vec![repo_rel.to_path_buf()];
-    candidates.extend(roots::legacy_repo_path(repo_rel));
+    candidates.extend(roots::legacy_repo_paths(repo_rel));
     for p in candidates {
         if let Ok(out) = git.run_ok(&["ls-tree", rev, "--", &p.to_string_lossy()]) {
             if let Some(line) = out.lines().next() {
@@ -363,7 +363,7 @@ pub fn verify_destination(cfg: &Config, live: &Path) -> Result<PathBuf> {
 pub fn content_at(cfg: &Config, repo_rel: &Path, rev: &str) -> Result<Option<Vec<u8>>> {
     let git = Git::new(&cfg.repo);
     let mut candidates = vec![repo_rel.to_path_buf()];
-    candidates.extend(roots::legacy_repo_path(repo_rel));
+    candidates.extend(roots::legacy_repo_paths(repo_rel));
     for path in candidates {
         let spec = format!("{rev}:{}", path.to_string_lossy());
         match git.object_type(&spec)? {

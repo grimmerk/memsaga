@@ -2340,3 +2340,224 @@ fn reinstall_updates_memsagas_entries_in_place() {
         .collect();
     assert_eq!(stop.len(), 2, "{stop:?}");
 }
+
+/// One machine of a two-machine test: its own home (HOME), Claude config
+/// directory and clone, so names that depend on the home differ between them.
+struct Machine {
+    home: PathBuf,
+    claude: PathBuf,
+    repo: PathBuf,
+    cfg: PathBuf,
+}
+
+/// Claude Code's live name for a directory: every non-alphanumeric ASCII
+/// character becomes `-`.
+fn live_name(p: &Path) -> String {
+    p.to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
+impl Machine {
+    fn new(base: &Path, name: &str) -> Machine {
+        let home = base.join(name);
+        let claude = home.join(".claude");
+        let repo = home.join("memories");
+        let cfg = home.join("memsaga.toml");
+        write(&claude.join("CLAUDE.md"), "# global\n");
+        write(
+            &cfg,
+            &format!(
+                "repo = \"{}\"\npush_min_interval_secs = 0\n[[roots]]\npath = \"{}\"\nlabel = \"claude\"\n",
+                repo.display(),
+                claude.display()
+            ),
+        );
+        Machine {
+            home,
+            claude,
+            repo,
+            cfg,
+        }
+    }
+
+    fn memory_dir(&self, project: &str) -> PathBuf {
+        self.claude
+            .join("projects")
+            .join(live_name(&self.home.join(project)))
+            .join("memory")
+    }
+
+    fn cmd(&self) -> Command {
+        let mut c = Command::cargo_bin("memsaga").unwrap();
+        c.env("HOME", &self.home)
+            .env("MEMSAGA_CONFIG", &self.cfg)
+            .env("CLAUDE_CONFIG_DIR", &self.claude)
+            .env("MEMSAGA_NO_GITHUB_API", "1")
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t");
+        c
+    }
+
+    fn run(&self, args: &[&str]) -> String {
+        let out = self.cmd().args(args).output().unwrap();
+        assert!(
+            out.status.success(),
+            "memsaga {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).to_string()
+    }
+}
+
+fn plain_git(dir: &Path, args: &[&str]) -> String {
+    git_at(dir, args)
+}
+
+#[test]
+fn two_machines_with_different_homes_share_a_projects_memory() {
+    let tmp = TempDir::new().unwrap();
+    // Names that do not prefix each other, or the ambiguity check would
+    // (rightly) keep live names.
+    let a = Machine::new(tmp.path(), "alpha");
+    let b = Machine::new(tmp.path(), "beta");
+    write(&a.memory_dir("git/webapp").join("fact.md"), "from alpha\n");
+    // A project outside home keeps its live name.
+    let outside = a.claude.join("projects/-opt-tool/memory");
+    write(&outside.join("o.md"), "outside\n");
+    a.run(&["init", "--no-backfill"]);
+    let files = plain_git(&a.repo, &["ls-files"]);
+    assert!(
+        files.contains("claude/memory/HOME-git-webapp/fact.md"),
+        "{files}"
+    );
+    assert!(files.contains("claude/memory/-opt-tool/o.md"), "{files}");
+    let paths = fs::read_to_string(a.repo.join("paths.json")).unwrap();
+    assert!(
+        !paths.contains("alpha"),
+        "paths.json must not name the home: {paths}"
+    );
+
+    // Machine beta clones it and restores: the memory lands under beta's own
+    // live name for the same project.
+    let origin = tmp.path().join("origin.git");
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q", "--bare"])
+        .arg(&origin)
+        .status()
+        .unwrap()
+        .success());
+    plain_git(
+        &a.repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    a.run(&["push"]);
+    assert!(std::process::Command::new("git")
+        .args(["clone", "-q"])
+        .arg(&origin)
+        .arg(&b.repo)
+        .status()
+        .unwrap()
+        .success());
+    b.run(&["restore", "--all", "--yes"]);
+    let on_b = b.memory_dir("git/webapp").join("fact.md");
+    assert_eq!(fs::read_to_string(&on_b).unwrap(), "from alpha\n");
+
+    // An edit on beta reaches alpha through the shared directory.
+    write(&on_b, "from beta\n");
+    b.run(&["sync"]);
+    a.run(&["sync"]);
+    assert_eq!(
+        fs::read_to_string(a.memory_dir("git/webapp").join("fact.md")).unwrap(),
+        "from beta\n"
+    );
+    let files = plain_git(&a.repo, &["ls-files"]);
+    assert!(
+        !files.contains("beta"),
+        "one directory, no second copy: {files}"
+    );
+}
+
+#[test]
+fn live_names_from_before_are_renamed_once_and_stay_restorable() {
+    let tmp = TempDir::new().unwrap();
+    let m = Machine::new(tmp.path(), "gamma");
+    let live = m.memory_dir("git/app").join("note.md");
+    write(&live, "v1\n");
+    // As an older memsaga left it: run with a HOME that does not contain the
+    // project, so the name is the live one.
+    let out = m
+        .cmd()
+        .env("HOME", tmp.path().join("elsewhere"))
+        .args(["init", "--no-backfill"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let old_name = live_name(&m.home.join("git/app"));
+    let files = plain_git(&m.repo, &["ls-files"]);
+    assert!(
+        files.contains(&format!("claude/memory/{old_name}/note.md")),
+        "{files}"
+    );
+    let before = plain_git(&m.repo, &["rev-parse", "HEAD"])
+        .trim()
+        .to_string();
+    // The next Stop with the real home renames the directory, with no live change.
+    let out = m
+        .cmd()
+        .arg("hook")
+        .write_stdin(stop("s1"))
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let files = plain_git(&m.repo, &["ls-files"]);
+    assert!(
+        files.contains("claude/memory/HOME-git-app/note.md"),
+        "{files}"
+    );
+    assert!(!files.contains(&old_name), "{files}");
+    let log = plain_git(
+        &m.repo,
+        &[
+            "log",
+            "--follow",
+            "--format=%h",
+            "--",
+            "claude/memory/HOME-git-app/note.md",
+        ],
+    );
+    assert_eq!(log.lines().count(), 2, "history follows the rename: {log}");
+    // An old revision is still restorable by the new path.
+    write(&live, "v2\n");
+    m.run(&[
+        "restore",
+        "claude/memory/HOME-git-app/note.md",
+        "--at",
+        &before,
+        "--yes",
+    ]);
+    assert_eq!(fs::read_to_string(&live).unwrap(), "v1\n");
+}
+
+#[test]
+fn an_ambiguous_home_prefix_keeps_live_names() {
+    let tmp = TempDir::new().unwrap();
+    let m = Machine::new(tmp.path(), "delta");
+    // A sibling whose live name starts like a path under delta's home.
+    fs::create_dir_all(tmp.path().join("delta-old")).unwrap();
+    write(&m.memory_dir("git/app").join("n.md"), "n\n");
+    m.run(&["init", "--no-backfill"]);
+    let files = plain_git(&m.repo, &["ls-files"]);
+    let live = live_name(&m.home.join("git/app"));
+    assert!(
+        files.contains(&format!("claude/memory/{live}/n.md")),
+        "{files}"
+    );
+}
