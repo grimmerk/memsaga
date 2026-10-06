@@ -256,7 +256,9 @@ notice names each file, quotes the changed lines (up to 20 per file; a longer
 change asks for a fresh Read), and says that from now on the current file is
 the only version that counts, in answers and in instructions alike. The last
 part was added after a session that had re-read the file still answered from
-the copy loaded at start. Each hook waits at most 20 s for the sweep lock, well
+the copy loaded at start; a probe could not reproduce that in short sessions
+(old and new wording alike led with the new text, 3 of 3 each), so the
+wording is a precaution, not a measured fix. Each hook waits at most 20 s for the sweep lock, well
 inside its 30 s timeout: a busy lock makes it skip the pull rather than be
 stopped half-way.
 A change that lands in the middle of a turn is announced at the next prompt;
