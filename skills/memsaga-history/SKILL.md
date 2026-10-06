@@ -6,9 +6,11 @@ description: Look up the version history of Claude Code's own memory and config 
 # memsaga history
 
 Live files stay where Claude Code keeps them (`~/.claude/...`, `~/.claude-work/...`). memsaga
-copies an allowlist into `~/git/memories` and commits once per turn; the repo is a one-way
-mirror plus history back to 2026-07 (replayed from transcripts). Never edit the mirror
-expecting it to flow back: restore is an explicit, user-approved copy.
+copies an allowlist into `~/git/memories` and commits once per turn; the repo is a mirror
+plus history back to 2026-07 (replayed from transcripts). An edit made in the mirror (or on
+GitHub) is kept and waits until `memsaga sync` (or the session-start / prompt hooks) brings it
+to the live file; `memsaga status` lists what waits. Restoring an older version is an explicit
+`memsaga restore`.
 
 ## Layout of ~/git/memories
 

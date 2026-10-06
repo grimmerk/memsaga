@@ -2,7 +2,7 @@
 //!
 //! The mental model, in one paragraph: a set of *roots* (Claude Code config
 //! directories such as `~/.claude`) contain files we want under version control
-//! (global CLAUDE.md, per-project auto-memory, skills). memsaga never edits those
+//! (global CLAUDE.md, per-project auto-memory, skills). A sweep never edits those
 //! live files. It copies an allowlisted subset into a *mirror* git repo, one
 //! subtree per root, and commits whenever something changed. Claude Code hooks
 //! call `hook` with a JSON event on stdin; `sweep` is the copy-and-commit step;

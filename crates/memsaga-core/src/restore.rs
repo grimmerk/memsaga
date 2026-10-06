@@ -1,7 +1,8 @@
 //! `restore`: copy one file from the repo's history back into a live config
-//! directory. This is the only place memsaga ever writes into a root, and it
-//! does so only for a path inside the allowlist, only after showing the diff,
-//! and only with explicit confirmation (`--yes` or an interactive "y").
+//! directory, only for a path inside the allowlist, only after showing the
+//! diff, and only with explicit confirmation (`--yes` or an interactive "y").
+//! The other writer into a root is two-way sync (`sync.rs`), which reuses the
+//! destination check and the settings handling below.
 //!
 //! Also the path mapping both directions: `claude/memory/<slug>/x.md` in the
 //! repo is `<root of label "claude">/projects/<slug>/memory/x.md` live. The

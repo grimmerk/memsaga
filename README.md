@@ -30,8 +30,9 @@ Chinese) in [`docs/design-zh-tw.md`](docs/design-zh-tw.md).
   seeing the diff.
 - History from before you installed memsaga, replayed from transcripts.
 
-Live files are never edited by the tool except through `restore`, which shows
-the diff and asks first.
+Live files are written by the tool only on purpose: `restore` (shows the diff
+and asks first), and `sync` or `pull`, which bring in edits made elsewhere (see
+[Edits made elsewhere](#edits-made-elsewhere-two-way-sync)).
 
 ## Install
 
@@ -55,7 +56,9 @@ scope ends with a commit, and the terminal shows a one-line notice.
 | `memsaga diff [--stat]` | What the next sweep would commit (refreshes the mirror, commits nothing) |
 | `memsaga restore <path> [--at <rev>] [-y]` | Copy one file from history back to its live location, diff first |
 | `memsaga sweep` | Mirror and commit now |
-| `memsaga push` | Push to `origin` now (pushes also happen on `Stop`, throttled, and on `SessionEnd`) |
+| `memsaga push` | Push to `origin` now (pushes also happen on `Stop`, throttled, and on `SessionEnd`); a push rejected because origin moved merges origin first |
+| `memsaga sync [--take live\|repo <path>]` | Both directions: commit live changes, merge origin, bring repository-side edits to the live files, commit, push |
+| `memsaga pull [--check] [--path <file>]` | Inbound only (what the hooks run); `--check` asks whether origin moved, throttled across sessions |
 | `memsaga paths` | The slug → real-directory map |
 | `memsaga restore --all --at <rev>` | Every mirrored (in-scope) file of every root as it was at `<rev>`: overwrites what differs, never deletes, skips symlinks, keeps the live `settings_ignore_keys`; shows the diffs, one confirmation |
 | `memsaga companions [repo]` | List companion documents (status, path, source); `/companions` in a session prints the same |
@@ -121,6 +124,24 @@ label = "claude"
 Without `[[roots]]`, memsaga reads codev's `~/.config/codev/accounts.json` if
 present, else uses `~/.claude`.
 
+## Edits made elsewhere (two-way sync)
+
+An edit made outside the live files (in GitHub's web editor, on another
+machine, or by hand in the local clone) is not overwritten by the next sweep:
+it waits on a list (`memsaga status` shows it) until `memsaga sync` brings it
+to the live file. When only the repository changed, its version is written;
+when both sides changed different lines, the texts are merged; the same lines
+changed on both sides are left alone and reported. A file deleted in the
+repository is deleted live if it was not changed there.
+
+Three synchronous hooks do this without being asked: at session start and at
+each prompt they pull when origin moved and tell the model which files it
+should read again, and a Read, Write or Edit of a file that changed elsewhere
+waits for the pull. Origin is asked at most once every two minutes per
+machine. Design and measurements: [`docs/two-way-sync.md`](docs/two-way-sync.md).
+
+A shorter command name is one alias away: `alias mem=memsaga`.
+
 ## Two accounts
 
 Each Claude Code config directory is a root with its own subtree. Files the
@@ -161,10 +182,12 @@ username and the same `~/git` layout, so memory directory names match):
 
 If `settings.json` is in your `files` (it is not by default), restoring it
 also registers the hooks, so new sessions on that machine start committing at
-once; otherwise run `memsaga install` after the restore. Sweeps are one-way (live files into the
-repository) and never pull, so do not use two machines at the same time: the
-second one's pushes would be rejected. If the new machine is only a backup,
-run `memsaga uninstall` there.
+once; otherwise run `memsaga install` after the restore. Two machines can be
+used side by side: a push that origin rejects merges origin first, and edits
+from the other machine reach the live files through `memsaga sync` or the
+hooks (see [Edits made elsewhere](#edits-made-elsewhere-two-way-sync)).
+Memory directories are named after the absolute project path, so the same
+project only shares memory between machines with the same home directory.
 
 ## Tests
 
