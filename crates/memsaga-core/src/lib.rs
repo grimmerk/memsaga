@@ -18,6 +18,7 @@
 //! - `state`    small files under `.git/memsaga/`: lock, markers, events log
 //! - `status`   the read-only state report behind `status` and `status --json`
 //! - `sweep`    the orchestration: lock, mirror, index, commit, events
+//! - `sync`     repository-side edits back to the live files (two-way sync)
 //! - `hook`     parsing a hook event and deciding what to do
 //! - `index`    `index.md` and `paths.json` generation
 //! - `install`  registering the hooks in a root's settings.json
@@ -40,5 +41,6 @@ pub mod slug;
 pub mod state;
 pub mod status;
 pub mod sweep;
+pub mod sync;
 
 pub use config::Config;

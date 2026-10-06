@@ -28,6 +28,9 @@ pub struct Status {
     pub dirty: bool,
     pub origin: Option<OriginStatus>,
     pub roots: Vec<RootStatus>,
+    /// Repository files newer than their live file, waiting for
+    /// `memsaga sync` (docs/two-way-sync.md): repo-relative path -> entry.
+    pub incoming: crate::sync::Incoming,
     /// Most recent first, from the current `events.jsonl` (rotated files are
     /// not read).
     pub events: Vec<Event>,
@@ -135,6 +138,7 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
             dirty: false,
             origin: None,
             roots,
+            incoming: Default::default(),
             events: Vec::new(),
         };
     }
@@ -169,6 +173,7 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
         dirty: state.exists("dirty"),
         origin,
         roots,
+        incoming: crate::sync::load_incoming(&state),
         events,
     }
 }

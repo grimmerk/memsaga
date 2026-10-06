@@ -154,7 +154,7 @@ pub fn refresh_mirror(cfg: &Config, scope: &Scope) -> Result<mirror::Stats> {
         stats.deleted += s.deleted;
         stats.restat.extend(s.restat);
     }
-    let s = mirror::sync_self_and_extras(cfg)?;
+    let s = mirror::sync_self_and_extras(scope)?;
     stats.copied += s.copied;
     stats.restat.extend(s.restat);
     index::write_index(cfg, scope)?;
@@ -164,7 +164,6 @@ pub fn refresh_mirror(cfg: &Config, scope: &Scope) -> Result<mirror::Stats> {
 /// Refresh the mirror and return git's view of what a sweep would commit:
 /// `(status --short, diff)`; `stat_only` asks for `--stat` instead of a full diff.
 pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
-    let scope = Scope::new(cfg);
     let git = Git::new(&cfg.repo);
     if !git.is_repo() {
         anyhow::bail!(
@@ -174,6 +173,14 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
     }
     let state = State::new(cfg.state_dir());
     let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
+    // The same guard as a sweep, so a preview never overwrites a repository-side
+    // edit either; what it finds is recorded by the next sweep, not here.
+    let incoming = crate::sync::load_incoming(&state);
+    let scope = Scope::new(cfg).with_guard(crate::sync::Guard::new(
+        cfg,
+        state.mtime("last-sweep"),
+        &incoming,
+    ));
     let restat = refresh_mirror(cfg, &scope)?.restat;
     // Stage into a throwaway index so new files show up in the diff without
     // touching whatever the user may have staged in the real one.
@@ -227,7 +234,6 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
 /// Mirror, index, commit. Returns what happened. Never writes into a root.
 pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let started = Instant::now();
-    let scope = Scope::new(cfg);
     let git = Git::new(&cfg.repo);
     if !git.is_repo() {
         anyhow::bail!(
@@ -239,7 +245,20 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
     let sweep_start = SystemTime::now();
 
+    // Files changed on the repository side are not overwritten (step 1b of
+    // docs/two-way-sync.md); hand edits found on the way join the list.
+    let mut incoming = crate::sync::load_incoming(&state);
+    let scope = Scope::new(cfg).with_guard(crate::sync::Guard::new(
+        cfg,
+        state.mtime("last-sweep"),
+        &incoming,
+    ));
     let stats = refresh_mirror(cfg, &scope)?;
+    if let Some(g) = &scope.guard {
+        if crate::sync::record_hand_edits(&mut incoming, g.take_found()) > 0 {
+            crate::sync::save_incoming(&state, &incoming)?;
+        }
+    }
     git.add_renormalize(&stats.restat)?;
     let changed = git.add_all_and_check()?;
     let mut out = Outcome {

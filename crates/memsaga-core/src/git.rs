@@ -66,6 +66,11 @@ impl<'a> Git<'a> {
         Ok(out)
     }
 
+    /// `run` with arguments that may not be UTF-8 (raw path bytes).
+    pub fn run_os(&self, args: &[&std::ffi::OsStr]) -> Result<Output> {
+        self.cmd().args(args).output().context("running git")
+    }
+
     pub fn run_ok(&self, args: &[&str]) -> Result<String> {
         let out = self.run(args)?;
         if !out.status.success() {

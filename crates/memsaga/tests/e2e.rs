@@ -438,7 +438,7 @@ fn user_owned_paths_in_the_repo_are_committed_and_kept() {
 }
 
 #[test]
-fn mirror_is_one_way_and_never_touches_roots() {
+fn sweeps_never_touch_roots_and_keep_a_repository_side_edit() {
     let fx = fixture("turn", "");
     let snapshot = |p: &Path| -> Vec<(PathBuf, u64)> {
         walk(p)
@@ -451,13 +451,20 @@ fn mirror_is_one_way_and_never_touches_roots() {
     };
     let before = (snapshot(&fx.claude), snapshot(&fx.work));
     run(&fx, &["init", "--no-backfill"]);
-    // a hand edit inside the tool-owned subtree is overwritten by the next sweep
+    // A hand edit in the clone is kept by the next sweep, committed, and
+    // waits for `memsaga sync`; the live file is not touched by a sweep.
     fs::write(fx.repo.join("claude/CLAUDE.md"), "# hand edited in repo\n").unwrap();
     run(&fx, &["sweep"]);
     assert_eq!(
         fs::read_to_string(fx.repo.join("claude/CLAUDE.md")).unwrap(),
-        "# global\n"
+        "# hand edited in repo\n"
     );
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/CLAUDE.md"]),
+        "# hand edited in repo\n"
+    );
+    let v = status_json(&fx);
+    assert!(v["incoming"]["claude/CLAUDE.md"].is_object(), "{v}");
     hook(&fx, &stop("s4"));
     assert_eq!(
         (snapshot(&fx.claude), snapshot(&fx.work)),

@@ -190,13 +190,38 @@ fn nothing_to_push(git: &Git) -> bool {
 /// `git push origin` now, recording the outcome as an event. The caller has
 /// decided that a push is wanted; this does not consult the throttle.
 pub fn push_now(cfg: &Config, state: &State, attrib: &Attribution) -> Result<bool> {
-    // One push at a time: a Stop push and a deferred push racing each other
-    // made GitHub reject the later one (2026-09-28); harmless, but noisy.
-    // A push-specific lock, so a stalled remote never blocks sweeps.
+    let first = try_push(cfg, state)?;
+    let error = match first {
+        Ok(()) => return record_push(state, attrib, None),
+        Err(e) => e,
+    };
+    // Rejected, perhaps because origin has commits we lack (an edit on
+    // GitHub, another machine): merge them and push once more. The merge
+    // takes the sweep lock; the push lock is not held meanwhile, so the two
+    // locks are never held together (docs/two-way-sync.md, step 1a).
+    match crate::sync::integrate_remote(cfg) {
+        Ok(i) if i.merged => {
+            let second = try_push(cfg, state)?;
+            record_push(state, attrib, second.err())
+        }
+        Ok(_) => record_push(state, attrib, Some(error)),
+        Err(e) => record_push(state, attrib, Some(e)),
+    }
+}
+
+/// One `git push origin` under the push lock. One push at a time: a Stop
+/// push and a deferred push racing each other made GitHub reject the later
+/// one (2026-09-28). A push-specific lock, so a stalled remote never blocks
+/// sweeps.
+fn try_push(cfg: &Config, state: &State) -> Result<std::result::Result<(), anyhow::Error>> {
     let _guard = state
         .push_lock(Duration::from_secs(60))
         .context("push lock")?;
-    let git = Git::new(&cfg.repo);
+    Ok(Git::new(&cfg.repo).push("origin"))
+}
+
+/// Record a push outcome as an event and in the `push-error` marker.
+fn record_push(state: &State, attrib: &Attribution, error: Option<anyhow::Error>) -> Result<bool> {
     let mut ev = Event {
         ts: state::now_rfc3339(),
         event: attrib.event.clone(),
@@ -205,20 +230,21 @@ pub fn push_now(cfg: &Config, state: &State, attrib: &Attribution) -> Result<boo
         cwd: attrib.cwd.clone(),
         ..Default::default()
     };
-    match git.push("origin") {
-        Ok(()) => {
+    match error {
+        None => {
             state.touch("last-push")?;
             state.remove("push-error");
             ev.kind = "push".into();
             state.append_event(&ev)?;
             Ok(true)
         }
-        Err(e) => {
+        Some(e) => {
+            let text = format!("{e:#}");
             ev.kind = "push-failed".into();
-            ev.message = e.to_string();
+            ev.message = text.clone();
             state.append_event(&ev)?;
-            state.log(&format!("push failed: {e}"));
-            state.write_marker("push-error", &e.to_string())?;
+            state.log(&format!("push failed: {text}"));
+            state.write_marker("push-error", &text)?;
             Ok(false)
         }
     }
@@ -338,8 +364,32 @@ pub fn report(cfg: &Config) -> Option<String> {
             shas.join(", ")
         )
     });
-    match (warning, notice) {
-        (Some(w), Some(n)) => Some(format!("{w}\n{n}")),
-        (w, n) => w.or(n),
+    let lines: Vec<String> = [warning, notice, incoming_notice(&state)]
+        .into_iter()
+        .flatten()
+        .collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+/// One line when the set of files waiting for `memsaga sync` changed since
+/// the last report (a new merge, a hand edit, a conflict left over), so a
+/// pending sync is never silent but a lingering one does not repeat.
+fn incoming_notice(state: &State) -> Option<String> {
+    let incoming = crate::sync::load_incoming(state);
+    let key = incoming.keys().cloned().collect::<Vec<_>>().join("\n");
+    if state.read_marker("incoming-reported").unwrap_or_default() == key {
+        return None;
     }
+    let _ = state.write_marker("incoming-reported", &key);
+    if incoming.is_empty() {
+        return None;
+    }
+    let n = incoming.len();
+    let names: Vec<&str> = incoming.keys().take(3).map(String::as_str).collect();
+    Some(format!(
+        "memsaga: {n} file{} changed in the repository and not yet in the live files ({}{}); run `memsaga sync`",
+        if n == 1 { "" } else { "s" },
+        names.join(", "),
+        if n > 3 { ", ..." } else { "" }
+    ))
 }

@@ -91,19 +91,24 @@ pub fn extra_repo_rel(p: &Path) -> PathBuf {
 /// `extra_files` entry to its `extra/` path. Missing sources are skipped, and
 /// nothing under `memsaga/` or `extra/` is ever deleted here: an entry removed
 /// from the config keeps its last mirrored copy until the user deletes it.
-pub fn sync_self_and_extras(cfg: &crate::config::Config) -> Result<Stats> {
+pub fn sync_self_and_extras(scope: &Scope) -> Result<Stats> {
+    let cfg = scope.cfg;
     let mut stats = Stats::default();
     let own = crate::config::config_path();
     if own.is_file() {
         let dst = cfg.repo.join("memsaga/config.toml");
-        stats.count(copy_if_changed(&own, &dst)?, &dst);
+        if scope.may_write(&dst) {
+            stats.count(copy_if_changed(&own, &dst)?, &dst);
+        }
     }
     for src in cfg.extra_files() {
         if !src.is_file() {
             continue;
         }
         let dst = cfg.repo.join(extra_repo_rel(&src));
-        stats.count(copy_if_changed(&src, &dst)?, &dst);
+        if scope.may_write(&dst) {
+            stats.count(copy_if_changed(&src, &dst)?, &dst);
+        }
     }
     Ok(stats)
 }
@@ -122,7 +127,7 @@ pub fn sync_root(scope: &Scope, root: &Root, repo: &Path) -> Result<Stats> {
         let src = root.path.join(f);
         if src.symlink_metadata().is_err() {
             let dst = base.join(f);
-            if dst.symlink_metadata().is_ok() {
+            if dst.symlink_metadata().is_ok() && scope.may_remove(&dst) {
                 remove_any(&dst)?;
                 stats.deleted += 1;
             }
@@ -132,7 +137,7 @@ pub fn sync_root(scope: &Scope, root: &Root, repo: &Path) -> Result<Stats> {
         let src = root.path.join(d);
         if src.symlink_metadata().is_err() {
             let dst = base.join(d);
-            if dst.symlink_metadata().is_ok() {
+            if dst.symlink_metadata().is_ok() && scope.may_remove(&dst) {
                 remove_any(&dst)?;
                 stats.deleted += 1;
             }
@@ -157,6 +162,9 @@ fn sync_entry(scope: &Scope, root: &Root, entry: &Entry, repo: &Path) -> Result<
     if meta.is_file() {
         if let Some(p) = dst.parent() {
             fs::create_dir_all(p)?;
+        }
+        if !scope.may_write(&dst) {
+            return Ok(stats);
         }
         let is_settings = matches!(entry, Entry::File { rel } if rel == "settings.json");
         let copied = if is_settings && !scope.cfg.settings_ignore_keys.is_empty() {
@@ -236,7 +244,7 @@ pub fn sync_dir(scope: &Scope, src: &Path, dst: &Path, prefix: &Path) -> Result<
             if replace_symlink(&target, &link)? {
                 stats.linked += 1;
             }
-        } else if ft.is_file() {
+        } else if ft.is_file() && scope.may_write(&target) {
             stats.count(copy_if_changed(item.path(), &target)?, &target);
         }
     }
@@ -251,7 +259,7 @@ pub fn sync_dir(scope: &Scope, src: &Path, dst: &Path, prefix: &Path) -> Result<
         .collect();
     extra.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
     for p in extra {
-        if p.symlink_metadata().is_ok() {
+        if p.symlink_metadata().is_ok() && scope.may_remove(&p) {
             remove_any(&p)?;
             stats.deleted += 1;
         }
@@ -265,17 +273,9 @@ pub fn sync_dir(scope: &Scope, src: &Path, dst: &Path, prefix: &Path) -> Result<
 /// copy when the file is not a JSON object. Compared by content, not mtime.
 fn copy_settings_stripped(src: &Path, dst: &Path, ignore: &[String]) -> Result<Copied> {
     let text = fs::read_to_string(src)?;
-    let mut value: serde_json::Value = match serde_json::from_str(&text) {
-        Ok(v) => v,
-        Err(_) => return copy_if_changed(src, dst),
-    };
-    let Some(obj) = value.as_object_mut() else {
+    let Some(out) = strip_settings(&text, ignore) else {
         return copy_if_changed(src, dst);
     };
-    for k in ignore {
-        obj.remove(k);
-    }
-    let out = serde_json::to_string_pretty(&value)? + "\n";
     // Only a regular file counts as "already current"; a symlink is replaced.
     let before = fs::symlink_metadata(dst).ok();
     if let Some(dm) = &before {
@@ -292,6 +292,17 @@ fn copy_settings_stripped(src: &Path, dst: &Path, ignore: &[String]) -> Result<C
         let _ = fs::set_permissions(dst, sm.permissions());
     }
     Ok(Copied::of(before.as_ref(), dst))
+}
+
+/// `settings.json` as the mirror stores it: the `ignore` keys removed,
+/// pretty-printed. None when the text is not a JSON object.
+pub fn strip_settings(text: &str, ignore: &[String]) -> Option<String> {
+    let mut value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let obj = value.as_object_mut()?;
+    for k in ignore {
+        obj.remove(k);
+    }
+    Some(serde_json::to_string_pretty(&value).ok()? + "\n")
 }
 
 fn copy_if_changed(src: &Path, dst: &Path) -> Result<Copied> {
@@ -435,7 +446,7 @@ fn replace_symlink(dst: &Path, link: &Path) -> Result<bool> {
 /// empty, or excluded. Also removes `<label>/projects/`, the layout used
 /// before 2026-09-18: the same files are re-synced under `memory/`, so the
 /// next commit is a pure rename and `git log --follow` crosses it.
-fn prune_memory(_scope: &Scope, root: &Root, repo: &Path, entries: &[Entry]) -> Result<Stats> {
+fn prune_memory(scope: &Scope, root: &Root, repo: &Path, entries: &[Entry]) -> Result<Stats> {
     let mut stats = Stats::default();
     let legacy = repo.join(&root.label).join("projects");
     if legacy.symlink_metadata().is_ok() {
@@ -453,7 +464,7 @@ fn prune_memory(_scope: &Scope, root: &Root, repo: &Path, entries: &[Entry]) -> 
     if let Ok(rd) = fs::read_dir(&projects) {
         for e in rd.filter_map(|e| e.ok()) {
             let name = e.file_name().to_string_lossy().to_string();
-            if !live.contains(name.as_str()) {
+            if !live.contains(name.as_str()) && scope.may_remove(&e.path()) {
                 remove_any(&e.path())?;
                 stats.deleted += 1;
             }
