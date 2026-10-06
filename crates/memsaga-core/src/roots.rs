@@ -90,6 +90,9 @@ pub struct Scope<'a> {
     exclude_names: GlobSet,
     exclude_projects: GlobSet,
     exclude_paths: GlobSet,
+    /// During a sweep: which repository files the mirror must leave alone
+    /// (`sync::Guard`). None everywhere else.
+    pub guard: Option<crate::sync::Guard>,
 }
 
 impl<'a> Scope<'a> {
@@ -99,7 +102,24 @@ impl<'a> Scope<'a> {
             exclude_names: build_globset(&cfg.exclude),
             exclude_projects: build_globset(&cfg.exclude_projects),
             exclude_paths: build_globset(&cfg.exclude_paths),
+            guard: None,
         }
+    }
+
+    pub fn with_guard(mut self, guard: crate::sync::Guard) -> Scope<'a> {
+        self.guard = Some(guard);
+        self
+    }
+
+    /// May the mirror overwrite `dst` (a repository path) with what it makes of
+    /// `src` (None for a symlink)? Always, without a guard.
+    pub fn may_write(&self, dst: &Path, src: Option<&Path>) -> bool {
+        self.guard.as_ref().is_none_or(|g| g.allows_write(dst, src))
+    }
+
+    /// May the mirror delete `path` and everything under it?
+    pub fn may_remove(&self, path: &Path) -> bool {
+        self.guard.as_ref().is_none_or(|g| g.allows_remove(path))
     }
 
     /// Is a file name excluded (matched against the basename only)?

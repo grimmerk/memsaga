@@ -7,7 +7,9 @@ use anyhow::{Context, Result};
 use serde_json::{json, Map, Value};
 use std::path::Path;
 
-/// (event, matcher, command suffix, async)
+/// (event, matcher, command suffix, async). The synchronous ones are two-way
+/// sync's step 3 (docs/two-way-sync.md §7): they must finish before the
+/// session reads the file or the prompt, so they cannot be async.
 fn wanted(bin: &str, reporter: bool) -> Vec<(&'static str, Option<&'static str>, String, bool)> {
     let mut v = vec![
         (
@@ -18,6 +20,14 @@ fn wanted(bin: &str, reporter: bool) -> Vec<(&'static str, Option<&'static str>,
         ),
         ("Stop", None, format!("{bin} hook"), true),
         ("SessionEnd", None, format!("{bin} hook"), true),
+        ("SessionStart", None, format!("{bin} hook"), false),
+        ("UserPromptSubmit", None, format!("{bin} hook"), false),
+        (
+            "PreToolUse",
+            Some("Read|Write|Edit|MultiEdit"),
+            format!("{bin} hook"),
+            false,
+        ),
     ];
     if reporter {
         v.push(("Stop", None, format!("{bin} report"), false));
@@ -69,8 +79,12 @@ pub fn install(settings: &Path, bin: &str, reporter: bool) -> Result<bool> {
         let mut hook = json!({ "type": "command", "command": command, "timeout": 60 });
         if is_async {
             hook["async"] = json!(true);
-        } else {
+        } else if command.ends_with(" report") {
             hook["timeout"] = json!(5);
+        } else {
+            // A pull may fetch over the network; on a timeout Claude Code
+            // carries on without the hook, so the session never hangs.
+            hook["timeout"] = json!(30);
         }
         let mut entry = json!({ "hooks": [hook] });
         if let Some(m) = matcher {

@@ -2,7 +2,7 @@
 //!
 //! The mental model, in one paragraph: a set of *roots* (Claude Code config
 //! directories such as `~/.claude`) contain files we want under version control
-//! (global CLAUDE.md, per-project auto-memory, skills). memsaga never edits those
+//! (global CLAUDE.md, per-project auto-memory, skills). A sweep never edits those
 //! live files. It copies an allowlisted subset into a *mirror* git repo, one
 //! subtree per root, and commits whenever something changed. Claude Code hooks
 //! call `hook` with a JSON event on stdin; `sweep` is the copy-and-commit step;
@@ -18,6 +18,7 @@
 //! - `state`    small files under `.git/memsaga/`: lock, markers, events log
 //! - `status`   the read-only state report behind `status` and `status --json`
 //! - `sweep`    the orchestration: lock, mirror, index, commit, events
+//! - `sync`     repository-side edits back to the live files (two-way sync)
 //! - `hook`     parsing a hook event and deciding what to do
 //! - `index`    `index.md` and `paths.json` generation
 //! - `install`  registering the hooks in a root's settings.json
@@ -40,5 +41,6 @@ pub mod slug;
 pub mod state;
 pub mod status;
 pub mod sweep;
+pub mod sync;
 
 pub use config::Config;

@@ -17,7 +17,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     name = "memsaga",
-    version,
+    version = env!("MEMSAGA_VERSION"),
     about = "Version control for Claude Code memory and config"
 )]
 struct Cli {
@@ -108,6 +108,32 @@ enum Cmd {
         #[arg(long)]
         root: Vec<PathBuf>,
     },
+    /// Both directions: commit live changes, bring in origin's commits and
+    /// repository-side edits (written to the live files when only the
+    /// repository changed, merged when both did), commit again, push.
+    Sync {
+        /// Settle one waiting file by picking a side: `--take live <path>`
+        /// keeps the live file, `--take repo <path>` writes the repository one.
+        #[arg(long, num_args = 2, value_names = ["live|repo", "PATH"])]
+        take: Vec<String>,
+    },
+    /// Inbound only: bring origin's commits and repository-side edits to the
+    /// live files. No commit, no push. Used by the memsaga Claude Code mod.
+    Pull {
+        /// Only ask whether origin moved (throttled across sessions); print JSON.
+        #[arg(long)]
+        check: bool,
+        /// A file about to be read or written: note a hand edit of its
+        /// repository copy first; with --check, say whether it is affected.
+        #[arg(long)]
+        path: Option<String>,
+        /// Seconds an earlier --check answer stays valid.
+        #[arg(long, default_value_t = 60)]
+        max_age: u64,
+        /// Print the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Push to origin now.
     Push {
         /// Wait this many seconds first, then push silently (used internally
@@ -163,6 +189,25 @@ fn run(cli: Cli) -> Result<()> {
                     o.files.len(),
                     o.duration_ms
                 )),
+                Ok(Action::Deny(reason)) => println!(
+                    "{}",
+                    serde_json::json!({
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "permissionDecision": "deny",
+                            "permissionDecisionReason": reason,
+                        }
+                    })
+                ),
+                Ok(Action::Notice { event, text }) => println!(
+                    "{}",
+                    serde_json::json!({
+                        "hookSpecificOutput": {
+                            "hookEventName": event,
+                            "additionalContext": text,
+                        }
+                    })
+                ),
                 Ok(_) => {}
                 Err(e) => state.log(&format!("{}: error: {e:#}", input.hook_event_name)),
             }
@@ -226,6 +271,13 @@ fn run(cli: Cli) -> Result<()> {
             (false, None) => anyhow::bail!("a path is required (or --all)"),
         },
         Cmd::Status { n, json } => cmd_status(n, json),
+        Cmd::Sync { take } => cmd_sync(&take),
+        Cmd::Pull {
+            check,
+            path,
+            max_age,
+            json,
+        } => cmd_pull(check, path.as_deref(), max_age, json),
         Cmd::Log { n } => {
             let cfg = Config::load()?;
             print!("{}", Git::new(&cfg.repo).recent(n)?);
@@ -558,6 +610,181 @@ fn cmd_restore(path: &str, at: &str, yes: bool) -> Result<()> {
     Ok(())
 }
 
+fn print_settled(s: &memsaga_core::sync::Settled) {
+    let line = |label: &str, files: &[String]| {
+        if !files.is_empty() {
+            println!("{label}: {}", files.join(", "));
+        }
+    };
+    line("written to the live files", &s.written);
+    line("merged (both sides changed different lines)", &s.merged);
+    line("deleted (deleted in the repository)", &s.deleted);
+    for (f, why) in &s.skipped {
+        println!("skipped {f}: {why}");
+    }
+    if !s.conflicts.is_empty() {
+        println!(
+            "conflict (both sides changed the same lines): {}",
+            s.conflicts.join(", ")
+        );
+        println!("  edit either copy until they match and run `memsaga sync` again, or `memsaga sync --take live|repo <path>`");
+    }
+}
+
+fn cmd_sync(take: &[String]) -> Result<()> {
+    use memsaga_core::sync;
+    let cfg = Config::load()?;
+    let git = Git::new(&cfg.repo);
+    if !git.is_repo() {
+        anyhow::bail!(
+            "{} is not a git repository; run `memsaga init` first",
+            cfg.repo.display()
+        );
+    }
+    let take = match take {
+        [] => None,
+        [side, path] => Some((
+            match side.as_str() {
+                "live" => sync::Take::Live,
+                "repo" => sync::Take::Repo,
+                other => anyhow::bail!("--take wants `live` or `repo`, not {other:?}"),
+            },
+            path.as_str(),
+        )),
+        _ => anyhow::bail!("--take wants two values: live|repo and a path"),
+    };
+    let attrib = Attribution {
+        event: "sync".into(),
+        account: cfg
+            .current_root()
+            .map(|r| r.label.clone())
+            .unwrap_or_default(),
+        ..Default::default()
+    };
+    // 1. Commit what changed live, so the merge base matches the live files.
+    let first = sweep::sweep(&cfg, &attrib)?;
+    if first.committed {
+        println!("committed live changes {}", first.sha);
+    }
+    // 2. Origin's commits.
+    let mut blocked = None;
+    match sync::integrate_remote(&cfg) {
+        Ok(i) if i.merged => println!("merged origin ({} file(s) with a live side)", i.files.len()),
+        Ok(_) => {}
+        Err(e) => blocked = Some(e),
+    }
+    // 3. Repository-side edits to the live files.
+    let settled = sync::settle(&cfg, take)?;
+    print_settled(&settled);
+    // 4. Commit merged results; 5. push.
+    let second = sweep::sweep(&cfg, &attrib)?;
+    if second.committed {
+        println!("committed {}", second.sha);
+    }
+    if let Some(e) = blocked {
+        anyhow::bail!("{e:#}");
+    }
+    let mut conflicts = settled.conflicts.len();
+    if git.has_remote("origin") {
+        let state = State::new(cfg.state_dir());
+        if hook::push_now(&cfg, &state, &attrib)? {
+            println!("pushed");
+        } else {
+            anyhow::bail!(
+                "push failed: {}",
+                state.read_marker("push-error").unwrap_or_default()
+            );
+        }
+        // The push may have merged a commit that reached origin meanwhile:
+        // bring it to the live files too, and push the result.
+        if !sync::load_incoming(&state).is_empty() {
+            let late = sync::settle(&cfg, None)?;
+            print_settled(&late);
+            conflicts += late.conflicts.len();
+            if sweep::sweep(&cfg, &attrib)?.committed {
+                if !hook::push_now(&cfg, &state, &attrib)? {
+                    anyhow::bail!(
+                        "push failed: {}",
+                        state.read_marker("push-error").unwrap_or_default()
+                    );
+                }
+                println!("pushed");
+            }
+        }
+    }
+    // The push is safe with conflicts left (they stay as they are on both
+    // sides); exit 1 says a person has to settle them.
+    if conflicts > 0 {
+        anyhow::bail!("{conflicts} conflict(s) left; see above");
+    }
+    Ok(())
+}
+
+fn cmd_pull(check: bool, path: Option<&str>, max_age: u64, json: bool) -> Result<()> {
+    use memsaga_core::sync;
+    let cfg = Config::load()?;
+    let rel = path.map(|p| sync::repo_rel_of_input(&cfg, p)).transpose()?;
+    if check {
+        // A hand edit of this file's repository copy counts as "affected"
+        // too, as it does for a pull without --check.
+        if let Some(r) = &rel {
+            sync::note_hand_edit(&cfg, r)?;
+        }
+        let c = sync::check_remote(&cfg, std::time::Duration::from_secs(max_age))?;
+        let state = State::new(cfg.state_dir());
+        let incoming = sync::load_incoming(&state);
+        let affected = rel
+            .as_ref()
+            .map(|r| incoming.contains_key(r) || c.changed.iter().any(|(f, _)| f == r));
+        let pending: Vec<(String, String)> = incoming
+            .keys()
+            .filter_map(|k| {
+                sync::live_target(&cfg, k).map(|t| (k.clone(), t.live().display().to_string()))
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::json!({
+                "moved": c.moved,
+                "changed": c.changed,
+                "incoming": pending,
+                "affected": affected,
+                "checked_at": c.checked_at,
+                "via": c.via,
+            })
+        );
+        return Ok(());
+    }
+    if let Some(r) = &rel {
+        sync::note_hand_edit(&cfg, r)?;
+    }
+    let mut merge_error = None;
+    let merged = match sync::integrate_remote(&cfg) {
+        Ok(i) => i.files,
+        Err(e) => {
+            merge_error = Some(format!("{e:#}"));
+            Vec::new()
+        }
+    };
+    let settled = sync::settle(&cfg, None)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "merged_from_origin": merged,
+                "settled": settled,
+                "merge_error": merge_error,
+            })
+        );
+    } else {
+        print_settled(&settled);
+        if let Some(e) = merge_error {
+            println!("origin not merged: {e}");
+        }
+    }
+    Ok(())
+}
+
 fn cmd_status(n: usize, json: bool) -> Result<()> {
     let cfg = Config::load()?;
     let st = memsaga_core::status::collect(&cfg, n);
@@ -612,6 +839,15 @@ fn cmd_status(n: usize, json: bool) -> Result<()> {
             r.path.display(),
             if r.exists { "" } else { " (missing)" }
         );
+    }
+    if !st.incoming.is_empty() {
+        println!(
+            "waiting for `memsaga sync` ({} file(s) newer in the repository):",
+            st.incoming.len()
+        );
+        for (f, e) in &st.incoming {
+            println!("  {f}  ({})", e.from);
+        }
     }
     println!("recent events:");
     for ev in &st.events {
