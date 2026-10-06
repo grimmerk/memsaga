@@ -2153,8 +2153,9 @@ fn check_follows_hand_edits_branches_and_reports_a_path_that_waits_again() {
     run(&fx, &["pull"]);
     assert_eq!(fs::read_to_string(&live).unwrap(), "# hand 1\n");
     hook(&fx, &stop("s1"));
-    run(&fx, &["report"]);
-    // A hand edit is found by the next sweep that would overwrite it.
+    // No report between the settle and the next wait: the same path must
+    // still be announced. A hand edit is found by the next sweep that would
+    // overwrite it.
     fs::write(fx.repo.join("claude/CLAUDE.md"), "# hand 2\n").unwrap();
     run(&fx, &["sweep"]);
     assert!(
