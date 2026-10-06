@@ -2289,3 +2289,54 @@ fn a_failed_resolution_of_a_generated_conflict_leaves_no_merge_behind() {
     assert!(!fx.repo.join(".git/MERGE_HEAD").exists(), "left mid-merge");
     git(&fx, &["diff", "--quiet", "--cached"]);
 }
+
+#[test]
+fn reinstall_updates_memsagas_entries_in_place() {
+    let fx = fixture("turn", "");
+    let settings = fx.claude.join("settings.json");
+    let root = fx.claude.to_str().unwrap();
+    run(
+        &fx,
+        &["install", "--root", root, "--bin", "/opt/old/memsaga"],
+    );
+    run(
+        &fx,
+        &[
+            "install",
+            "--root",
+            root,
+            "--bin",
+            "$HOME/.cargo/bin/memsaga",
+        ],
+    );
+    let v: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    for (event, entries) in v["hooks"].as_object().unwrap() {
+        let cmds: Vec<&str> = entries
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|e| e["hooks"].as_array().unwrap().iter())
+            .filter_map(|h| h["command"].as_str())
+            .filter(|c| c.contains("memsaga"))
+            .collect();
+        assert!(
+            cmds.iter()
+                .all(|c| c.starts_with("$HOME/.cargo/bin/memsaga ")),
+            "{event}: {cmds:?}"
+        );
+        let hooks = cmds.iter().filter(|c| c.ends_with(" hook")).count();
+        assert!(
+            hooks <= 1,
+            "{event} has {hooks} memsaga hook entries: {cmds:?}"
+        );
+    }
+    let stop: Vec<&str> = v["hooks"]["Stop"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|e| e["hooks"].as_array().unwrap().iter())
+        .filter_map(|h| h["command"].as_str())
+        .collect();
+    assert_eq!(stop.len(), 2, "{stop:?}");
+}

@@ -50,6 +50,34 @@ fn is_ours(entry: &Value) -> bool {
         .unwrap_or(false)
 }
 
+/// The command path to register for `bin`: `$HOME/...` when it lies under the
+/// home directory, so a `settings.json` restored or synced to a machine with
+/// another home still finds the binary (Claude Code runs hook commands through
+/// a shell, which expands `$HOME`; checked on 2.1.291). Anything else as given.
+pub fn portable_bin(bin: &str) -> String {
+    if let Some(home) = dirs::home_dir() {
+        let home = home.to_string_lossy();
+        if let Some(rest) = bin.strip_prefix(&format!("{home}/")) {
+            return format!("$HOME/{rest}");
+        }
+    }
+    bin.to_string()
+}
+
+/// `memsaga hook` or `memsaga report`: which of memsaga's commands an entry runs.
+fn command_kind(command: &str) -> Option<&'static str> {
+    if !command.contains("memsaga") {
+        return None;
+    }
+    if command.ends_with(" hook") {
+        Some("hook")
+    } else if command.ends_with(" report") {
+        Some("report")
+    } else {
+        None
+    }
+}
+
 /// Returns true when the file changed.
 pub fn install(settings: &Path, bin: &str, reporter: bool) -> Result<bool> {
     let mut root = read_settings(settings)?;
@@ -74,6 +102,30 @@ pub fn install(settings: &Path, bin: &str, reporter: bool) -> Result<bool> {
                 .unwrap_or(false)
         });
         if present {
+            continue;
+        }
+        // The same memsaga command under another path (an absolute one from an
+        // older install, or a moved binary): update it in place, so a reinstall
+        // never registers a second copy.
+        let kind = command_kind(&command);
+        let mut updated = false;
+        for entry in list.iter_mut() {
+            let Some(hooks) = entry.get_mut("hooks").and_then(|h| h.as_array_mut()) else {
+                continue;
+            };
+            for h in hooks.iter_mut() {
+                let old = h
+                    .get("command")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or_default();
+                if kind.is_some() && command_kind(old) == kind {
+                    h["command"] = json!(command);
+                    updated = true;
+                }
+            }
+        }
+        if updated {
+            changed = true;
             continue;
         }
         let mut hook = json!({ "type": "command", "command": command, "timeout": 60 });
@@ -156,4 +208,26 @@ fn write_settings(path: &Path, value: &Value) -> Result<()> {
     std::fs::write(&tmp, text)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::portable_bin;
+
+    #[test]
+    fn portable_bin_uses_home_only_under_home() {
+        let home = dirs::home_dir().unwrap().to_string_lossy().to_string();
+        assert_eq!(
+            portable_bin(&format!("{home}/.cargo/bin/memsaga")),
+            "$HOME/.cargo/bin/memsaga"
+        );
+        assert_eq!(
+            portable_bin("/usr/local/bin/memsaga"),
+            "/usr/local/bin/memsaga"
+        );
+        assert_eq!(
+            portable_bin(&format!("{home}-other/memsaga")),
+            format!("{home}-other/memsaga")
+        );
+    }
 }
