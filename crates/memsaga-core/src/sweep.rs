@@ -368,18 +368,16 @@ fn title_entry(line: &str) -> Option<String> {
     (!title.is_empty()).then_some(title)
 }
 
-/// The first non-blank line, trimmed, at most 100 characters.
+/// The first non-blank line, trimmed. Kept whole for the trailer, so a
+/// later search by title matches the full sentence; only a runaway value
+/// is capped (1000 characters). The subject cuts its own copy.
 fn one_line(s: &str) -> String {
     let line = s
         .lines()
         .map(str::trim)
         .find(|l| !l.is_empty())
         .unwrap_or("");
-    if line.chars().count() > 100 {
-        line.chars().take(97).collect::<String>() + "..."
-    } else {
-        line.to_string()
-    }
+    truncate_chars(line, 1000)
 }
 
 /// Subject: `[<session title>] <label>:<area>, …`, or `<event>: …` when the
