@@ -1495,7 +1495,8 @@ fn a_commit_names_the_session_title_but_not_the_prompt() {
     let msg = git(&fx, &["log", "-1", "--format=%B"]);
     assert!(msg.contains("\nSession-Title: far back\n"), "{msg}");
     // A long title is cut in the subject, kept whole in the trailer.
-    let long = "a session title that is much longer than the subject can hold";
+    let long = "a session title that is much longer than the subject can hold > and then a second step > and a third step > ref";
+    assert!(long.chars().count() > 100);
     write(
         &transcript,
         &format!("{{\"type\":\"custom-title\",\"customTitle\":\"{long}\"}}\n"),
