@@ -17,17 +17,20 @@ to the live file; `memsaga status` lists what waits. Restoring an older version 
 ```
 claude/CLAUDE.md                                  global CLAUDE.md (account main)
 claude/skills/<name>/SKILL.md                     user skills
-claude/memory/<slug>/{MEMORY.md,*.md}             auto-memory per project (main account); live path is projects/<slug>/memory/
+claude/memory/<name>/{MEMORY.md,*.md}             auto-memory per project (main account); live path is projects/<slug>/memory/
 claude-work/...                                   same for the second account (work); CLAUDE.md and skills are symlinks to claude/
-paths.json                                        slug -> real cwd, e.g. "-Users-me-git-webapp": "/Users/me/git/webapp"
+paths.json                                        memory name -> real cwd, e.g. "HOME-git-webapp": "~/git/webapp"
 index.md                                          browsable table of every project
 ```
 
-A project slug is a path with every non-alphanumeric character replaced by `-`. For
-transcripts that path is the cwd; for auto-memory since Claude Code 2.1.275 it is the git
-common dir, so every worktree and subdirectory of `~/git/webapp` shares
-`claude/memory/-Users-me-git-webapp/`, and a non-repo directory such as
-`~/git` keeps its own (`claude/memory/-Users-me-git/`). Older slugs such as
+A project slug (Claude Code's live directory name) is a path with every non-alphanumeric
+character replaced by `-`. For transcripts that path is the cwd; for auto-memory since Claude
+Code 2.1.275 it is the git common dir, so every worktree and subdirectory of `~/git/webapp`
+shares one directory, and a non-repo directory such as `~/git` keeps its own. In the
+repository a project under home is named without the home: `claude/memory/HOME-git-webapp/`
+(live `-Users-me-git-webapp`), `claude/memory/HOME-git/` for `~/git`; a project outside home
+keeps its slug. Before grimmerk/memsaga-private#25 (2026-10) the repository used the slugs themselves
+(`claude/memory/-Users-me-git-webapp/`); that is a rename, so use `--follow`. Older slugs such as
 `-Users-me-git-webapp-<worktree>-packages-api` are per-cwd leftovers from
 before that change; their files are still mirrored but no longer loaded.
 
@@ -42,9 +45,9 @@ Claude session id), `Cwd:`, `Agent:`, and `Session-Title:` (full title, since 20
 R=~/git/memories
 memsaga status                                            # last sweep, pending dirty marker, recent events
 git -C $R log --since='7 days ago' --date=short --format='%h %ad %s' -- claude/CLAUDE.md
-git -C $R log -p --follow -- claude/memory/-Users-me-git-webapp/MEMORY.md
+git -C $R log -p --follow -- claude/memory/HOME-git-webapp/MEMORY.md
 git -C $R log --diff-filter=D --since='30 days ago' --name-only --format='%h %ad' -- '*/memory/*'   # deleted memories
-git -C $R show <sha>^:claude/memory/<slug>/<file>.md        # content before a commit
+git -C $R show <sha>^:claude/memory/<name>/<file>.md        # content before a commit (older commits: the slug as name)
 git -C $R diff <sha1> <sha2> -- claude/CLAUDE.md
 git -C $R log --format='%h %ad %s%n  %(trailers:key=Session,valueonly)' --date=short -n 20   # which session changed what
 git -C $R log --grep='^Session-Title: <name>$' --format='%h %ad %s' --date=short   # every commit of one named session (a regex: escape . [ * in the name)
@@ -62,6 +65,6 @@ file may jump versions between two `backfill:` commits. The `import:` commit of
 ## Restoring
 
 Restoring writes into a live config directory, so: show the user the diff first, get an
-explicit yes, then run `memsaga restore claude/memory/<slug>/<file>.md --at <sha>`,
+explicit yes, then run `memsaga restore claude/memory/<name>/<file>.md --at <sha>`,
 which shows the diff, asks, writes the file atomically and records a `restore` event so the
 next turn commits the restored state. Never `git checkout` inside `~/.claude`; it is not a git repo.

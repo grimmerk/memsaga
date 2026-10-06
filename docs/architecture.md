@@ -74,8 +74,9 @@ Claude Code ─────────┬────────────�
 - Commit subject: `[<session title>] <label>:<area>, …` (title cut to 32 characters, whole line to 72), or `<event>: …` without a title.
 - Commit trailers: `Event`, `Account`, `Session`, `Cwd`, `Agent`, and `Session-Title` when the transcript names one.
 - Repo layout: `<label>/CLAUDE.md`, `<label>/<dir>/…`,
-  `<label>/memory/<slug>/…` (live `projects/<slug>/memory/`; the mapping is
-  `roots::repo_rel_of_live` and its inverse), plus `index.md`, `paths.json`,
+  `<label>/memory/<name>/…` (live `projects/<slug>/memory/`; `<name>` is the
+  slug with the home directory replaced by `HOME`, `roots::repo_name_of_slug`;
+  the mapping is `roots::repo_rel_of_live` and its inverse), plus `index.md`, `paths.json`,
   `.gitattributes`.
 - Config: `~/.config/memsaga/config.toml` (`MEMSAGA_CONFIG` overrides the path;
   `MEMSAGA_REPO` and `MEMSAGA_ROOTS` override values).

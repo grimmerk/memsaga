@@ -65,7 +65,7 @@ scope ends with a commit, and the terminal shows a one-line notice.
 | `memsaga install --skills` | Write the bundled skills (`memsaga-history`, `companion-docs`, `companions`) into each config directory |
 | `memsaga uninstall` | Remove the hooks |
 
-Paths for `restore` can be repo-relative (`claude/memory/<slug>/x.md`)
+Paths for `restore` can be repo-relative (`claude/memory/<name>/x.md`)
 or the live path.
 
 ## What is mirrored
@@ -81,14 +81,25 @@ Repo layout:
 <repo>/
   claude/CLAUDE.md
   claude/skills/…  claude/hooks/…  claude/scripts/…
-  claude/memory/<slug>/{MEMORY.md, *.md}
+  claude/memory/<name>/{MEMORY.md, *.md}   <name>: see below
   claude-work/…                      second account; shared files stay symlinks
   index.md                           generated table of every project
-  paths.json                         slug → real working directory
+  paths.json                         memory name → real working directory (~ for home)
   memsaga/config.toml                this config file, mirrored automatically
   extra/home/…  extra/root/…         extra_files, by their real path
   companion/  manual/  …             yours: committed, never deleted by the tool
 ```
+
+A project's memory directory is named after its path. Claude Code's own name
+is the absolute path with every non-alphanumeric character replaced by `-`
+(`/Users/me/git/webapp` → `-Users-me-git-webapp`); in the repository a project
+under the home directory drops the home and starts with `HOME`
+(`HOME-git-webapp`), so machines with different homes (another user name,
+Linux's `/home/...`) share one directory per project. Anything outside home
+keeps Claude Code's name. If another directory on the machine encodes like a
+path under home (`/Users/me-old` next to `/Users/me`), memsaga cannot tell them
+apart and keeps Claude Code's names. Names from before this change are renamed
+by the next sweep, as one commit of renames.
 
 Before 2026-09-18 memory was stored at `<label>/projects/<slug>/memory/`. The
 first sweep after upgrading moves it in one commit (renames plus the regenerated
