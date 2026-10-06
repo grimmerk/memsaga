@@ -617,7 +617,10 @@ fn cmd_sync(take: &[String]) -> Result<()> {
     let cfg = Config::load()?;
     let git = Git::new(&cfg.repo);
     if !git.is_repo() {
-        anyhow::bail!("{} is not a git repository; run `memsaga init` first", cfg.repo.display());
+        anyhow::bail!(
+            "{} is not a git repository; run `memsaga init` first",
+            cfg.repo.display()
+        );
     }
     let take = match take {
         [] => None,
@@ -633,7 +636,10 @@ fn cmd_sync(take: &[String]) -> Result<()> {
     };
     let attrib = Attribution {
         event: "sync".into(),
-        account: cfg.current_root().map(|r| r.label.clone()).unwrap_or_default(),
+        account: cfg
+            .current_root()
+            .map(|r| r.label.clone())
+            .unwrap_or_default(),
         ..Default::default()
     };
     // 1. Commit what changed live, so the merge base matches the live files.
@@ -684,9 +690,9 @@ fn cmd_pull(check: bool, path: Option<&str>, max_age: u64, json: bool) -> Result
         let c = sync::check_remote(&cfg, std::time::Duration::from_secs(max_age))?;
         let state = State::new(cfg.state_dir());
         let incoming = sync::load_incoming(&state);
-        let affected = rel.as_ref().map(|r| {
-            incoming.contains_key(r) || c.changed.iter().any(|(f, _)| f == r)
-        });
+        let affected = rel
+            .as_ref()
+            .map(|r| incoming.contains_key(r) || c.changed.iter().any(|(f, _)| f == r));
         let pending: Vec<(String, String)> = incoming
             .keys()
             .filter_map(|k| {

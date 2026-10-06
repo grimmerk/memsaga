@@ -290,9 +290,7 @@ pub fn integrate_remote(cfg: &Config) -> Result<Integrated> {
     if !git.has_remote("origin") {
         return Ok(Integrated::default());
     }
-    let _guard = state
-        .lock(Duration::from_secs(60))
-        .context("sweep lock")?;
+    let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
     let branch = current_branch(&git)?;
     git.run_ok(&["fetch", "-q", "origin"])?;
     let remote = format!("origin/{branch}");
@@ -341,7 +339,10 @@ pub fn integrate_remote(cfg: &Config) -> Result<Integrated> {
             return Err(MergeConflict(conflicted).into());
         }
     }
-    let head = git.run_ok(&["rev-parse", "--short", "HEAD"])?.trim().to_string();
+    let head = git
+        .run_ok(&["rev-parse", "--short", "HEAD"])?
+        .trim()
+        .to_string();
     let changed: Vec<String> = git
         .run_ok(&["diff", "--name-only", "-z", &pre, "HEAD"])?
         .split('\0')
@@ -411,9 +412,7 @@ pub enum Take {
 pub fn settle(cfg: &Config, take: Option<(Take, &str)>) -> Result<Settled> {
     let git = Git::new(&cfg.repo);
     let state = State::new(cfg.state_dir());
-    let _guard = state
-        .lock(Duration::from_secs(60))
-        .context("sweep lock")?;
+    let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
     let mut incoming = load_incoming(&state);
     let mut out = Settled::default();
     let take = match take {
@@ -454,7 +453,11 @@ pub fn settle(cfg: &Config, take: Option<(Take, &str)>) -> Result<Settled> {
         .collect();
     if !touched.is_empty() {
         // The live side changed: the next Stop sweeps and commits it.
-        state.write_dirty(&format!("{} sync {} files", state::now_rfc3339(), touched.len()))?;
+        state.write_dirty(&format!(
+            "{} sync {} files",
+            state::now_rfc3339(),
+            touched.len()
+        ))?;
         state.append_event(&Event {
             ts: state::now_rfc3339(),
             kind: "pull".into(),
@@ -503,7 +506,9 @@ fn settle_one(
             .iter()
             .any(|r| loc.live.starts_with(&r.path) && r.path.is_dir());
         if !root_exists {
-            return Ok(Outcome::Skip("its root does not exist on this machine".into()));
+            return Ok(Outcome::Skip(
+                "its root does not exist on this machine".into(),
+            ));
         }
     }
     let repo_path = cfg.repo.join(rel);
@@ -616,7 +621,11 @@ fn write_live(cfg: &Config, target: &Target, content: &[u8], executable: bool) -
         let mode = std::fs::metadata(&dest)
             .map(|m| m.permissions().mode() & 0o777)
             .unwrap_or(0o644);
-        let mode = if executable { mode | 0o111 } else { mode & !0o111 };
+        let mode = if executable {
+            mode | 0o111
+        } else {
+            mode & !0o111
+        };
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode))?;
     }
     std::fs::rename(&tmp, &dest).with_context(|| format!("writing {}", dest.display()))?;
@@ -667,9 +676,7 @@ fn merge_text(
 pub fn note_hand_edit(cfg: &Config, repo_rel: &str) -> Result<bool> {
     let git = Git::new(&cfg.repo);
     let state = State::new(cfg.state_dir());
-    let _guard = state
-        .lock(Duration::from_secs(60))
-        .context("sweep lock")?;
+    let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
     let mut incoming = load_incoming(&state);
     if incoming.contains_key(repo_rel) {
         return Ok(true);
@@ -758,7 +765,11 @@ pub fn check_remote(cfg: &Config, max_age: Duration) -> Result<RemoteCheck> {
         Some(found) => found,
         None => {
             let out = git.run_ok(&["ls-remote", "origin", &format!("refs/heads/{branch}")])?;
-            let sha = out.split_whitespace().next().unwrap_or_default().to_string();
+            let sha = out
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_string();
             (sha, String::new(), "ls-remote".to_string())
         }
     };
@@ -854,7 +865,11 @@ fn github_head(git: &Git, branch: &str, cached: &RemoteCheck) -> Option<(String,
         })
         .unwrap_or_default();
     match status {
-        "304" => Some((cached.remote_sha.clone(), cached.etag.clone(), "github-api".into())),
+        "304" => Some((
+            cached.remote_sha.clone(),
+            cached.etag.clone(),
+            "github-api".into(),
+        )),
         "200" => {
             let sha = body.trim().to_string();
             (sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit()))

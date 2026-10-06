@@ -1530,3 +1530,310 @@ fn a_commit_names_the_session_title_but_not_the_prompt() {
     assert!(msg.starts_with("Stop: claude:CLAUDE.md\n"), "{msg}");
     assert!(!msg.contains("Session-Title:"), "{msg}");
 }
+
+/// A bare repository standing in for origin, and a second clone of it
+/// standing in for GitHub's web editor or another machine.
+fn with_origin(fx: &Fx) -> (PathBuf, PathBuf) {
+    let base = fx.repo.parent().unwrap();
+    let origin = base.join("origin.git");
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q", "--bare"])
+        .arg(&origin)
+        .status()
+        .unwrap()
+        .success());
+    git(fx, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    run(fx, &["push"]);
+    let other = base.join("other");
+    assert!(std::process::Command::new("git")
+        .args(["clone", "-q"])
+        .arg(&origin)
+        .arg(&other)
+        .status()
+        .unwrap()
+        .success());
+    (origin, other)
+}
+
+/// git in another directory, with an identity and no signing.
+fn git_at(dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "-c",
+            "user.name=other",
+            "-c",
+            "user.email=o@o",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+/// Commit `content` to `rel` in the other clone and push it.
+fn push_from_other(other: &Path, rel: &str, content: Option<&str>) {
+    match content {
+        Some(c) => write(&other.join(rel), c),
+        None => fs::remove_file(other.join(rel)).unwrap(),
+    }
+    git_at(other, &["add", "-A"]);
+    git_at(other, &["commit", "-q", "-m", "edited elsewhere"]);
+    git_at(other, &["push", "-q"]);
+}
+
+#[test]
+fn an_edit_on_origin_is_merged_on_push_and_reaches_the_live_file_on_sync() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "claude/CLAUDE.md", Some("# from github\n"));
+    // A local change; its push is rejected, then origin is merged in.
+    write(
+        &fx.claude.join("projects/-h-git-a/memory/one.md"),
+        "local\n",
+    );
+    hook(&fx, &stop("s1"));
+    run(&fx, &["push"]);
+    git_at(&other, &["pull", "-q"]);
+    assert_eq!(
+        fs::read_to_string(other.join("claude/memory/-h-git-a/one.md")).unwrap(),
+        "local\n",
+        "the local commit reached origin"
+    );
+    // The edit from origin waits; neither the push nor a sweep undoes it.
+    let v = status_json(&fx);
+    assert!(v["incoming"]["claude/CLAUDE.md"].is_object(), "{v}");
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("CLAUDE.md")).unwrap(),
+        "# global\n"
+    );
+    write(
+        &fx.claude.join("projects/-h-git-a/memory/one.md"),
+        "local 2\n",
+    );
+    hook(&fx, &stop("s2"));
+    assert_eq!(
+        fs::read_to_string(fx.repo.join("claude/CLAUDE.md")).unwrap(),
+        "# from github\n"
+    );
+    // The reporter says once that something waits.
+    let r = run(&fx, &["report"]);
+    assert!(
+        r.contains("memsaga sync") && r.contains("claude/CLAUDE.md"),
+        "{r}"
+    );
+    assert!(!run(&fx, &["report"]).contains("memsaga sync"));
+    // sync writes it to the live file and empties the list.
+    let out = run(&fx, &["sync"]);
+    assert!(
+        out.contains("written to the live files: claude/CLAUDE.md"),
+        "{out}"
+    );
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("CLAUDE.md")).unwrap(),
+        "# from github\n"
+    );
+    assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
+}
+
+#[test]
+fn both_sides_editing_different_lines_merge_and_the_same_line_conflicts() {
+    let fx = fixture("turn", "");
+    let one = fx.claude.join("projects/-h-git-a/memory/one.md");
+    write(&one, "a\nb\nc\n");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    // Different lines: origin changes the first, the live file the last.
+    push_from_other(&other, "claude/memory/-h-git-a/one.md", Some("A\nb\nc\n"));
+    write(&one, "a\nb\nC\n");
+    run(&fx, &["sync"]);
+    assert_eq!(fs::read_to_string(&one).unwrap(), "A\nb\nC\n");
+    git_at(&other, &["pull", "-q"]);
+    assert_eq!(
+        fs::read_to_string(other.join("claude/memory/-h-git-a/one.md")).unwrap(),
+        "A\nb\nC\n",
+        "the merged text was committed and pushed"
+    );
+    // The same line on both sides: the merge stops, nothing is pushed, the
+    // live file keeps its text.
+    push_from_other(&other, "claude/memory/-h-git-a/one.md", Some("A\nX\nC\n"));
+    write(&one, "A\nY\nC\n");
+    let out = cmd(&fx).arg("sync").output().unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("conflict") && err.contains("one.md"), "{err}");
+    assert_eq!(fs::read_to_string(&one).unwrap(), "A\nY\nC\n");
+}
+
+#[test]
+fn a_hand_edit_in_the_clone_merges_with_a_live_edit_or_waits_on_a_conflict() {
+    let fx = fixture("turn", "");
+    let one = fx.claude.join("projects/-h-git-a/memory/one.md");
+    let repo_one = fx.repo.join("claude/memory/-h-git-a/one.md");
+    write(&one, "a\nb\nc\n");
+    run(&fx, &["init", "--no-backfill"]);
+    // Different lines: merged by `git merge-file` during sync.
+    fs::write(&repo_one, "a\nb\nc!\n").unwrap();
+    write(&one, "a!\nb\nc\n");
+    hook(&fx, &post_tool_use(&one, "s1"));
+    hook(&fx, &stop("s1"));
+    assert_eq!(fs::read_to_string(&repo_one).unwrap(), "a\nb\nc!\n", "kept");
+    run(&fx, &["sync"]);
+    assert_eq!(fs::read_to_string(&one).unwrap(), "a!\nb\nc!\n");
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "a!\nb\nc!\n"
+    );
+    // The same line: a conflict that waits until a side is picked.
+    fs::write(&repo_one, "a!\nREPO\nc!\n").unwrap();
+    write(&one, "a!\nLIVE\nc!\n");
+    let out = cmd(&fx).arg("sync").output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("conflict"));
+    assert_eq!(fs::read_to_string(&one).unwrap(), "a!\nLIVE\nc!\n");
+    assert_eq!(fs::read_to_string(&repo_one).unwrap(), "a!\nREPO\nc!\n");
+    run(&fx, &["sync", "--take", "repo", one.to_str().unwrap()]);
+    assert_eq!(fs::read_to_string(&one).unwrap(), "a!\nREPO\nc!\n");
+    assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
+}
+
+#[test]
+fn a_deletion_on_origin_deletes_the_unchanged_live_file() {
+    let fx = fixture("turn", "");
+    let extra = fx.claude.join("projects/-h-git-a/memory/two.md");
+    write(&extra, "two\n");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "claude/memory/-h-git-a/two.md", None);
+    let out = run(&fx, &["sync"]);
+    assert!(out.contains("deleted"), "{out}");
+    assert!(!extra.exists());
+    assert!(fx.claude.join("projects/-h-git-a/memory/one.md").exists());
+}
+
+#[test]
+fn a_conflict_only_in_the_generated_index_resolves_itself() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    // Origin rewrites the whole index, and a new project memory changes the
+    // local one: the two overlap, so git cannot merge them line by line.
+    push_from_other(&other, "index.md", Some("rewritten elsewhere\n"));
+    let theirs = git_at(&other, &["rev-parse", "HEAD"]).trim().to_string();
+    write(&fx.claude.join("projects/-h-git-c/memory/c.md"), "c\n");
+    hook(&fx, &stop("s1"));
+    run(&fx, &["push"]);
+    let v = status_json(&fx);
+    assert_eq!(v["origin"]["push_failing"], false, "{v}");
+    assert!(v["incoming"].as_object().unwrap().is_empty());
+    // Origin's commit is in our history, and our own index won.
+    git(&fx, &["merge-base", "--is-ancestor", &theirs, "HEAD"]);
+    let index = fs::read_to_string(fx.repo.join("index.md")).unwrap();
+    assert!(
+        !index.contains("rewritten elsewhere") && index.contains("-h-git-c"),
+        "{index}"
+    );
+}
+
+#[test]
+fn pull_check_is_throttled_and_names_the_changed_files() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    let check = |max_age: &str, path: &Path| -> serde_json::Value {
+        let out = cmd(&fx)
+            .env("MEMSAGA_NO_GITHUB_API", "1")
+            .args(["pull", "--check", "--max-age", max_age, "--path"])
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+    let live = fx.claude.join("CLAUDE.md");
+    let v = check("0", &live);
+    assert_eq!(v["moved"], false, "{v}");
+    assert_eq!(v["affected"], false);
+    push_from_other(&other, "claude/CLAUDE.md", Some("# moved\n"));
+    // Within the window the earlier answer stands: no network.
+    assert_eq!(check("120", &live)["moved"], false);
+    let v = check("0", &live);
+    assert_eq!(v["moved"], true, "{v}");
+    assert_eq!(v["affected"], true);
+    assert_eq!(v["changed"][0][0], "claude/CLAUDE.md");
+    assert_eq!(v["changed"][0][1], live.to_str().unwrap());
+    let skills = fx.claude.join("skills/foo/SKILL.md");
+    assert_eq!(check("120", &skills)["affected"], false, "another file");
+    run(&fx, &["pull"]);
+    assert_eq!(fs::read_to_string(&live).unwrap(), "# moved\n");
+}
+
+#[test]
+fn pull_with_a_path_brings_a_fresh_hand_edit_to_the_live_file() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let live = fx.claude.join("CLAUDE.md");
+    fs::write(fx.repo.join("claude/CLAUDE.md"), "# edited in the clone\n").unwrap();
+    run(&fx, &["pull", "--path", live.to_str().unwrap()]);
+    assert_eq!(
+        fs::read_to_string(&live).unwrap(),
+        "# edited in the clone\n"
+    );
+}
+
+#[test]
+fn sync_keeps_a_hand_added_file_settings_keys_and_executable_scripts() {
+    let fx = fixture("turn", "files = [\"CLAUDE.md\", \"settings.json\"]\n");
+    write(
+        &fx.claude.join("settings.json"),
+        "{\"a\": 1, \"model\": \"live-model\"}\n",
+    );
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    // From origin: a settings change (in mirror form, no `model`) and a new
+    // version of an executable hook script.
+    push_from_other(&other, "claude/settings.json", Some("{\n  \"a\": 2\n}\n"));
+    push_from_other(&other, "claude/hooks/x.sh", Some("echo new\n"));
+    // In the clone: a new memory file the live side does not have; the
+    // sweep must not delete it as "gone from the source".
+    let added = fx.repo.join("claude/memory/-h-git-a/added.md");
+    fs::write(&added, "added by hand\n").unwrap();
+    hook(&fx, &post_tool_use(&fx.claude.join("CLAUDE.md"), "s1"));
+    hook(&fx, &stop("s1"));
+    assert!(added.exists(), "the sweep kept the hand-added file");
+    run(&fx, &["sync"]);
+    let settings: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(fx.claude.join("settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(settings["a"], 2);
+    assert_eq!(
+        settings["model"], "live-model",
+        "the live volatile key stays"
+    );
+    let script = fx.claude.join("hooks/x.sh");
+    assert_eq!(fs::read_to_string(&script).unwrap(), "echo new\n");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_ne!(
+            fs::metadata(&script).unwrap().permissions().mode() & 0o111,
+            0
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("projects/-h-git-a/memory/added.md")).unwrap(),
+        "added by hand\n"
+    );
+}
