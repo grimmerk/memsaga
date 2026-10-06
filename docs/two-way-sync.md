@@ -184,13 +184,19 @@ memsaga pull     # inbound only: what the hooks run
 
 `memsaga sync`:
 
-1. Take the sweep lock.
+1. Sweep: commit what changed live, so pending live edits are kept and the
+   merge base below matches the live files.
 2. If origin has commits we lack: fetch and merge exactly as §3 steps ③ to ⑤.
-3. Settle each entry of the incoming list with D2 (this part alone is
+3. Settle each entry of the incoming list with D2 (this part, with step 2, is
    `memsaga pull`).
-4. Sweep: mirror and commit the live changes, as the Stop hook does.
-5. Push.
-6. Print what was written, merged, deleted, and left as a conflict.
+4. Sweep again: commit what step 3 wrote (merged texts, written files).
+5. Push. If the push itself merged a commit that reached origin meanwhile,
+   settle, sweep and push once more.
+6. Print what was written, merged, deleted, and left as a conflict; exit 1
+   when a conflict is left (the push has happened: it is safe either way).
+
+Each step takes the sweep lock for itself; the push lock is never held at the
+same time.
 
 There is no confirmation prompt: every case D2 settles on its own is safe to
 apply (only one side changed, or the two sides changed different lines), and

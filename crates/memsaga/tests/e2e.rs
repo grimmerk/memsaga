@@ -2132,3 +2132,43 @@ fn a_write_rechecks_an_answer_a_read_still_trusts() {
         "an Edit checked again"
     );
 }
+
+#[test]
+fn check_follows_hand_edits_branches_and_reports_a_path_that_waits_again() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, _other) = with_origin(&fx);
+    let live = fx.claude.join("CLAUDE.md");
+    let check = |args: &[&str]| -> serde_json::Value {
+        let mut all = vec!["pull", "--check"];
+        all.extend_from_slice(args);
+        serde_json::from_str(&run(&fx, &all)).unwrap()
+    };
+    // A hand edit of the clone's copy makes the file affected.
+    fs::write(fx.repo.join("claude/CLAUDE.md"), "# hand 1\n").unwrap();
+    let v = check(&["--path", live.to_str().unwrap()]);
+    assert_eq!(v["affected"], true, "{v}");
+    // Reported once, settled, then waiting again: reported again.
+    assert!(run(&fx, &["report"]).contains("memsaga sync"));
+    run(&fx, &["pull"]);
+    assert_eq!(fs::read_to_string(&live).unwrap(), "# hand 1\n");
+    hook(&fx, &stop("s1"));
+    run(&fx, &["report"]);
+    // A hand edit is found by the next sweep that would overwrite it.
+    fs::write(fx.repo.join("claude/CLAUDE.md"), "# hand 2\n").unwrap();
+    run(&fx, &["sweep"]);
+    assert!(
+        run(&fx, &["report"]).contains("memsaga sync"),
+        "announced again"
+    );
+    // An answer about another branch is not reused.
+    let first = check(&["--max-age", "600"]);
+    git(&fx, &["checkout", "-q", "-b", "other-branch"]);
+    let second = check(&["--max-age", "600"]);
+    assert_ne!(first["checked_at"], serde_json::Value::Null);
+    let cache: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(fx.repo.join(".git/memsaga/remote-check.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cache["branch"], "other-branch", "{second}");
+}

@@ -495,6 +495,15 @@ pub fn settle_within(cfg: &Config, take: Option<(Take, &str)>, wait: Duration) -
         }
     }
     save_incoming(&state, &incoming)?;
+    if !(out.written.is_empty()
+        && out.merged.is_empty()
+        && out.deleted.is_empty()
+        && out.in_step.is_empty())
+    {
+        // Entries left the list: if the same path waits again later, the
+        // reporter must announce it again (its memory is the set of paths).
+        state.remove("incoming-reported");
+    }
     let touched: Vec<String> = out
         .written
         .iter()
@@ -823,6 +832,9 @@ pub struct RemoteCheck {
     pub moved: bool,
     /// Live-mapped files those commits change: (repo-relative, live path).
     pub changed: Vec<(String, String)>,
+    /// The local branch this answer is about; another branch makes it stale.
+    #[serde(default)]
+    pub branch: String,
 }
 
 /// Step 3's question, throttled across every session on the machine: when
@@ -840,13 +852,16 @@ pub fn check_remote(cfg: &Config, max_age: Duration) -> Result<RemoteCheck> {
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    if cached.checked_at > 0 && now.saturating_sub(cached.checked_at) < max_age.as_secs() {
+    let branch = current_branch(&git).unwrap_or_default();
+    if cached.checked_at > 0
+        && cached.branch == branch
+        && now.saturating_sub(cached.checked_at) < max_age.as_secs()
+    {
         return Ok(cached);
     }
     if !git.has_remote("origin") {
         return Ok(RemoteCheck::default());
     }
-    let branch = current_branch(&git)?;
     let (remote_sha, etag, via) = match github_head(&git, &branch, &cached) {
         Some(found) => found,
         None => {
@@ -895,6 +910,7 @@ pub fn check_remote(cfg: &Config, max_age: Duration) -> Result<RemoteCheck> {
         via,
         moved,
         changed,
+        branch,
     };
     state.write_marker(REMOTE_CHECK, &serde_json::to_string_pretty(&check)?)?;
     Ok(check)

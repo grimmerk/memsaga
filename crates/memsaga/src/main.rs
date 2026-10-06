@@ -684,6 +684,7 @@ fn cmd_sync(take: &[String]) -> Result<()> {
     if let Some(e) = blocked {
         anyhow::bail!("{e:#}");
     }
+    let mut conflicts = settled.conflicts.len();
     if git.has_remote("origin") {
         let state = State::new(cfg.state_dir());
         if hook::push_now(&cfg, &state, &attrib)? {
@@ -699,15 +700,22 @@ fn cmd_sync(take: &[String]) -> Result<()> {
         if !sync::load_incoming(&state).is_empty() {
             let late = sync::settle(&cfg, None)?;
             print_settled(&late);
-            if sweep::sweep(&cfg, &attrib)?.committed && hook::push_now(&cfg, &state, &attrib)? {
+            conflicts += late.conflicts.len();
+            if sweep::sweep(&cfg, &attrib)?.committed {
+                if !hook::push_now(&cfg, &state, &attrib)? {
+                    anyhow::bail!(
+                        "push failed: {}",
+                        state.read_marker("push-error").unwrap_or_default()
+                    );
+                }
                 println!("pushed");
             }
         }
     }
     // The push is safe with conflicts left (they stay as they are on both
     // sides); exit 1 says a person has to settle them.
-    if !settled.conflicts.is_empty() {
-        anyhow::bail!("{} conflict(s) left; see above", settled.conflicts.len());
+    if conflicts > 0 {
+        anyhow::bail!("{conflicts} conflict(s) left; see above");
     }
     Ok(())
 }
@@ -717,6 +725,11 @@ fn cmd_pull(check: bool, path: Option<&str>, max_age: u64, json: bool) -> Result
     let cfg = Config::load()?;
     let rel = path.map(|p| sync::repo_rel_of_input(&cfg, p)).transpose()?;
     if check {
+        // A hand edit of this file's repository copy counts as "affected"
+        // too, as it does for a pull without --check.
+        if let Some(r) = &rel {
+            sync::note_hand_edit(&cfg, r)?;
+        }
         let c = sync::check_remote(&cfg, std::time::Duration::from_secs(max_age))?;
         let state = State::new(cfg.state_dir());
         let incoming = sync::load_incoming(&state);
