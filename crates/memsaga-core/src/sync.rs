@@ -866,7 +866,11 @@ pub fn check_remote(cfg: &Config, max_age: Duration) -> Result<RemoteCheck> {
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
     if !remote_sha.is_empty() && local_tracking.as_deref() != Some(remote_sha.as_str()) {
-        git.run_ok(&["fetch", "-q", "origin"])?;
+        // Origin unreachable for a moment: keep the old tracking ref, so this
+        // round says "not moved" instead of failing every hook on the way.
+        if let Err(e) = git.run_ok(&["fetch", "-q", "origin"]) {
+            state.log(&format!("remote check: fetch failed: {e:#}"));
+        }
     }
     let moved = !remote_sha.is_empty()
         && !git
@@ -1007,8 +1011,14 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Seconds a check's answer is reused by every session on the machine.
-pub const CHECK_MAX_AGE: Duration = Duration::from_secs(120);
+/// How long a check's answer is reused by every session on the machine for
+/// reads and prompts: at most one question to origin per minute per machine.
+pub const CHECK_MAX_AGE: Duration = Duration::from_secs(60);
+
+/// The same for a Write or Edit of a live-mapped file, which waits for the
+/// check: writes are rare, and an edit built on an outdated copy costs a
+/// conflict or the other side's change, so the window is kept short.
+pub const WRITE_CHECK_MAX_AGE: Duration = Duration::from_secs(10);
 
 /// Start `memsaga pull --check` detached when the cached answer is older than
 /// `CHECK_MAX_AGE`, without waiting for it. A marker keeps several sessions
@@ -1168,7 +1178,7 @@ pub fn on_session_start(cfg: &Config) -> Result<Option<String>> {
 
 /// UserPromptSubmit: once per turn, bring in what origin or a hand edit
 /// changed, and name the files this session already used.
-pub fn on_prompt(cfg: &Config, session: &str) -> Result<Option<String>> {
+pub fn on_prompt(cfg: &Config, session: &str, transcript: &Path) -> Result<Option<String>> {
     let state = State::new(cfg.state_dir());
     refresh_check_in_background(&state);
     if !cached_check(&state).moved && load_incoming(&state).is_empty() {
@@ -1181,11 +1191,47 @@ pub fn on_prompt(cfg: &Config, session: &str) -> Result<Option<String>> {
         .lines()
         .map(str::to_string)
         .collect();
-    let files: Vec<String> = changed_files(&settled)
+    let changed = changed_files(&settled);
+    // Files read through Bash (`cat`, `sed`) never pass the Read hook; the
+    // transcript names them. Searched only when a pull changed something.
+    let named = named_in_transcript(cfg, transcript, &changed);
+    let files: Vec<String> = changed
         .into_iter()
-        .filter(|f| used.contains(f) || loaded_at_start(f))
+        .filter(|f| used.contains(f) || named.contains(f) || loaded_at_start(f))
         .collect();
     Ok(notice(cfg, &settled, &files, &settled.conflicts))
+}
+
+/// The files among `rels` whose live path (absolute, or `~/`-relative) the
+/// session transcript mentions: read, written or quoted in this session.
+fn named_in_transcript(cfg: &Config, transcript: &Path, rels: &[String]) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    if rels.is_empty() {
+        return out;
+    }
+    let Ok(text) = std::fs::read(transcript) else {
+        return out;
+    };
+    let home = dirs::home_dir().map(|h| h.display().to_string());
+    for rel in rels {
+        let Some(t) = live_target(cfg, rel) else {
+            continue;
+        };
+        let abs = t.live().display().to_string();
+        let mut needles = vec![abs.clone()];
+        if let Some(h) = &home {
+            if let Some(rest) = abs.strip_prefix(h.as_str()) {
+                needles.push(format!("~{rest}"));
+            }
+        }
+        if needles
+            .iter()
+            .any(|n| text.windows(n.len()).any(|w| w == n.as_bytes()))
+        {
+            out.insert(rel.clone());
+        }
+    }
+    out
 }
 
 fn changed_files(s: &Settled) -> Vec<String> {
@@ -1245,7 +1291,7 @@ pub fn before_tool(cfg: &Config, session: &str, live: &Path, tool: &str) -> Resu
         note_hand_edit(cfg, &rel)?;
     }
     let check = if writes {
-        check_remote(cfg, CHECK_MAX_AGE)?
+        check_remote(cfg, WRITE_CHECK_MAX_AGE)?
     } else {
         refresh_check_in_background(&state);
         cached_check(&state)

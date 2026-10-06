@@ -130,15 +130,16 @@ An edit made outside the live files (in GitHub's web editor, on another
 machine, or by hand in the local clone) is not overwritten by the next sweep:
 it waits on a list (`memsaga status` shows it) until `memsaga sync` brings it
 to the live file. When only the repository changed, its version is written;
-when both sides changed different lines, the texts are merged; the same lines
-changed on both sides are left alone and reported. A file deleted in the
+when both sides changed different lines (or made the same change), the texts
+are merged; conflicting edits to the same lines are left alone and reported. A file deleted in the
 repository is deleted live when the live file was unchanged.
 
 Three synchronous hooks do this without being asked: at session start and at
 each prompt they pull when origin moved and tell the model which files it
 should read again, and a Read, Write or Edit of a file that changed elsewhere
-waits for the pull. Origin is asked at most once every two minutes per
-machine. Design and measurements: [`docs/two-way-sync.md`](docs/two-way-sync.md).
+waits for the pull. Origin is asked at most once a minute per machine, and
+before a Write or Edit at most every ten seconds. Design and measurements:
+[`docs/two-way-sync.md`](docs/two-way-sync.md).
 
 A shorter command name is one alias away: `alias mem=memsaga`.
 

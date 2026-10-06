@@ -29,11 +29,14 @@ fn main() {
     for dir in ["src", "../memsaga-core/src", "../../skills"] {
         println!("cargo:rerun-if-changed={dir}");
     }
-    if let Some(dir) = git(&["rev-parse", "--absolute-git-dir"]) {
-        println!("cargo:rerun-if-changed={dir}/HEAD");
-        println!("cargo:rerun-if-changed={dir}/index");
-        if let Some(head_ref) = git(&["symbolic-ref", "-q", "HEAD"]) {
-            println!("cargo:rerun-if-changed={dir}/{head_ref}");
+    // Paths through `--git-path`, which resolves each to where git keeps it:
+    // in a linked worktree HEAD and the index are the worktree's own, while
+    // branch refs live in the common git directory.
+    let mut watch = vec!["HEAD".to_string(), "index".to_string()];
+    watch.extend(git(&["symbolic-ref", "-q", "HEAD"]));
+    for name in watch {
+        if let Some(p) = git(&["rev-parse", "--path-format=absolute", "--git-path", &name]) {
+            println!("cargo:rerun-if-changed={p}");
         }
     }
 }

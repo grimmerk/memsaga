@@ -227,16 +227,18 @@ How it writes:
 
 ## 7. Step 3: read before use, through command hooks
 
-memsaga has no background process, and this step does not add one: it checks
-origin only at the moments a stale file could be used, and a shared answer
-throttles the check across every session on the machine. Everything runs as
+memsaga has no daemon and no timer, and this step does not add one: it checks
+origin only at the moments a stale file could be used (a check a Read or a
+prompt does not wait for runs as a short-lived detached process), and a shared
+answer throttles the check across every session on the machine. Everything runs as
 settings hooks registered by `memsaga install`, the same mechanism as the
 sweep, so it works in the terminal, `claude -p`, the desktop app and SDK
 hosts, in both accounts.
 
 **The check** (`memsaga pull --check`):
 
-1. If any session checked within the last 2 minutes
+1. If any session checked within the last minute (10 seconds before a Write
+   or Edit)
    (`.git/memsaga/remote-check.json`), use its answer.
 2. Otherwise ask origin for its branch head: the GitHub API with an ETag
    (one request, about 0.5 s; a 304 when nothing changed costs no rate
@@ -248,7 +250,7 @@ hosts, in both accounts.
 | Hook | What it does | Cost |
 |---|---|---|
 | `SessionStart` (start, `/compact`, `/clear`) | The check, waiting for it. When origin moved or the incoming list is non-empty: `memsaga pull`, and a notice (`additionalContext`) naming the changed CLAUDE.md and MEMORY.md files. | Reading the shared answer when another session checked recently; else about 0.5 s; a fetch and a pull only when origin moved. |
-| `PreToolUse` for Read, Write and Edit | Ignore a file outside memsaga's scope. Otherwise: note the file as used by this session; note a hand edit when its repository copy is newer than the last sweep; when the shared answer is older than 2 minutes, a Read starts a background check without waiting, while a Write or Edit waits for the check (an edit built on an outdated copy would end in a merge conflict, or drop the other side's change); and when **this** file is on the incoming list or among the files origin changed, `memsaga pull` first. Then a Read goes ahead on the fresh file. A Write is refused when the pull just changed the file (its content was prepared from the old copy), and a Write or Edit is refused when origin's change could not be merged; the reason tells the model to read again or to tell the user. An Edit otherwise goes ahead: it fails on its own when its old text is gone. | One `memsaga` process start (about 10 ms) per Read, Write or Edit, since a hook matcher selects tools, not paths; about 0.5 s for a Write or Edit when the shared answer is old; a pull only when this very file changed. |
+| `PreToolUse` for Read, Write and Edit | Ignore a file outside memsaga's scope. Otherwise: note the file as used by this session; note a hand edit when its repository copy is newer than the last sweep; when the shared answer is older than a minute, a Read starts a background check without waiting, while a Write or Edit waits for the check when the answer is older than 10 seconds (an edit built on an outdated copy would end in a merge conflict, or drop the other side's change); and when **this** file is on the incoming list or among the files origin changed, `memsaga pull` first. Then a Read goes ahead on the fresh file. A Write is refused when the pull just changed the file (its content was prepared from the old copy), and a Write or Edit is refused when origin's change could not be merged; the reason tells the model to read again or to tell the user. An Edit otherwise goes ahead: it fails on its own when its old text is gone. | One `memsaga` process start (about 10 ms) per Read, Write or Edit, since a hook matcher selects tools, not paths; about 0.5 s for a Write or Edit when the shared answer is old; a pull only when this very file changed. |
 | `UserPromptSubmit` | Start a background check when the shared answer is old. When origin moved or the incoming list is non-empty: `memsaga pull`, and a notice naming the changed files this session used plus any changed CLAUDE.md and MEMORY.md. | Nothing in the common case beyond the process start; a pull only after origin moved. |
 
 Notices go to the model only; the Stop reporter (§5) tells the person. A
@@ -262,8 +264,12 @@ wording is a precaution, not a measured fix. Each hook waits at most 20 s for th
 inside its 30 s timeout: a busy lock makes it skip the pull rather than be
 stopped half-way.
 A change that lands in the middle of a turn is announced at the next prompt;
-until then, touching that file blocks on the pull as above, so a stale copy is
-never read or edited.
+until then, touching that file blocks on the pull as above. The guarantee is
+bounded by the shared answer's age: a change made on origin less than a
+minute after the last check (10 seconds for a Write or Edit) is not seen
+until the next check, and a Read in that window gets the live copy as it is.
+A file counts as used by the session when it went through Read, Write or Edit,
+or when the session transcript names its path (a read through Bash).
 
 ### 7.1 What the hooks rely on (measured)
 
@@ -362,7 +368,7 @@ second clone standing in for GitHub or another machine:
   status reports the files; a conflict only in `index.md` resolves on its own.
 - `settings.json` round-trip keeps the live volatile keys; an executable script
   keeps its mode.
-- The check: a second call within 2 minutes does not reach the network;
+- The check: a second call within the window does not reach the network;
   `remote-changed` lists exactly the files the new commits touch.
 - The hooks: a session start after origin moved pulls and returns a notice
   naming CLAUDE.md; a Read of a file origin changed waits for the pull; a

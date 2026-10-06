@@ -128,7 +128,7 @@ enum Cmd {
         #[arg(long)]
         path: Option<String>,
         /// Seconds an earlier --check answer stays valid.
-        #[arg(long, default_value_t = 120)]
+        #[arg(long, default_value_t = 60)]
         max_age: u64,
         /// Print the result as JSON.
         #[arg(long)]
@@ -694,7 +694,18 @@ fn cmd_sync(take: &[String]) -> Result<()> {
                 state.read_marker("push-error").unwrap_or_default()
             );
         }
+        // The push may have merged a commit that reached origin meanwhile:
+        // bring it to the live files too, and push the result.
+        if !sync::load_incoming(&state).is_empty() {
+            let late = sync::settle(&cfg, None)?;
+            print_settled(&late);
+            if sweep::sweep(&cfg, &attrib)?.committed && hook::push_now(&cfg, &state, &attrib)? {
+                println!("pushed");
+            }
+        }
     }
+    // The push is safe with conflicts left (they stay as they are on both
+    // sides); exit 1 says a person has to settle them.
     if !settled.conflicts.is_empty() {
         anyhow::bail!("{} conflict(s) left; see above", settled.conflicts.len());
     }

@@ -2068,3 +2068,67 @@ fn a_merge_of_origin_has_a_memsaga_style_message() {
     let subject = git(&fx, &["log", "-1", "--format=%s"]);
     assert!(subject.starts_with("sync: merge origin/"), "{subject}");
 }
+
+#[test]
+fn a_file_the_transcript_names_counts_as_used_by_the_session() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    let one = fx.claude.join("projects/-h-git-a/memory/one.md");
+    // Read through Bash: no Read hook ran, but the transcript names the file.
+    let transcript = fx.repo.parent().unwrap().join("s9.jsonl");
+    write(
+        &transcript,
+        &format!(
+            "{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{{\"command\":\"cat {}\"}}}}]}}}}\n",
+            one.display()
+        ),
+    );
+    push_from_other(&other, "claude/memory/-h-git-a/one.md", Some("via bash\n"));
+    run(&fx, &["pull", "--check", "--max-age", "0"]);
+    let extra = format!(
+        ",\"prompt\":\"go on\",\"transcript_path\":\"{}\"",
+        transcript.display()
+    );
+    let out = hook(&fx, &hook_json("UserPromptSubmit", "s9", &extra));
+    let v: serde_json::Value = serde_json::from_str(out.trim()).expect(&out);
+    let notice = v["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(
+        notice.contains(one.to_str().unwrap()) && notice.contains("+via bash"),
+        "{notice}"
+    );
+}
+
+#[test]
+fn a_write_rechecks_an_answer_a_read_still_trusts() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    let one = fx.claude.join("projects/-h-git-a/memory/one.md");
+    run(&fx, &["pull", "--check", "--max-age", "0"]);
+    push_from_other(&other, "claude/memory/-h-git-a/one.md", Some("moved\n"));
+    // An answer 30 s old: fresh for a Read (60 s), stale for a write (10 s).
+    let cache = fx.repo.join(".git/memsaga/remote-check.json");
+    let mut c: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&cache).unwrap()).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    c["checked_at"] = serde_json::json!(now - 30);
+    fs::write(&cache, c.to_string()).unwrap();
+    hook(&fx, &pre_tool("Read", &one, "s1"));
+    assert_eq!(
+        fs::read_to_string(&one).unwrap(),
+        "fact\n",
+        "a Read trusts the answer"
+    );
+    hook(&fx, &pre_tool("Edit", &one, "s1"));
+    assert_eq!(
+        fs::read_to_string(&one).unwrap(),
+        "moved\n",
+        "an Edit checked again"
+    );
+}

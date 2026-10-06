@@ -149,7 +149,14 @@ pub fn handle(cfg: &Config, input: &HookInput) -> Result<Action> {
         // replacing the loaded CLAUDE.md, `tool.call` filtering by path without
         // a process per call); these entry points are kept small for that.
         "SessionStart" => notice_action(input, crate::sync::on_session_start(cfg)?),
-        "UserPromptSubmit" => notice_action(input, crate::sync::on_prompt(cfg, &input.session_id)?),
+        "UserPromptSubmit" => notice_action(
+            input,
+            crate::sync::on_prompt(
+                cfg,
+                &input.session_id,
+                std::path::Path::new(&input.transcript_path),
+            )?,
+        ),
         "PreToolUse" => {
             let Some(p) = input.paths().first().cloned() else {
                 return Ok(Action::Ignored);
@@ -233,10 +240,14 @@ pub fn push_now(cfg: &Config, state: &State, attrib: &Attribution) -> Result<boo
         Ok(()) => return record_push(state, attrib, None),
         Err(e) => e,
     };
-    // Rejected, perhaps because origin has commits we lack (an edit on
-    // GitHub, another machine): merge them and push once more. The merge
-    // takes the sweep lock; the push lock is not held meanwhile, so the two
-    // locks are never held together (docs/two-way-sync.md, step 1a).
+    // Rejected because origin has commits we lack (an edit on GitHub,
+    // another machine): merge them and push once more. Any other failure
+    // (no network, no permission) is recorded as it is. The merge takes the
+    // sweep lock; the push lock is not held meanwhile, so the two locks are
+    // never held together (docs/two-way-sync.md, step 1a).
+    if !rejected_as_behind(&error) {
+        return record_push(state, attrib, Some(error));
+    }
     match crate::sync::integrate_remote(cfg) {
         Ok(i) if i.merged => {
             let second = try_push(cfg, state)?;
@@ -245,6 +256,13 @@ pub fn push_now(cfg: &Config, state: &State, attrib: &Attribution) -> Result<boo
         Ok(_) => record_push(state, attrib, Some(error)),
         Err(e) => record_push(state, attrib, Some(e)),
     }
+}
+
+/// Did origin refuse the push because it has commits we lack? git says
+/// "non-fast-forward" or "fetch first" for that.
+fn rejected_as_behind(e: &anyhow::Error) -> bool {
+    let text = format!("{e:#}");
+    text.contains("non-fast-forward") || text.contains("fetch first")
 }
 
 /// One `git push origin` under the push lock. One push at a time: a Stop
