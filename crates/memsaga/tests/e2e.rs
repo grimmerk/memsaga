@@ -2210,3 +2210,82 @@ fn a_mode_only_change_and_an_edit_before_the_first_sweep_are_kept() {
     );
     assert!(status_json(&fx)["incoming"]["claude/CLAUDE.md"].is_object());
 }
+
+#[test]
+fn a_new_file_from_origin_honours_the_umask() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(
+        &other,
+        "claude/memory/-h-git-a/private.md",
+        Some("secret\n"),
+    );
+    let bin = assert_cmd::cargo::cargo_bin("memsaga");
+    let out = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("umask 077 && exec \"$0\" sync")
+        .arg(&bin)
+        .env("MEMSAGA_CONFIG", &fx.cfg)
+        .env("CLAUDE_CONFIG_DIR", &fx.claude)
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@t")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@t")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    use std::os::unix::fs::PermissionsExt;
+    let p = fx.claude.join("projects/-h-git-a/memory/private.md");
+    assert_eq!(
+        fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+}
+
+#[test]
+fn an_unreachable_origin_and_repo_spelled_paths_do_not_break_the_hooks() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    // The config file by its repository path.
+    let v: serde_json::Value = serde_json::from_str(&run(
+        &fx,
+        &["pull", "--check", "--path", "memsaga/config.toml"],
+    ))
+    .unwrap();
+    assert_eq!(v["affected"], false, "{v}");
+    // Origin unreachable: a write's check logs it and goes on.
+    git(&fx, &["remote", "add", "origin", "/nonexistent/origin.git"]);
+    let one = fx.claude.join("projects/-h-git-a/memory/one.md");
+    assert_eq!(denied(&hook(&fx, &pre_tool("Edit", &one, "s1"))), None);
+    let log = fs::read_to_string(fx.repo.join(".git/memsaga/memsaga.log")).unwrap();
+    assert!(log.contains("remote check: ls-remote failed"), "{log}");
+    assert!(!log.contains("PreToolUse: error"), "{log}");
+}
+
+#[test]
+fn a_failed_resolution_of_a_generated_conflict_leaves_no_merge_behind() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "index.md", Some("rewritten elsewhere\n"));
+    write(&fx.claude.join("projects/-h-git-c/memory/c.md"), "c\n");
+    hook(&fx, &stop("s1"));
+    // A pre-commit hook that refuses merge commits only.
+    let hook_path = fx.repo.join(".git/hooks/pre-commit");
+    write(
+        &hook_path,
+        "#!/bin/sh\n[ -f \"$(git rev-parse --git-dir)/MERGE_HEAD\" ] && exit 1\nexit 0\n",
+    );
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let _ = cmd(&fx).arg("push").output().unwrap();
+    assert!(!fx.repo.join(".git/MERGE_HEAD").exists(), "left mid-merge");
+    git(&fx, &["diff", "--quiet", "--cached"]);
+}

@@ -357,13 +357,22 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
         let only_generated =
             !conflicted.is_empty() && conflicted.iter().all(|f| GENERATED.contains(&f.as_str()));
         if only_generated {
-            let mut args = vec!["checkout", "--ours", "--"];
-            args.extend(conflicted.iter().map(String::as_str));
-            git.run_ok(&args)?;
-            let mut args = vec!["add", "--"];
-            args.extend(conflicted.iter().map(String::as_str));
-            git.run_ok(&args)?;
-            git.run_ok(&["commit", "-q", "--no-edit"])?;
+            let resolve = || -> Result<()> {
+                let mut args = vec!["checkout", "--ours", "--"];
+                args.extend(conflicted.iter().map(String::as_str));
+                git.run_ok(&args)?;
+                let mut args = vec!["add", "--"];
+                args.extend(conflicted.iter().map(String::as_str));
+                git.run_ok(&args)?;
+                git.run_ok(&["commit", "-q", "--no-edit"])?;
+                Ok(())
+            };
+            if let Err(e) = resolve() {
+                // Never leave the repository mid-merge: every later sweep
+                // would fail on it.
+                let _ = git.run(&["merge", "--abort"]);
+                return Err(e.context("resolving a conflict in generated files"));
+            }
         } else {
             let _ = git.run(&["merge", "--abort"]);
             if conflicted.is_empty() {
@@ -694,12 +703,15 @@ fn write_live(cfg: &Config, target: &Target, content: &[u8], executable: bool) -
     std::fs::write(&tmp, &content).with_context(|| format!("writing {}", tmp.display()))?;
     {
         use std::os::unix::fs::PermissionsExt;
-        // Keep a private file private: start from the current live mode.
+        // Keep a private file private: start from the current live mode, or
+        // for a new file from the temp file's, which honours the umask.
         let mode = std::fs::metadata(&dest)
+            .or_else(|_| std::fs::metadata(&tmp))
             .map(|m| m.permissions().mode() & 0o777)
-            .unwrap_or(0o644);
+            .unwrap_or(0o600);
+        // Executable where readable, so a private script stays private.
         let mode = if executable {
-            mode | 0o111
+            mode | ((mode & 0o444) >> 2)
         } else {
             mode & !0o111
         };
@@ -814,6 +826,15 @@ pub fn note_hand_edit(cfg: &Config, repo_rel: &str) -> Result<bool> {
 
 /// A repo-relative path, a live path or `~/…`, to its repo-relative form.
 pub fn repo_rel_of_input(cfg: &Config, input: &str) -> Result<String> {
+    if input == "memsaga/config.toml"
+        || (input.starts_with("extra/")
+            && cfg
+                .extra_files()
+                .iter()
+                .any(|f| extra_repo_rel(f) == Path::new(input)))
+    {
+        return Ok(input.to_string());
+    }
     let p = crate::config::expand_tilde(input);
     if p == config_path() {
         return Ok("memsaga/config.toml".into());
@@ -854,6 +875,15 @@ pub struct RemoteCheck {
     pub branch: String,
 }
 
+/// git options that abort an HTTPS transfer stalled below 1 KB/s for 10 s, so
+/// a hanging origin cannot hold a hook past its 30 s timeout.
+const LOW_SPEED: [&str; 4] = [
+    "-c",
+    "http.lowSpeedLimit=1000",
+    "-c",
+    "http.lowSpeedTime=10",
+];
+
 /// Step 3's question, throttled across every session on the machine: when
 /// another check ran less than `max_age` ago its answer is reused. Otherwise
 /// origin's branch head is read (GitHub API with an ETag, else
@@ -882,13 +912,31 @@ pub fn check_remote(cfg: &Config, max_age: Duration) -> Result<RemoteCheck> {
     let (remote_sha, etag, via) = match github_head(&git, &branch, &cached) {
         Some(found) => found,
         None => {
-            let out = git.run_ok(&["ls-remote", "origin", &format!("refs/heads/{branch}")])?;
-            let sha = out
-                .split_whitespace()
-                .next()
-                .unwrap_or_default()
-                .to_string();
-            (sha, String::new(), "ls-remote".to_string())
+            let reference = format!("refs/heads/{branch}");
+            match git.run_ok(&[&LOW_SPEED[..], &["ls-remote", "origin", &reference]].concat()) {
+                Ok(out) => {
+                    let sha = out
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or_default()
+                        .to_string();
+                    (sha, String::new(), "ls-remote".to_string())
+                }
+                Err(e) => {
+                    // Origin unreachable: this round says "not moved", so no
+                    // hook fails or waits on it; the next window asks again.
+                    state.log(&format!("remote check: ls-remote failed: {e:#}"));
+                    let check = RemoteCheck {
+                        checked_at: now,
+                        moved: false,
+                        changed: Vec::new(),
+                        branch,
+                        ..cached
+                    };
+                    state.write_marker(REMOTE_CHECK, &serde_json::to_string_pretty(&check)?)?;
+                    return Ok(check);
+                }
+            }
         }
     };
     let tracking = format!("origin/{branch}");
@@ -900,7 +948,7 @@ pub fn check_remote(cfg: &Config, max_age: Duration) -> Result<RemoteCheck> {
     if !remote_sha.is_empty() && local_tracking.as_deref() != Some(remote_sha.as_str()) {
         // Origin unreachable for a moment: keep the old tracking ref, so this
         // round says "not moved" instead of failing every hook on the way.
-        if let Err(e) = git.run_ok(&["fetch", "-q", "origin"]) {
+        if let Err(e) = git.run_ok(&[&LOW_SPEED[..], &["fetch", "-q", "origin"]].concat()) {
             state.log(&format!("remote check: fetch failed: {e:#}"));
         }
     }
