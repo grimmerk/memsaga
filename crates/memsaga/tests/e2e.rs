@@ -549,6 +549,22 @@ fn install_and_uninstall_preserve_foreign_hooks() {
     );
     assert_eq!(v["hooks"]["PostToolUse"][0]["hooks"][0]["async"], true);
     assert!(v["hooks"]["SessionEnd"].is_array());
+    // Two-way sync's hooks run synchronously (they must finish before the
+    // session reads), with room for a fetch.
+    for (event, matcher) in [
+        ("SessionStart", None),
+        ("UserPromptSubmit", None),
+        ("PreToolUse", Some("Read|Write|Edit|MultiEdit")),
+    ] {
+        let entry = &v["hooks"][event][0];
+        assert_eq!(entry["hooks"][0]["command"], "/usr/local/bin/memsaga hook");
+        assert!(
+            entry["hooks"][0]["async"].is_null(),
+            "{event} must not be async"
+        );
+        assert_eq!(entry["hooks"][0]["timeout"], 30);
+        assert_eq!(entry["matcher"].as_str(), matcher);
+    }
     assert!(fx.claude.join("settings.json.memsaga-bak").exists());
     let out2 = run(&fx, &["install", "--bin", "/usr/local/bin/memsaga"]);
     assert!(out2.contains("already registered"), "{out2}");
@@ -1864,12 +1880,19 @@ fn session_start_pulls_and_tells_the_model_to_reread_claude_md() {
     let out = hook(&fx, &hook_json("SessionStart", "s1", ""));
     let v: serde_json::Value = serde_json::from_str(out.trim()).expect(&out);
     assert_eq!(v["hookSpecificOutput"]["hookEventName"], "SessionStart");
-    let notice = v["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
+    let notice = v["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
     let live = fx.claude.join("CLAUDE.md");
-    assert!(notice.contains(live.to_str().unwrap()) && notice.contains("Read them again"), "{notice}");
+    assert!(
+        notice.contains(live.to_str().unwrap()) && notice.contains("Read them again"),
+        "{notice}"
+    );
     assert_eq!(fs::read_to_string(&live).unwrap(), "# changed elsewhere\n");
     // Nothing new: no notice, no output.
-    assert!(hook(&fx, &hook_json("SessionStart", "s2", "")).trim().is_empty());
+    assert!(hook(&fx, &hook_json("SessionStart", "s2", ""))
+        .trim()
+        .is_empty());
 }
 
 #[test]
@@ -1877,7 +1900,11 @@ fn a_read_waits_only_for_its_own_changed_file() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
     let (_origin, other) = with_origin(&fx);
-    push_from_other(&other, "claude/memory/-h-git-a/one.md", Some("from origin\n"));
+    push_from_other(
+        &other,
+        "claude/memory/-h-git-a/one.md",
+        Some("from origin\n"),
+    );
     run(&fx, &["pull", "--check", "--max-age", "0"]);
     let one = fx.claude.join("projects/-h-git-a/memory/one.md");
     // Reading another file does not pull.
@@ -1889,8 +1916,7 @@ fn a_read_waits_only_for_its_own_changed_file() {
     assert_eq!(fs::read_to_string(&one).unwrap(), "from origin\n");
     // The cached answer no longer says "moved", so the next prompt or read
     // does not pull (and fetch) again within the window.
-    let v: serde_json::Value =
-        serde_json::from_str(&run(&fx, &["pull", "--check"])).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&run(&fx, &["pull", "--check"])).unwrap();
     assert_eq!(v["moved"], false, "{v}");
 }
 
@@ -1903,16 +1929,28 @@ fn a_prompt_names_changed_files_the_session_used() {
     hook(&fx, &pre_read(&one, "s1"));
     push_from_other(&other, "claude/memory/-h-git-a/one.md", Some("newer\n"));
     run(&fx, &["pull", "--check", "--max-age", "0"]);
-    let out = hook(&fx, &hook_json("UserPromptSubmit", "s1", ",\"prompt\":\"go on\""));
+    let out = hook(
+        &fx,
+        &hook_json("UserPromptSubmit", "s1", ",\"prompt\":\"go on\""),
+    );
     let v: serde_json::Value = serde_json::from_str(out.trim()).expect(&out);
     assert_eq!(v["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit");
-    let notice = v["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
+    let notice = v["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
     assert!(notice.contains(one.to_str().unwrap()), "{notice}");
     assert_eq!(fs::read_to_string(&one).unwrap(), "newer\n");
     // A session that never used the file is not told about it.
     push_from_other(&other, "claude/memory/-h-git-a/one.md", Some("newest\n"));
     run(&fx, &["pull", "--check", "--max-age", "0"]);
-    let out = hook(&fx, &hook_json("UserPromptSubmit", "s2", ",\"prompt\":\"hi\""));
+    let out = hook(
+        &fx,
+        &hook_json("UserPromptSubmit", "s2", ",\"prompt\":\"hi\""),
+    );
     assert!(out.trim().is_empty(), "{out}");
-    assert_eq!(fs::read_to_string(&one).unwrap(), "newest\n", "still pulled");
+    assert_eq!(
+        fs::read_to_string(&one).unwrap(),
+        "newest\n",
+        "still pulled"
+    );
 }

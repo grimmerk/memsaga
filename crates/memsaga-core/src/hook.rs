@@ -93,7 +93,10 @@ pub enum Action {
     Swept(Outcome),
     Pushed,
     /// A notice for the model (`additionalContext`) from the hook named.
-    Notice { event: String, text: String },
+    Notice {
+        event: String,
+        text: String,
+    },
 }
 
 pub fn handle(cfg: &Config, input: &HookInput) -> Result<Action> {
@@ -144,10 +147,7 @@ pub fn handle(cfg: &Config, input: &HookInput) -> Result<Action> {
         // replacing the loaded CLAUDE.md, `tool.call` filtering by path without
         // a process per call); these entry points are kept small for that.
         "SessionStart" => notice_action(input, crate::sync::on_session_start(cfg)?),
-        "UserPromptSubmit" => notice_action(
-            input,
-            crate::sync::on_prompt(cfg, &input.session_id)?,
-        ),
+        "UserPromptSubmit" => notice_action(input, crate::sync::on_prompt(cfg, &input.session_id)?),
         "PreToolUse" => {
             if let Some(p) = input.paths().first() {
                 crate::sync::before_tool(cfg, &input.session_id, p)?;

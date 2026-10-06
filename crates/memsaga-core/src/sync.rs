@@ -989,7 +989,11 @@ fn note_session_file(state: &State, session: &str, rel: &str) {
         let _ = std::fs::create_dir_all(dir);
     }
     use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&p)
+    {
         let _ = writeln!(f, "{rel}");
     }
 }
@@ -1005,7 +1009,10 @@ pub fn forget_session(cfg: &Config, session: &str) {
 /// into every session's context without a Read.
 fn loaded_at_start(rel: &str) -> bool {
     let parts: Vec<&str> = rel.split('/').collect();
-    matches!(parts.as_slice(), [_, "CLAUDE.md"] | [_, "memory", _, "MEMORY.md"])
+    matches!(
+        parts.as_slice(),
+        [_, "CLAUDE.md"] | [_, "memory", _, "MEMORY.md"]
+    )
 }
 
 /// The notice for the model: which changed files it should read again.
@@ -1102,7 +1109,9 @@ pub fn before_tool(cfg: &Config, session: &str, live: &Path) -> Result<()> {
     // A hand edit in the clone since the last sweep.
     let repo_copy = cfg.repo.join(&rel);
     let edited = match (
-        std::fs::metadata(&repo_copy).and_then(|m| m.modified()).ok(),
+        std::fs::metadata(&repo_copy)
+            .and_then(|m| m.modified())
+            .ok(),
         state.mtime("last-sweep"),
     ) {
         (Some(t), Some(since)) => t > since,
