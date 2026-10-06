@@ -2173,3 +2173,40 @@ fn check_follows_hand_edits_branches_and_reports_a_path_that_waits_again() {
     .unwrap();
     assert_eq!(cache["branch"], "other-branch", "{second}");
 }
+
+#[test]
+fn a_mode_only_change_and_an_edit_before_the_first_sweep_are_kept() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    // Origin makes a memory file executable, text unchanged.
+    let one = fx.claude.join("projects/-h-git-a/memory/one.md");
+    git_at(
+        &other,
+        &[
+            "update-index",
+            "--chmod=+x",
+            "claude/memory/-h-git-a/one.md",
+        ],
+    );
+    git_at(&other, &["commit", "-q", "-m", "chmod"]);
+    git_at(&other, &["push", "-q"]);
+    run(&fx, &["sync"]);
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_ne!(fs::metadata(&one).unwrap().permissions().mode() & 0o111, 0);
+    }
+    // No sweep on record (as right after a clone): a hand edit is kept.
+    fs::remove_file(fx.repo.join(".git/memsaga/last-sweep")).unwrap();
+    fs::write(
+        fx.repo.join("claude/CLAUDE.md"),
+        "# before the first sweep\n",
+    )
+    .unwrap();
+    run(&fx, &["sweep"]);
+    assert_eq!(
+        fs::read_to_string(fx.repo.join("claude/CLAUDE.md")).unwrap(),
+        "# before the first sweep\n"
+    );
+    assert!(status_json(&fx)["incoming"]["claude/CLAUDE.md"].is_object());
+}

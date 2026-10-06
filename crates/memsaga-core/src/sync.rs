@@ -192,8 +192,11 @@ impl Guard {
         }
         // Fast path: not modified since the last sweep began, so not a hand
         // edit. Only the rare candidate costs two git calls.
-        match (self.since, meta.modified()) {
-            (Some(since), Ok(t)) if t > since => {}
+        // No sweep yet (a fresh clone): every file is a candidate, so a
+        // hand edit made before the first sweep is protected too.
+        let since = self.since.unwrap_or(SystemTime::UNIX_EPOCH);
+        match meta.modified() {
+            Ok(t) if t > since => {}
             _ => return true,
         }
         let Ok(rel) = dst.strip_prefix(&self.repo) else {
@@ -590,6 +593,20 @@ fn settle_one(
         }
     }
     if l == r {
+        // Same text; the mode may still differ (a `chmod +x` committed
+        // elsewhere): give the live file the repository's executable bit.
+        let live = target.live();
+        if r.is_some() && live.exists() && executable(live) != executable(&repo_path) {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(live)?.permissions().mode() & 0o777;
+            let mode = if executable(&repo_path) {
+                mode | 0o111
+            } else {
+                mode & !0o111
+            };
+            std::fs::set_permissions(live, std::fs::Permissions::from_mode(mode))?;
+            return Ok(Outcome::Done(Done::Written));
+        }
         return Ok(Outcome::Done(Done::InStep));
     }
     let b = match &entry.base {
