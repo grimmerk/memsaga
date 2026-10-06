@@ -367,6 +367,7 @@ pub fn integrate_remote(cfg: &Config) -> Result<Integrated> {
         files.push(f);
     }
     save_incoming(&state, &incoming)?;
+    mark_integrated(&state);
     state.append_event(&Event {
         ts: state::now_rfc3339(),
         kind: "merge".into(),
@@ -890,6 +891,233 @@ fn github_slug(url: &str) -> Option<String> {
     let (owner, repo) = (parts.next()?, parts.next()?);
     (parts.next().is_none() && !owner.is_empty() && !repo.is_empty())
         .then(|| format!("{owner}/{repo}"))
+}
+
+/// The cached answer of `check_remote`, whatever its age.
+fn cached_check(state: &State) -> RemoteCheck {
+    std::fs::read_to_string(state.marker(REMOTE_CHECK))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+/// After a merge: origin's commits are in, so the cached answer no longer
+/// says "moved" (otherwise every prompt until the next check would pull).
+fn mark_integrated(state: &State) {
+    let mut c = cached_check(state);
+    if c.checked_at == 0 {
+        return;
+    }
+    c.moved = false;
+    c.changed.clear();
+    if let Ok(text) = serde_json::to_string_pretty(&c) {
+        let _ = state.write_marker(REMOTE_CHECK, &text);
+    }
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Seconds a check's answer is reused by every session on the machine.
+pub const CHECK_MAX_AGE: Duration = Duration::from_secs(120);
+
+/// Start `memsaga pull --check` detached when the cached answer is older than
+/// `CHECK_MAX_AGE`, without waiting for it. A marker keeps several sessions
+/// from starting one each.
+fn refresh_check_in_background(state: &State) {
+    let c = cached_check(state);
+    if now_secs().saturating_sub(c.checked_at) < CHECK_MAX_AGE.as_secs() {
+        return;
+    }
+    if state
+        .mtime("remote-check-started")
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < Duration::from_secs(60))
+    {
+        return;
+    }
+    let _ = state.touch("remote-check-started");
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(["pull", "--check"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    // SAFETY: setsid only detaches the child from the caller's session; it
+    // takes no arguments and touches no shared state.
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let _ = cmd.spawn();
+}
+
+/// Merge origin (when it moved) and settle the incoming list: what `memsaga
+/// pull` does. A merge that stops on a conflict is reported, not raised.
+pub fn pull_now(cfg: &Config) -> Result<(Option<String>, Settled)> {
+    let merge_error = integrate_remote(cfg).err().map(|e| format!("{e:#}"));
+    Ok((merge_error, settle(cfg, None)?))
+}
+
+/// Files the session used (Read, Write, Edit), per session id.
+fn session_file(state: &State, session: &str) -> Option<PathBuf> {
+    let safe: String = session
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    (!safe.is_empty()).then(|| state.marker(&format!("session-files/{safe}")))
+}
+
+fn note_session_file(state: &State, session: &str, rel: &str) {
+    let Some(p) = session_file(state, session) else {
+        return;
+    };
+    let known = std::fs::read_to_string(&p).unwrap_or_default();
+    if known.lines().any(|l| l == rel) {
+        return;
+    }
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
+        let _ = writeln!(f, "{rel}");
+    }
+}
+
+/// Forget a session's files (SessionEnd).
+pub fn forget_session(cfg: &Config, session: &str) {
+    if let Some(p) = session_file(&State::new(cfg.state_dir()), session) {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// CLAUDE.md of a root, or a project's MEMORY.md: files Claude Code loads
+/// into every session's context without a Read.
+fn loaded_at_start(rel: &str) -> bool {
+    let parts: Vec<&str> = rel.split('/').collect();
+    matches!(parts.as_slice(), [_, "CLAUDE.md"] | [_, "memory", _, "MEMORY.md"])
+}
+
+/// The notice for the model: which changed files it should read again.
+fn notice(cfg: &Config, files: &[String], conflicts: &[String]) -> Option<String> {
+    let live = |rels: &[String]| -> Vec<String> {
+        rels.iter()
+            .map(|r| {
+                live_target(cfg, r)
+                    .map(|t| t.live().display().to_string())
+                    .unwrap_or_else(|| r.clone())
+            })
+            .collect()
+    };
+    let mut out = Vec::new();
+    if !files.is_empty() {
+        out.push(format!(
+            "memsaga: these files were changed elsewhere (another machine, GitHub, or the data repository) and have just been brought into the live files: {}. Any copy of them already in your context is stale: Read them again before you rely on them.",
+            live(files).join(", ")
+        ));
+    }
+    if !conflicts.is_empty() {
+        out.push(format!(
+            "memsaga: these files changed both here and elsewhere on the same lines and were left as they are: {}. Tell the user; `memsaga sync` explains how to settle them.",
+            live(conflicts).join(", ")
+        ));
+    }
+    (!out.is_empty()).then(|| out.join("\n"))
+}
+
+/// SessionStart (start, `/compact`, `/clear`): CLAUDE.md is already loaded
+/// when this runs (measured, docs/two-way-sync.md §7.1), so a pull here
+/// updates the files and the returned notice makes the session read them.
+pub fn on_session_start(cfg: &Config) -> Result<Option<String>> {
+    let state = State::new(cfg.state_dir());
+    let check = check_remote(cfg, CHECK_MAX_AGE)?;
+    if !check.moved && load_incoming(&state).is_empty() {
+        return Ok(None);
+    }
+    let (_, settled) = pull_now(cfg)?;
+    let files: Vec<String> = changed_files(&settled)
+        .into_iter()
+        .filter(|f| loaded_at_start(f))
+        .collect();
+    Ok(notice(cfg, &files, &settled.conflicts))
+}
+
+/// UserPromptSubmit: once per turn, bring in what origin or a hand edit
+/// changed, and name the files this session already used.
+pub fn on_prompt(cfg: &Config, session: &str) -> Result<Option<String>> {
+    let state = State::new(cfg.state_dir());
+    refresh_check_in_background(&state);
+    if !cached_check(&state).moved && load_incoming(&state).is_empty() {
+        return Ok(None);
+    }
+    let (_, settled) = pull_now(cfg)?;
+    let used: BTreeSet<String> = session_file(&state, session)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let files: Vec<String> = changed_files(&settled)
+        .into_iter()
+        .filter(|f| used.contains(f) || loaded_at_start(f))
+        .collect();
+    Ok(notice(cfg, &files, &settled.conflicts))
+}
+
+fn changed_files(s: &Settled) -> Vec<String> {
+    s.written
+        .iter()
+        .chain(&s.merged)
+        .chain(&s.deleted)
+        .cloned()
+        .collect()
+}
+
+/// PreToolUse for Read, Write and Edit of `live`: when this very file changed
+/// on origin or in the data repository, bring it in before the tool runs.
+/// Anything outside memsaga's scope returns at once.
+pub fn before_tool(cfg: &Config, session: &str, live: &Path) -> Result<()> {
+    let scope = crate::roots::Scope::new(cfg);
+    let in_scope = scope.contains(live).is_some()
+        || live == config_path()
+        || cfg.extra_files().iter().any(|f| f == live);
+    if !in_scope {
+        return Ok(());
+    }
+    let Ok(rel) = repo_rel_of_input(cfg, &live.to_string_lossy()) else {
+        return Ok(());
+    };
+    let state = State::new(cfg.state_dir());
+    note_session_file(&state, session, &rel);
+    // A hand edit in the clone since the last sweep.
+    let repo_copy = cfg.repo.join(&rel);
+    let edited = match (
+        std::fs::metadata(&repo_copy).and_then(|m| m.modified()).ok(),
+        state.mtime("last-sweep"),
+    ) {
+        (Some(t), Some(since)) => t > since,
+        _ => false,
+    };
+    if edited {
+        note_hand_edit(cfg, &rel)?;
+    }
+    refresh_check_in_background(&state);
+    let waiting = load_incoming(&state).contains_key(&rel)
+        || cached_check(&state).changed.iter().any(|(f, _)| *f == rel);
+    if waiting {
+        pull_now(cfg)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

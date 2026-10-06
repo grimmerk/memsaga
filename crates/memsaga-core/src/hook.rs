@@ -92,6 +92,8 @@ pub enum Action {
     MarkedDirty,
     Swept(Outcome),
     Pushed,
+    /// A notice for the model (`additionalContext`) from the hook named.
+    Notice { event: String, text: String },
 }
 
 pub fn handle(cfg: &Config, input: &HookInput) -> Result<Action> {
@@ -128,13 +130,42 @@ pub fn handle(cfg: &Config, input: &HookInput) -> Result<Action> {
                 action = Action::Swept(sweep::sweep(cfg, &attrib)?);
             }
             let session_end = input.hook_event_name == "SessionEnd";
+            if session_end {
+                crate::sync::forget_session(cfg, &input.session_id);
+            }
             if maybe_push(cfg, &state, session_end, &attrib)? && matches!(action, Action::Ignored) {
                 action = Action::Pushed;
             }
             Ok(action)
         }
+        // Two-way sync, step 3 (docs/two-way-sync.md §7): synchronous hooks
+        // that bring repository-side edits in before a stale copy is used.
+        // A Claude Code mod could do the same in process (§7.2: `prompt.context`
+        // replacing the loaded CLAUDE.md, `tool.call` filtering by path without
+        // a process per call); these entry points are kept small for that.
+        "SessionStart" => notice_action(input, crate::sync::on_session_start(cfg)?),
+        "UserPromptSubmit" => notice_action(
+            input,
+            crate::sync::on_prompt(cfg, &input.session_id)?,
+        ),
+        "PreToolUse" => {
+            if let Some(p) = input.paths().first() {
+                crate::sync::before_tool(cfg, &input.session_id, p)?;
+            }
+            Ok(Action::Ignored)
+        }
         _ => Ok(Action::Ignored),
     }
+}
+
+fn notice_action(input: &HookInput, text: Option<String>) -> Result<Action> {
+    Ok(match text {
+        Some(text) => Action::Notice {
+            event: input.hook_event_name.clone(),
+            text,
+        },
+        None => Action::Ignored,
+    })
 }
 
 /// Push when a remote exists, the branch is ahead, and either this is a

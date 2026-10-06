@@ -1837,3 +1837,82 @@ fn sync_keeps_a_hand_added_file_settings_keys_and_executable_scripts() {
         "added by hand\n"
     );
 }
+
+fn hook_json(event: &str, session: &str, extra: &str) -> String {
+    format!(
+        "{{\"hook_event_name\":\"{event}\",\"session_id\":\"{session}\",\"cwd\":\"/h/git/a\"{extra}}}"
+    )
+}
+
+fn pre_read(path: &Path, session: &str) -> String {
+    hook_json(
+        "PreToolUse",
+        session,
+        &format!(
+            ",\"tool_name\":\"Read\",\"tool_input\":{{\"file_path\":\"{}\"}}",
+            path.display()
+        ),
+    )
+}
+
+#[test]
+fn session_start_pulls_and_tells_the_model_to_reread_claude_md() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "claude/CLAUDE.md", Some("# changed elsewhere\n"));
+    let out = hook(&fx, &hook_json("SessionStart", "s1", ""));
+    let v: serde_json::Value = serde_json::from_str(out.trim()).expect(&out);
+    assert_eq!(v["hookSpecificOutput"]["hookEventName"], "SessionStart");
+    let notice = v["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
+    let live = fx.claude.join("CLAUDE.md");
+    assert!(notice.contains(live.to_str().unwrap()) && notice.contains("Read them again"), "{notice}");
+    assert_eq!(fs::read_to_string(&live).unwrap(), "# changed elsewhere\n");
+    // Nothing new: no notice, no output.
+    assert!(hook(&fx, &hook_json("SessionStart", "s2", "")).trim().is_empty());
+}
+
+#[test]
+fn a_read_waits_only_for_its_own_changed_file() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "claude/memory/-h-git-a/one.md", Some("from origin\n"));
+    run(&fx, &["pull", "--check", "--max-age", "0"]);
+    let one = fx.claude.join("projects/-h-git-a/memory/one.md");
+    // Reading another file does not pull.
+    hook(&fx, &pre_read(&fx.claude.join("skills/foo/SKILL.md"), "s1"));
+    hook(&fx, &pre_read(Path::new("/h/git/a/src/main.rs"), "s1"));
+    assert_eq!(fs::read_to_string(&one).unwrap(), "fact\n");
+    // Reading the changed file pulls first.
+    hook(&fx, &pre_read(&one, "s1"));
+    assert_eq!(fs::read_to_string(&one).unwrap(), "from origin\n");
+    // The cached answer no longer says "moved", so the next prompt or read
+    // does not pull (and fetch) again within the window.
+    let v: serde_json::Value =
+        serde_json::from_str(&run(&fx, &["pull", "--check"])).unwrap();
+    assert_eq!(v["moved"], false, "{v}");
+}
+
+#[test]
+fn a_prompt_names_changed_files_the_session_used() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    let one = fx.claude.join("projects/-h-git-a/memory/one.md");
+    hook(&fx, &pre_read(&one, "s1"));
+    push_from_other(&other, "claude/memory/-h-git-a/one.md", Some("newer\n"));
+    run(&fx, &["pull", "--check", "--max-age", "0"]);
+    let out = hook(&fx, &hook_json("UserPromptSubmit", "s1", ",\"prompt\":\"go on\""));
+    let v: serde_json::Value = serde_json::from_str(out.trim()).expect(&out);
+    assert_eq!(v["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit");
+    let notice = v["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
+    assert!(notice.contains(one.to_str().unwrap()), "{notice}");
+    assert_eq!(fs::read_to_string(&one).unwrap(), "newer\n");
+    // A session that never used the file is not told about it.
+    push_from_other(&other, "claude/memory/-h-git-a/one.md", Some("newest\n"));
+    run(&fx, &["pull", "--check", "--max-age", "0"]);
+    let out = hook(&fx, &hook_json("UserPromptSubmit", "s2", ",\"prompt\":\"hi\""));
+    assert!(out.trim().is_empty(), "{out}");
+    assert_eq!(fs::read_to_string(&one).unwrap(), "newest\n", "still pulled");
+}
