@@ -111,9 +111,10 @@ impl<'a> Scope<'a> {
         self
     }
 
-    /// May the mirror overwrite `dst` (a repository path)? Always, without a guard.
-    pub fn may_write(&self, dst: &Path) -> bool {
-        self.guard.as_ref().is_none_or(|g| g.allows_write(dst))
+    /// May the mirror overwrite `dst` (a repository path) with what it makes of
+    /// `src` (None for a symlink)? Always, without a guard.
+    pub fn may_write(&self, dst: &Path, src: Option<&Path>) -> bool {
+        self.guard.as_ref().is_none_or(|g| g.allows_write(dst, src))
     }
 
     /// May the mirror delete `path` and everything under it?

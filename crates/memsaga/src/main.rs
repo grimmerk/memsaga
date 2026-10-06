@@ -189,6 +189,16 @@ fn run(cli: Cli) -> Result<()> {
                     o.files.len(),
                     o.duration_ms
                 )),
+                Ok(Action::Deny(reason)) => println!(
+                    "{}",
+                    serde_json::json!({
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "permissionDecision": "deny",
+                            "permissionDecisionReason": reason,
+                        }
+                    })
+                ),
                 Ok(Action::Notice { event, text }) => println!(
                     "{}",
                     serde_json::json!({

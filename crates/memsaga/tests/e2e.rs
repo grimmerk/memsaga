@@ -1884,8 +1884,11 @@ fn session_start_pulls_and_tells_the_model_to_reread_claude_md() {
         .as_str()
         .unwrap();
     let live = fx.claude.join("CLAUDE.md");
+    assert!(notice.contains(live.to_str().unwrap()), "{notice}");
+    // The notice quotes the change and says the current file counts.
+    assert!(notice.contains("only version that counts"), "{notice}");
     assert!(
-        notice.contains(live.to_str().unwrap()) && notice.contains("Read them again"),
+        notice.contains("-# global") && notice.contains("+# changed elsewhere"),
         "{notice}"
     );
     assert_eq!(fs::read_to_string(&live).unwrap(), "# changed elsewhere\n");
@@ -1953,4 +1956,115 @@ fn a_prompt_names_changed_files_the_session_used() {
         "newest\n",
         "still pulled"
     );
+}
+
+fn pre_tool(tool: &str, path: &Path, session: &str) -> String {
+    hook_json(
+        "PreToolUse",
+        session,
+        &format!(
+            ",\"tool_name\":\"{tool}\",\"tool_input\":{{\"file_path\":\"{}\"}}",
+            path.display()
+        ),
+    )
+}
+
+/// The `permissionDecisionReason` of a PreToolUse answer, or None when it allowed.
+fn denied(out: &str) -> Option<String> {
+    let out = out.trim();
+    if out.is_empty() {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(out).expect(out);
+    assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "deny", "{v}");
+    Some(
+        v["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+    )
+}
+
+#[test]
+fn a_write_checks_origin_first_and_is_refused_on_text_it_would_undo() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    let one = fx.claude.join("projects/-h-git-a/memory/one.md");
+    // Origin changes the file; no check has run yet on this machine, so a
+    // Write must ask origin itself before it goes ahead.
+    push_from_other(
+        &other,
+        "claude/memory/-h-git-a/one.md",
+        Some("from origin\n"),
+    );
+    let reason = denied(&hook(&fx, &pre_tool("Write", &one, "s1"))).expect("refused");
+    assert!(reason.contains("Read it again"), "{reason}");
+    assert_eq!(
+        fs::read_to_string(&one).unwrap(),
+        "from origin\n",
+        "pulled first"
+    );
+    // After the pull nothing waits: the next Write goes ahead.
+    assert_eq!(denied(&hook(&fx, &pre_tool("Write", &one, "s1"))), None);
+    // An Edit is not refused: it fails on its own when its old text is gone.
+    push_from_other(&other, "claude/memory/-h-git-a/one.md", Some("newer\n"));
+    run(&fx, &["pull", "--check", "--max-age", "0"]);
+    assert_eq!(denied(&hook(&fx, &pre_tool("Edit", &one, "s1"))), None);
+    assert_eq!(fs::read_to_string(&one).unwrap(), "newer\n");
+}
+
+#[test]
+fn a_write_to_a_file_with_an_unmergeable_origin_change_is_refused() {
+    let fx = fixture("turn", "");
+    let one = fx.claude.join("projects/-h-git-a/memory/one.md");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "claude/memory/-h-git-a/one.md", Some("theirs\n"));
+    // The same line changed and committed locally: the merge conflicts.
+    write(&one, "ours\n");
+    hook(&fx, &post_tool_use(&one, "s1"));
+    hook(&fx, &stop("s1"));
+    run(&fx, &["pull", "--check", "--max-age", "0"]);
+    let reason = denied(&hook(&fx, &pre_tool("Edit", &one, "s1"))).expect("refused");
+    assert!(reason.contains("could not be merged"), "{reason}");
+    assert_eq!(fs::read_to_string(&one).unwrap(), "ours\n");
+    // A Read is never refused.
+    assert_eq!(denied(&hook(&fx, &pre_tool("Read", &one, "s1"))), None);
+}
+
+#[test]
+fn a_diff_preview_is_not_mistaken_for_a_hand_edit() {
+    let fx = fixture("turn", "files = [\"CLAUDE.md\", \"settings.json\"]\n");
+    run(&fx, &["init", "--no-backfill"]);
+    let one = fx.claude.join("projects/-h-git-a/memory/one.md");
+    write(&one, "previewed\n");
+    write(
+        &fx.claude.join("settings.json"),
+        "{\"a\": 3, \"model\": \"m\"}\n",
+    );
+    run(&fx, &["diff"]);
+    hook(&fx, &post_tool_use(&one, "s1"));
+    hook(&fx, &stop("s1"));
+    assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "previewed\n"
+    );
+}
+
+#[test]
+fn a_merge_of_origin_has_a_memsaga_style_message() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "claude/CLAUDE.md", Some("# elsewhere\n"));
+    write(
+        &fx.claude.join("projects/-h-git-a/memory/one.md"),
+        "local\n",
+    );
+    hook(&fx, &stop("s1"));
+    run(&fx, &["push"]);
+    let subject = git(&fx, &["log", "-1", "--format=%s"]);
+    assert!(subject.starts_with("sync: merge origin/"), "{subject}");
 }

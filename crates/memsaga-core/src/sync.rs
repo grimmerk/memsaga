@@ -163,6 +163,8 @@ pub struct Guard {
     protected: BTreeSet<PathBuf>,
     /// Hand edits found during this sweep: repo-relative path -> base.
     found: RefCell<BTreeMap<String, Option<String>>>,
+    /// Keys the mirror drops from `settings.json`, to compare like with like.
+    settings_ignore_keys: Vec<String>,
 }
 
 impl Guard {
@@ -172,11 +174,13 @@ impl Guard {
             since,
             protected: incoming.keys().map(|k| cfg.repo.join(k)).collect(),
             found: RefCell::new(BTreeMap::new()),
+            settings_ignore_keys: cfg.settings_ignore_keys.clone(),
         }
     }
 
-    /// May the mirror replace the repository file `dst` with new content?
-    pub fn allows_write(&self, dst: &Path) -> bool {
+    /// May the mirror replace the repository file `dst` with the content of
+    /// `src` (None when deleting or linking)?
+    pub fn allows_write(&self, dst: &Path, src: Option<&Path>) -> bool {
         if self.protected.contains(dst) {
             return false;
         }
@@ -201,8 +205,26 @@ impl Guard {
         if base.is_some() && base == hash_of(&git, dst) {
             return true; // equal to what memsaga committed
         }
+        if src.is_some_and(|s| self.is_mirror_of(dst, s)) {
+            return true; // memsaga's own copy, e.g. left by a `diff` preview
+        }
         self.found.borrow_mut().insert(rel, base);
         false
+    }
+
+    /// Does `dst` hold exactly what the mirror would make of `src`?
+    fn is_mirror_of(&self, dst: &Path, src: &Path) -> bool {
+        let (Ok(d), Ok(s)) = (std::fs::read(dst), std::fs::read(src)) else {
+            return false;
+        };
+        if d == s {
+            return true;
+        }
+        src.file_name() == Some(OsStr::new("settings.json"))
+            && std::str::from_utf8(&s)
+                .ok()
+                .and_then(|t| strip_settings(t, &self.settings_ignore_keys))
+                .is_some_and(|stripped| stripped.as_bytes() == d.as_slice())
     }
 
     /// May the mirror delete `path` (a file, or a directory and everything
@@ -219,7 +241,7 @@ impl Guard {
             .filter(|e| e.file_type().is_file())
         {
             // Check every file, so each hand edit is recorded.
-            if !self.allows_write(e.path()) {
+            if !self.allows_write(e.path(), None) {
                 ok = false;
             }
         }
@@ -285,12 +307,22 @@ pub fn current_branch(git: &Git) -> Result<String> {
 /// Every file the merge changed that has a live side goes on the incoming
 /// list with its pre-merge version as base. Takes the sweep lock.
 pub fn integrate_remote(cfg: &Config) -> Result<Integrated> {
+    integrate_remote_within(cfg, Duration::from_secs(60))
+}
+
+/// How long a hook waits for the sweep lock: well inside the hooks' 30 s
+/// timeout, so a busy lock makes the hook skip its pull rather than be killed
+/// half-way (Claude Code then runs the tool on the file as it is).
+pub const HOOK_LOCK_WAIT: Duration = Duration::from_secs(20);
+
+/// `integrate_remote`, waiting at most `wait` for the sweep lock.
+pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrated> {
     let git = Git::new(&cfg.repo);
     let state = State::new(cfg.state_dir());
     if !git.has_remote("origin") {
         return Ok(Integrated::default());
     }
-    let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
+    let _guard = state.lock(wait).context("sweep lock")?;
     let branch = current_branch(&git)?;
     git.run_ok(&["fetch", "-q", "origin"])?;
     let remote = format!("origin/{branch}");
@@ -309,7 +341,8 @@ pub fn integrate_remote(cfg: &Config) -> Result<Integrated> {
         return Ok(Integrated::default());
     }
     let pre = git.run_ok(&["rev-parse", "HEAD"])?.trim().to_string();
-    let merge = git.run(&["merge", "--no-edit", "-q", &remote])?;
+    let message = format!("sync: merge {remote}");
+    let merge = git.run(&["merge", "--no-edit", "-q", "-m", &message, &remote])?;
     if !merge.status.success() {
         let conflicted: Vec<String> = git
             .run_ok(&["diff", "--name-only", "-z", "--diff-filter=U"])
@@ -399,6 +432,9 @@ pub struct Settled {
     /// Not decided now, with the reason (no live location on this machine,
     /// a symlink, an error).
     pub skipped: Vec<(String, String)>,
+    /// For each written, merged or deleted file: the change to the live file
+    /// as changed lines (`-old` / `+new`), for the notice.
+    pub diffs: BTreeMap<String, String>,
 }
 
 /// `--take`: settle one file by picking a side.
@@ -411,9 +447,14 @@ pub enum Take {
 /// Step 2: decide every incoming file (docs/two-way-sync.md, diagram D2).
 /// Takes the sweep lock; writes live files atomically.
 pub fn settle(cfg: &Config, take: Option<(Take, &str)>) -> Result<Settled> {
+    settle_within(cfg, take, Duration::from_secs(60))
+}
+
+/// `settle`, waiting at most `wait` for the sweep lock.
+pub fn settle_within(cfg: &Config, take: Option<(Take, &str)>, wait: Duration) -> Result<Settled> {
     let git = Git::new(&cfg.repo);
     let state = State::new(cfg.state_dir());
-    let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
+    let _guard = state.lock(wait).context("sweep lock")?;
     let mut incoming = load_incoming(&state);
     let mut out = Settled::default();
     let take = match take {
@@ -429,9 +470,18 @@ pub fn settle(cfg: &Config, take: Option<(Take, &str)>) -> Result<Settled> {
     let keys: Vec<String> = incoming.keys().cloned().collect();
     for rel in keys {
         let entry = incoming[&rel].clone();
+        let target = live_target(cfg, &rel);
+        let before = target.as_ref().and_then(|t| mirror_form(cfg, t));
         match settle_one(cfg, &git, &state, &rel, &entry, take.as_ref()) {
             Ok(Outcome::Done(kind)) => {
                 incoming.remove(&rel);
+                if !matches!(kind, Done::InStep) {
+                    let after = target.as_ref().and_then(|t| mirror_form(cfg, t));
+                    out.diffs.insert(
+                        rel.clone(),
+                        changed_lines(&state, before.as_deref(), after.as_deref()),
+                    );
+                }
                 match kind {
                     Done::Written => out.written.push(rel),
                     Done::Merged => out.merged.push(rel),
@@ -633,6 +683,41 @@ fn write_live(cfg: &Config, target: &Target, content: &[u8], executable: bool) -
     Ok(())
 }
 
+/// The lines that differ between `old` and `new` (absent = empty), as
+/// `-line` / `+line` without diff headers or context: what a notice shows.
+fn changed_lines(state: &State, old: Option<&[u8]>, new: Option<&[u8]>) -> String {
+    if new.is_none() {
+        return "(deleted)".into();
+    }
+    let pid = std::process::id();
+    let a = state.marker(&format!("diff-old-{pid}"));
+    let b = state.marker(&format!("diff-new-{pid}"));
+    if std::fs::write(&a, old.unwrap_or_default()).is_err()
+        || std::fs::write(&b, new.unwrap_or_default()).is_err()
+    {
+        return String::new();
+    }
+    let out = std::process::Command::new("git")
+        .args(["diff", "--no-index", "--no-color", "-U0", "--"])
+        .arg(&a)
+        .arg(&b)
+        .output();
+    let _ = std::fs::remove_file(&a);
+    let _ = std::fs::remove_file(&b);
+    let Ok(out) = out else {
+        return String::new();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| {
+            (l.starts_with('+') || l.starts_with('-'))
+                && !l.starts_with("+++")
+                && !l.starts_with("---")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// `git merge-file`: Some(merged text) when the two sides changed different
 /// lines, None on overlapping edits.
 fn merge_text(
@@ -677,7 +762,7 @@ fn merge_text(
 pub fn note_hand_edit(cfg: &Config, repo_rel: &str) -> Result<bool> {
     let git = Git::new(&cfg.repo);
     let state = State::new(cfg.state_dir());
-    let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
+    let _guard = state.lock(HOOK_LOCK_WAIT).context("sweep lock")?;
     let mut incoming = load_incoming(&state);
     if incoming.contains_key(repo_rel) {
         return Ok(true);
@@ -962,10 +1047,13 @@ fn refresh_check_in_background(state: &State) {
 }
 
 /// Merge origin (when it moved) and settle the incoming list: what `memsaga
-/// pull` does. A merge that stops on a conflict is reported, not raised.
+/// pull` does, inside a hook, so the lock waits are bounded by
+/// `HOOK_LOCK_WAIT`. A merge that stops on a conflict is reported, not raised.
 pub fn pull_now(cfg: &Config) -> Result<(Option<String>, Settled)> {
-    let merge_error = integrate_remote(cfg).err().map(|e| format!("{e:#}"));
-    Ok((merge_error, settle(cfg, None)?))
+    let merge_error = integrate_remote_within(cfg, HOOK_LOCK_WAIT)
+        .err()
+        .map(|e| format!("{e:#}"));
+    Ok((merge_error, settle_within(cfg, None, HOOK_LOCK_WAIT)?))
 }
 
 /// Files the session used (Read, Write, Edit), per session id.
@@ -1015,31 +1103,50 @@ fn loaded_at_start(rel: &str) -> bool {
     )
 }
 
-/// The notice for the model: which changed files it should read again.
-fn notice(cfg: &Config, files: &[String], conflicts: &[String]) -> Option<String> {
-    let live = |rels: &[String]| -> Vec<String> {
-        rels.iter()
-            .map(|r| {
-                live_target(cfg, r)
-                    .map(|t| t.live().display().to_string())
-                    .unwrap_or_else(|| r.clone())
-            })
-            .collect()
+/// Most changed lines a notice quotes per file; a longer change is named
+/// with its size and the model is asked to read the file again.
+const NOTICE_DIFF_LINES: usize = 20;
+
+/// The notice for the model: which files changed, what changed in them, and
+/// that the current file is the only version that counts from now on (a
+/// session that re-read the file once still answered from the copy loaded at
+/// start: 2026-10-06).
+fn notice(
+    cfg: &Config,
+    settled: &Settled,
+    files: &[String],
+    conflicts: &[String],
+) -> Option<String> {
+    let live = |r: &String| -> String {
+        live_target(cfg, r)
+            .map(|t| t.live().display().to_string())
+            .unwrap_or_else(|| r.clone())
     };
     let mut out = Vec::new();
-    if !files.is_empty() {
+    for f in files {
+        let diff = settled.diffs.get(f).map(String::as_str).unwrap_or_default();
+        let lines = diff.lines().count();
+        let what = if diff == "(deleted)" {
+            "It was deleted.".to_string()
+        } else if lines == 0 {
+            "Read it again to see the change.".to_string()
+        } else if lines > NOTICE_DIFF_LINES {
+            format!("{lines} lines changed: Read it again before you rely on any part of it.")
+        } else {
+            format!("What changed (- before, + now):\n{diff}")
+        };
         out.push(format!(
-            "memsaga: these files were changed elsewhere (another machine, GitHub, or the data repository) and have just been brought into the live files: {}. Any copy of them already in your context is stale: Read them again before you rely on them.",
-            live(files).join(", ")
+            "memsaga: {} was changed elsewhere (another machine, GitHub, or the data repository) and the live file now holds the new text. The copy of it in your context is outdated: from now on the current file is the only version that counts, in answers and in instructions alike. {what}",
+            live(f)
         ));
     }
     if !conflicts.is_empty() {
         out.push(format!(
             "memsaga: these files changed both here and elsewhere on the same lines and were left as they are: {}. Tell the user; `memsaga sync` explains how to settle them.",
-            live(conflicts).join(", ")
+            conflicts.iter().map(live).collect::<Vec<_>>().join(", ")
         ));
     }
-    (!out.is_empty()).then(|| out.join("\n"))
+    (!out.is_empty()).then(|| out.join("\n\n"))
 }
 
 /// SessionStart (start, `/compact`, `/clear`): CLAUDE.md is already loaded
@@ -1056,7 +1163,7 @@ pub fn on_session_start(cfg: &Config) -> Result<Option<String>> {
         .into_iter()
         .filter(|f| loaded_at_start(f))
         .collect();
-    Ok(notice(cfg, &files, &settled.conflicts))
+    Ok(notice(cfg, &settled, &files, &settled.conflicts))
 }
 
 /// UserPromptSubmit: once per turn, bring in what origin or a hand edit
@@ -1078,7 +1185,7 @@ pub fn on_prompt(cfg: &Config, session: &str) -> Result<Option<String>> {
         .into_iter()
         .filter(|f| used.contains(f) || loaded_at_start(f))
         .collect();
-    Ok(notice(cfg, &files, &settled.conflicts))
+    Ok(notice(cfg, &settled, &files, &settled.conflicts))
 }
 
 fn changed_files(s: &Settled) -> Vec<String> {
@@ -1090,20 +1197,37 @@ fn changed_files(s: &Settled) -> Vec<String> {
         .collect()
 }
 
+/// What a PreToolUse hook answers.
+#[derive(Debug, PartialEq)]
+pub enum ToolVerdict {
+    Allow,
+    /// Refuse the call; the model reads the reason.
+    Deny(String),
+}
+
 /// PreToolUse for Read, Write and Edit of `live`: when this very file changed
 /// on origin or in the data repository, bring it in before the tool runs.
 /// Anything outside memsaga's scope returns at once.
-pub fn before_tool(cfg: &Config, session: &str, live: &Path) -> Result<()> {
+///
+/// A Read never waits for the check itself (a stale answer starts one in the
+/// background). A Write or Edit does when the shared answer is older than
+/// `CHECK_MAX_AGE` (about 0.5 s, at most once per window): an edit built on an
+/// outdated copy would otherwise end in a merge conflict or silently drop the
+/// other side's change. A Write that would overwrite text just pulled in, or a
+/// write to a file whose change from origin could not be merged, is refused
+/// with the reason, so the model reads the file first.
+pub fn before_tool(cfg: &Config, session: &str, live: &Path, tool: &str) -> Result<ToolVerdict> {
     let scope = crate::roots::Scope::new(cfg);
     let in_scope = scope.contains(live).is_some()
         || live == config_path()
         || cfg.extra_files().iter().any(|f| f == live);
     if !in_scope {
-        return Ok(());
+        return Ok(ToolVerdict::Allow);
     }
     let Ok(rel) = repo_rel_of_input(cfg, &live.to_string_lossy()) else {
-        return Ok(());
+        return Ok(ToolVerdict::Allow);
     };
+    let writes = tool != "Read";
     let state = State::new(cfg.state_dir());
     note_session_file(&state, session, &rel);
     // A hand edit in the clone since the last sweep.
@@ -1120,13 +1244,42 @@ pub fn before_tool(cfg: &Config, session: &str, live: &Path) -> Result<()> {
     if edited {
         note_hand_edit(cfg, &rel)?;
     }
-    refresh_check_in_background(&state);
-    let waiting = load_incoming(&state).contains_key(&rel)
-        || cached_check(&state).changed.iter().any(|(f, _)| *f == rel);
-    if waiting {
-        pull_now(cfg)?;
+    let check = if writes {
+        check_remote(cfg, CHECK_MAX_AGE)?
+    } else {
+        refresh_check_in_background(&state);
+        cached_check(&state)
+    };
+    let from_origin = check.changed.iter().any(|(f, _)| *f == rel);
+    let waiting = from_origin || load_incoming(&state).contains_key(&rel);
+    if !waiting {
+        return Ok(ToolVerdict::Allow);
     }
-    Ok(())
+    let (merge_error, settled) = pull_now(cfg)?;
+    if !writes {
+        // A Read goes ahead either way: on the fresh file, or on the live
+        // file as it is when the pull could not settle it (the next prompt's
+        // notice reports that).
+        return Ok(ToolVerdict::Allow);
+    }
+    let shown = live.display();
+    if let (true, Some(e)) = (from_origin, &merge_error) {
+        return Ok(ToolVerdict::Deny(format!(
+            "memsaga: {shown} has a change on origin that could not be merged automatically ({e}). Do not write it now: tell the user, who can settle it with `memsaga sync`."
+        )));
+    }
+    if settled.conflicts.contains(&rel) {
+        return Ok(ToolVerdict::Deny(format!(
+            "memsaga: {shown} changed both here and elsewhere on the same lines. Do not write it now: tell the user, who can settle it with `memsaga sync`."
+        )));
+    }
+    let just_changed = changed_files(&settled).contains(&rel);
+    if just_changed && tool == "Write" {
+        return Ok(ToolVerdict::Deny(format!(
+            "memsaga: {shown} was just updated from elsewhere, so content written from the copy you read earlier would undo that update. Read it again, then make your change on top of the current text."
+        )));
+    }
+    Ok(ToolVerdict::Allow)
 }
 
 #[cfg(test)]

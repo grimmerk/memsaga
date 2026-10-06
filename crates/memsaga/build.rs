@@ -23,7 +23,12 @@ fn main() {
         None => version.to_string(),
     };
     println!("cargo:rustc-env=MEMSAGA_VERSION={full}");
-    // Rebuild when HEAD moves (a commit or a checkout) or the index changes.
+    // Rebuild when HEAD moves (a commit or a checkout), the index changes, or
+    // a source file changes (the `-dirty` mark depends on the working tree;
+    // naming any path here turns off Cargo's own rerun-on-any-change).
+    for dir in ["src", "../memsaga-core/src", "../../skills"] {
+        println!("cargo:rerun-if-changed={dir}");
+    }
     if let Some(dir) = git(&["rev-parse", "--absolute-git-dir"]) {
         println!("cargo:rerun-if-changed={dir}/HEAD");
         println!("cargo:rerun-if-changed={dir}/index");

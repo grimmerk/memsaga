@@ -97,6 +97,8 @@ pub enum Action {
         event: String,
         text: String,
     },
+    /// PreToolUse refuses the call; the model reads the reason.
+    Deny(String),
 }
 
 pub fn handle(cfg: &Config, input: &HookInput) -> Result<Action> {
@@ -149,10 +151,15 @@ pub fn handle(cfg: &Config, input: &HookInput) -> Result<Action> {
         "SessionStart" => notice_action(input, crate::sync::on_session_start(cfg)?),
         "UserPromptSubmit" => notice_action(input, crate::sync::on_prompt(cfg, &input.session_id)?),
         "PreToolUse" => {
-            if let Some(p) = input.paths().first() {
-                crate::sync::before_tool(cfg, &input.session_id, p)?;
-            }
-            Ok(Action::Ignored)
+            let Some(p) = input.paths().first().cloned() else {
+                return Ok(Action::Ignored);
+            };
+            Ok(
+                match crate::sync::before_tool(cfg, &input.session_id, &p, &input.tool_name)? {
+                    crate::sync::ToolVerdict::Allow => Action::Ignored,
+                    crate::sync::ToolVerdict::Deny(reason) => Action::Deny(reason),
+                },
+            )
         }
         _ => Ok(Action::Ignored),
     }

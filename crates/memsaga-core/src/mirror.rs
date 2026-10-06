@@ -97,7 +97,7 @@ pub fn sync_self_and_extras(scope: &Scope) -> Result<Stats> {
     let own = crate::config::config_path();
     if own.is_file() {
         let dst = cfg.repo.join("memsaga/config.toml");
-        if scope.may_write(&dst) {
+        if scope.may_write(&dst, Some(&own)) {
             stats.count(copy_if_changed(&own, &dst)?, &dst);
         }
     }
@@ -106,7 +106,7 @@ pub fn sync_self_and_extras(scope: &Scope) -> Result<Stats> {
             continue;
         }
         let dst = cfg.repo.join(extra_repo_rel(&src));
-        if scope.may_write(&dst) {
+        if scope.may_write(&dst, Some(&src)) {
             stats.count(copy_if_changed(&src, &dst)?, &dst);
         }
     }
@@ -156,14 +156,16 @@ fn sync_entry(scope: &Scope, root: &Root, entry: &Entry, repo: &Path) -> Result<
         Err(_) => return Ok(stats),
     };
     if meta.file_type().is_symlink() {
-        stats.linked += mirror_symlink(scope, &src, &dst, repo)?;
+        if scope.may_write(&dst, None) {
+            stats.linked += mirror_symlink(scope, &src, &dst, repo)?;
+        }
         return Ok(stats);
     }
     if meta.is_file() {
         if let Some(p) = dst.parent() {
             fs::create_dir_all(p)?;
         }
-        if !scope.may_write(&dst) {
+        if !scope.may_write(&dst, Some(&src)) {
             return Ok(stats);
         }
         let is_settings = matches!(entry, Entry::File { rel } if rel == "settings.json");
@@ -241,10 +243,10 @@ pub fn sync_dir(scope: &Scope, src: &Path, dst: &Path, prefix: &Path) -> Result<
             } else {
                 resolved
             };
-            if replace_symlink(&target, &link)? {
+            if scope.may_write(&target, None) && replace_symlink(&target, &link)? {
                 stats.linked += 1;
             }
-        } else if ft.is_file() && scope.may_write(&target) {
+        } else if ft.is_file() && scope.may_write(&target, Some(item.path())) {
             stats.count(copy_if_changed(item.path(), &target)?, &target);
         }
     }
@@ -449,7 +451,7 @@ fn replace_symlink(dst: &Path, link: &Path) -> Result<bool> {
 fn prune_memory(scope: &Scope, root: &Root, repo: &Path, entries: &[Entry]) -> Result<Stats> {
     let mut stats = Stats::default();
     let legacy = repo.join(&root.label).join("projects");
-    if legacy.symlink_metadata().is_ok() {
+    if legacy.symlink_metadata().is_ok() && scope.may_remove(&legacy) {
         remove_any(&legacy)?;
         stats.deleted += 1;
     }
