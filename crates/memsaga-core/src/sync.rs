@@ -47,6 +47,48 @@ pub fn load_incoming(state: &State) -> Incoming {
         .unwrap_or_default()
 }
 
+/// Rewrite entries recorded under a memory directory's live name to its
+/// repository name (grimmerk/memsaga-private#25), so the sweep that renames the directory
+/// protects and settles the same files. The waiting repository file moves
+/// with its entry: the mirror never writes a protected path, and it prunes
+/// the old directory, so a file left there would be lost and settle would
+/// read the newer version as deleted. When both names have an entry, the
+/// old one is kept: its base is the last version the live file agreed with.
+/// The caller holds the sweep lock. True when anything changed.
+pub fn rename_incoming(repo: &Path, incoming: &mut Incoming) -> Result<bool> {
+    let renamed: Vec<(String, String)> = incoming
+        .keys()
+        .filter_map(|k| {
+            let parts: Vec<&str> = k.splitn(4, '/').collect();
+            if parts.len() >= 3 && parts[1] == crate::roots::MEMORY_DIR {
+                let name = crate::roots::repo_name_of_slug(parts[2]);
+                if name != parts[2] {
+                    let mut new = format!("{}/{}/{}", parts[0], parts[1], name);
+                    if let Some(rest) = parts.get(3) {
+                        new.push('/');
+                        new.push_str(rest);
+                    }
+                    return Some((k.clone(), new));
+                }
+            }
+            None
+        })
+        .collect();
+    for (old, new) in &renamed {
+        let (from, to) = (repo.join(old), repo.join(new));
+        if from.symlink_metadata().is_ok() && to.symlink_metadata().is_err() {
+            if let Some(dir) = to.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::rename(&from, &to).with_context(|| format!("moving {old} to {new}"))?;
+        }
+        if let Some(e) = incoming.remove(old) {
+            incoming.insert(new.clone(), e);
+        }
+    }
+    Ok(!renamed.is_empty())
+}
+
 /// The caller holds the sweep lock. An empty list removes the file.
 pub fn save_incoming(state: &State, incoming: &Incoming) -> Result<()> {
     if incoming.is_empty() {

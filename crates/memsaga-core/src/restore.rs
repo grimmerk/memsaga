@@ -232,14 +232,72 @@ fn live_executable(p: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Every path `repo_rel` may have had at an older revision, this one first:
+/// its older layouts on this machine (`roots::legacy_repo_paths`), then each
+/// name git recorded it under before a rename in this branch's history. The
+/// last covers a memory file renamed by another machine's sweep from that
+/// machine's live name (grimmerk/memsaga-private#25), which this machine cannot compute.
+fn historical_paths(cfg: &Config, repo_rel: &Path) -> Vec<PathBuf> {
+    let mut out = vec![repo_rel.to_path_buf()];
+    let legacy = roots::legacy_repo_paths(repo_rel);
+    if legacy.is_empty() {
+        return out; // not memory
+    }
+    out.extend(legacy);
+    let mut parts = repo_rel.iter();
+    let (Some(label), Some(_)) = (parts.next(), parts.next()) else {
+        return out;
+    };
+    let dir = Path::new(label).join(roots::MEMORY_DIR);
+    let log = Git::new(&cfg.repo)
+        .run_ok(&[
+            "log",
+            "-z",
+            "-M",
+            "--diff-filter=R",
+            "--name-status",
+            "--format=",
+            "HEAD",
+            "--",
+            &dir.to_string_lossy(),
+        ])
+        .unwrap_or_default();
+    // `R<score>\0<old>\0<new>\0`, newest commit first.
+    let tokens: Vec<&str> = log
+        .split('\0')
+        .map(|t| t.trim_start_matches('\n'))
+        .collect();
+    let mut renames = Vec::new();
+    let mut i = 0;
+    while i + 2 < tokens.len() {
+        if tokens[i].starts_with('R') {
+            renames.push((tokens[i + 2], tokens[i + 1]));
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    // Follow chains of renames back, each name once.
+    let mut k = 0;
+    while k < out.len() {
+        let now = out[k].to_string_lossy().to_string();
+        for (new, old) in &renames {
+            if *new == now && !out.iter().any(|p| p == Path::new(old)) {
+                out.push(PathBuf::from(old));
+            }
+        }
+        k += 1;
+    }
+    out
+}
+
 /// Author time of the last commit at or before `rev` that changed `repo_rel`
 /// (following the 2026-09-18 rename). Restored files get it as their mtime,
 /// so mtime-derived views such as the index's "Last modified" column match
 /// the machine the file came from.
 fn committed_at(cfg: &Config, repo_rel: &Path, rev: &str) -> Option<std::time::SystemTime> {
     let git = Git::new(&cfg.repo);
-    let mut candidates = vec![repo_rel.to_path_buf()];
-    candidates.extend(roots::legacy_repo_path(repo_rel));
+    let candidates = historical_paths(cfg, repo_rel);
     for p in candidates {
         let out = git
             .run_ok(&[
@@ -262,8 +320,7 @@ fn committed_at(cfg: &Config, repo_rel: &Path, rev: &str) -> Option<std::time::S
 /// Git mode of `repo_rel` at `rev` (also under the pre-2026-09-18 path).
 fn executable_at(cfg: &Config, repo_rel: &Path, rev: &str) -> bool {
     let git = Git::new(&cfg.repo);
-    let mut candidates = vec![repo_rel.to_path_buf()];
-    candidates.extend(roots::legacy_repo_path(repo_rel));
+    let candidates = historical_paths(cfg, repo_rel);
     for p in candidates {
         if let Ok(out) = git.run_ok(&["ls-tree", rev, "--", &p.to_string_lossy()]) {
             if let Some(line) = out.lines().next() {
@@ -362,8 +419,7 @@ pub fn verify_destination(cfg: &Config, live: &Path) -> Result<PathBuf> {
 /// the path is an error, not content.
 pub fn content_at(cfg: &Config, repo_rel: &Path, rev: &str) -> Result<Option<Vec<u8>>> {
     let git = Git::new(&cfg.repo);
-    let mut candidates = vec![repo_rel.to_path_buf()];
-    candidates.extend(roots::legacy_repo_path(repo_rel));
+    let candidates = historical_paths(cfg, repo_rel);
     for path in candidates {
         let spec = format!("{rev}:{}", path.to_string_lossy());
         match git.object_type(&spec)? {

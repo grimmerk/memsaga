@@ -456,10 +456,13 @@ fn prune_memory(scope: &Scope, root: &Root, repo: &Path, entries: &[Entry]) -> R
         stats.deleted += 1;
     }
     let projects = repo.join(&root.label).join(crate::roots::MEMORY_DIR);
-    let live: BTreeSet<&str> = entries
+    // Repository names: a directory under an older name (a live name, before
+    // grimmerk/memsaga-private#25) is removed here once its new name is written, which git
+    // records as a rename.
+    let live: BTreeSet<String> = entries
         .iter()
         .filter_map(|e| match e {
-            Entry::Memory { slug } => Some(slug.as_str()),
+            Entry::Memory { slug } => Some(crate::roots::repo_name_of_slug(slug)),
             _ => None,
         })
         .collect();

@@ -32,36 +32,151 @@ impl Entry {
         let base = repo.join(&root.label);
         match self {
             Entry::File { rel } | Entry::Dir { rel } => base.join(rel),
-            Entry::Memory { slug } => base.join(MEMORY_DIR).join(slug),
+            Entry::Memory { slug } => base.join(MEMORY_DIR).join(repo_name_of_slug(slug)),
         }
     }
 }
 
+/// Stands for the home directory at the start of a repository memory name:
+/// `/Users/me/git/webapp`, whose live directory is `-Users-me-git-webapp`, is
+/// stored as `HOME-git-webapp`, so the same project shares one directory on
+/// machines whose home differs (another user name, Linux's `/home/...`).
+/// A live name always starts with `-` (an absolute path starts with `/`), so
+/// a name starting with the token is never a live one. grimmerk/memsaga-private#25.
+pub const HOME_TOKEN: &str = "HOME";
+
+struct HomeNames {
+    /// The live-name encoding of the home directory, e.g. `-Users-me`.
+    encoded: String,
+    /// Whether a live name under home can be told apart from every other
+    /// path on this machine (see `prefix_is_ambiguous`). When it cannot,
+    /// live names are stored unchanged, and nothing is shared.
+    forward: bool,
+}
+
+fn home_names() -> Option<&'static HomeNames> {
+    static CELL: std::sync::OnceLock<Option<HomeNames>> = std::sync::OnceLock::new();
+    CELL.get_or_init(|| {
+        let home = dirs::home_dir()?;
+        let encoded = crate::slug::encode(&home.to_string_lossy());
+        if encoded.len() < 2 {
+            return None; // home is `/`: nothing to shorten
+        }
+        let forward = !prefix_is_ambiguous(&home, &encoded);
+        Some(HomeNames { encoded, forward })
+    })
+    .as_ref()
+}
+
+/// The live-name encoding loses information (`/`, `.`, ` ` all become `-`),
+/// so `-Users-me-old-x` could be `/Users/me/old/x` or `/Users/me-old/x`.
+/// Ambiguous when another directory on this machine, outside home, encodes to
+/// a name that starts like a path under home. Found by walking from `/` only
+/// where an encoding still matches home's; gives up (ambiguous) after
+/// 20,000 entries.
+fn prefix_is_ambiguous(home: &Path, encoded: &str) -> bool {
+    let target = format!("{encoded}-");
+    let mut budget = 20_000usize;
+    fn walk(
+        dir: &Path,
+        enc: &str,
+        home: &Path,
+        encoded: &str,
+        target: &str,
+        budget: &mut usize,
+    ) -> bool {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        for e in rd.flatten() {
+            if *budget == 0 {
+                return true;
+            }
+            *budget -= 1;
+            let path = e.path();
+            if path == home {
+                continue;
+            }
+            if !std::fs::metadata(&path).is_ok_and(|m| m.is_dir()) {
+                continue;
+            }
+            let enc_here = format!(
+                "{enc}-{}",
+                crate::slug::encode(&e.file_name().to_string_lossy())
+            );
+            if home.starts_with(&path) {
+                if walk(&path, &enc_here, home, encoded, target, budget) {
+                    return true;
+                }
+            } else if enc_here == encoded
+                || enc_here.starts_with(target)
+                || (target.starts_with(&format!("{enc_here}-"))
+                    && walk(&path, &enc_here, home, encoded, target, budget))
+            {
+                return true;
+            }
+        }
+        false
+    }
+    walk(Path::new("/"), "", home, encoded, &target, &mut budget)
+}
+
+/// A live project directory name -> its name in the repository.
+pub fn repo_name_of_slug(slug: &str) -> String {
+    let Some(h) = home_names().filter(|h| h.forward) else {
+        return slug.to_string();
+    };
+    if slug == h.encoded {
+        return HOME_TOKEN.to_string();
+    }
+    match slug.strip_prefix(&format!("{}-", h.encoded)) {
+        Some(rest) if !rest.is_empty() => format!("{HOME_TOKEN}-{rest}"),
+        _ => slug.to_string(),
+    }
+}
+
+/// A repository memory name -> the live directory name on this machine.
+/// Always unambiguous, so it works even where the forward direction is off.
+pub fn slug_of_repo_name(name: &str) -> String {
+    let Some(h) = home_names() else {
+        return name.to_string();
+    };
+    if name == HOME_TOKEN {
+        return h.encoded.clone();
+    }
+    match name.strip_prefix(&format!("{HOME_TOKEN}-")) {
+        Some(rest) if !rest.is_empty() => format!("{}-{rest}", h.encoded),
+        _ => name.to_string(),
+    }
+}
+
 /// Repo-side directory under each root's subtree that holds every project's
-/// memory: `<label>/memory/<slug>/…`. Live memory stays at
-/// `projects/<slug>/memory/`; the two mappings below convert between them.
+/// memory: `<label>/memory/<name>/…`, the name from `repo_name_of_slug`. Live
+/// memory stays at `projects/<slug>/memory/`; the two mappings below convert
+/// between them.
 pub const MEMORY_DIR: &str = "memory";
 
 /// Root-relative live path -> path relative to the root's repo subtree.
-/// `projects/<slug>/memory/x.md` becomes `memory/<slug>/x.md`; every other
+/// `projects/<slug>/memory/x.md` becomes `memory/<name>/x.md`; every other
 /// allowlisted path is stored where it lives.
 pub fn repo_rel_of_live(rel: &Path) -> PathBuf {
     let parts: Vec<_> = rel.iter().collect();
     if parts.len() >= 3 && parts[0] == "projects" && parts[2] == "memory" {
         let mut out = PathBuf::from(MEMORY_DIR);
-        out.push(parts[1]);
+        out.push(repo_name_of_slug(&parts[1].to_string_lossy()));
         out.extend(&parts[3..]);
         return out;
     }
     rel.to_path_buf()
 }
 
-/// Inverse of `repo_rel_of_live`: `memory/<slug>/x.md` -> `projects/<slug>/memory/x.md`.
+/// Inverse of `repo_rel_of_live`: `memory/<name>/x.md` -> `projects/<slug>/memory/x.md`.
+/// A name stored before grimmerk/memsaga-private#25 (a live name) maps to itself.
 pub fn live_rel_of_repo(rel: &Path) -> PathBuf {
     let parts: Vec<_> = rel.iter().collect();
     if parts.len() >= 2 && parts[0] == MEMORY_DIR {
         let mut out = PathBuf::from("projects");
-        out.push(parts[1]);
+        out.push(slug_of_repo_name(&parts[1].to_string_lossy()));
         out.push("memory");
         out.extend(&parts[2..]);
         return out;
@@ -69,20 +184,31 @@ pub fn live_rel_of_repo(rel: &Path) -> PathBuf {
     rel.to_path_buf()
 }
 
-/// Where a memory file lived in the repo before the layout change of
-/// 2026-09-18 (`<label>/projects/<slug>/memory/x.md`), so revisions from
-/// before the move can still be read. None for anything that is not memory.
-pub fn legacy_repo_path(repo_rel: &Path) -> Option<PathBuf> {
+/// Where a memory file was stored in older layouts, so revisions from before
+/// a change can still be read: under its live name (before grimmerk/memsaga-private#25), and
+/// at `<label>/projects/<slug>/memory/x.md` (before 2026-09-18). Empty for
+/// anything that is not memory.
+pub fn legacy_repo_paths(repo_rel: &Path) -> Vec<PathBuf> {
     let parts: Vec<_> = repo_rel.iter().collect();
-    if parts.len() >= 3 && parts[1] == MEMORY_DIR {
-        let mut out = PathBuf::from(parts[0]);
-        out.push("projects");
-        out.push(parts[2]);
-        out.push("memory");
-        out.extend(&parts[3..]);
-        return Some(out);
+    if parts.len() < 3 || parts[1] != MEMORY_DIR {
+        return Vec::new();
     }
-    None
+    let slug = slug_of_repo_name(&parts[2].to_string_lossy());
+    let mut out = Vec::new();
+    if slug != parts[2].to_string_lossy() {
+        let mut live_named = PathBuf::from(parts[0]);
+        live_named.push(MEMORY_DIR);
+        live_named.push(&slug);
+        live_named.extend(&parts[3..]);
+        out.push(live_named);
+    }
+    let mut old_layout = PathBuf::from(parts[0]);
+    old_layout.push("projects");
+    old_layout.push(&slug);
+    old_layout.push("memory");
+    old_layout.extend(&parts[3..]);
+    out.push(old_layout);
+    out
 }
 
 pub struct Scope<'a> {
@@ -304,9 +430,9 @@ mod tests {
             Path::new("CLAUDE.md")
         );
         assert_eq!(
-            legacy_repo_path(Path::new("claude/memory/-h-git-a/x.md")),
-            Some(PathBuf::from("claude/projects/-h-git-a/memory/x.md"))
+            legacy_repo_paths(Path::new("claude/memory/-h-git-a/x.md")),
+            vec![PathBuf::from("claude/projects/-h-git-a/memory/x.md")]
         );
-        assert_eq!(legacy_repo_path(Path::new("claude/CLAUDE.md")), None);
+        assert!(legacy_repo_paths(Path::new("claude/CLAUDE.md")).is_empty());
     }
 }

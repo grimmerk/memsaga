@@ -293,7 +293,7 @@ fn run(cli: Cli) -> Result<()> {
             let cfg = Config::load()?;
             let bin = match bin {
                 Some(b) => b,
-                None => std::env::current_exe()?.to_string_lossy().to_string(),
+                None => install::portable_bin(&std::env::current_exe()?.to_string_lossy()),
             };
             let roots: Vec<PathBuf> = if root.is_empty() {
                 cfg.roots.iter().map(|r| r.path.clone()).collect()

@@ -1,4 +1,5 @@
-//! `paths.json` (slug -> real path, per root) and `index.md` (a browsable table
+//! `paths.json` (repository memory name -> real path with `~` for home, per
+//! root) and `index.md` (a browsable table
 //! of every mirrored project) at the repo root. Both are regenerated on every
 //! sweep that commits; they are cheap and make the flat slug layout readable
 //! on GitHub without any other tooling.
@@ -71,17 +72,24 @@ pub fn write_index(cfg: &Config, scope: &Scope) -> Result<()> {
             if let Entry::Memory { slug: s } = e {
                 let dir = e.source(root);
                 let (count, newest) = dir_stats(&dir);
-                let real = slug::resolve(&map, s)
-                    .or_else(|| previous.get(&root.label).and_then(|m| m.get(s)).cloned());
+                let name = crate::roots::repo_name_of_slug(s);
+                // The previous map may be keyed by the repository name, or by
+                // the live name it had before grimmerk/memsaga-private#25, whose values were
+                // absolute: shorten those too.
+                let prev = previous.get(&root.label);
+                let real = slug::resolve(&map, s).or_else(|| {
+                    prev.and_then(|m| m.get(&name).or_else(|| m.get(s)))
+                        .cloned()
+                });
+                let real = real.map(|p| slug::display_path(&p));
                 if let Some(r) = &real {
-                    per_root.insert(s.clone(), r.clone());
+                    per_root.insert(name.clone(), r.clone());
                 }
                 let label = real
-                    .as_deref()
-                    .map(slug::display_path)
-                    .unwrap_or_else(|| format!("(unresolved) {s}"));
-                let link = format!("{}/memory/{}", root.label, s);
-                rows.push((label, link, count, newest, s.clone()));
+                    .clone()
+                    .unwrap_or_else(|| format!("(unresolved) {name}"));
+                let link = format!("{}/memory/{}", root.label, name);
+                rows.push((label, link, count, newest, name));
             }
         }
         rows.sort();

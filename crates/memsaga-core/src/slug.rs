@@ -66,8 +66,12 @@ pub fn resolve(map: &BTreeMap<String, BTreeSet<String>>, slug: &str) -> Option<S
 pub fn display_path(real: &str) -> String {
     if let Some(home) = dirs::home_dir() {
         let h = home.to_string_lossy().to_string();
-        if let Some(rest) = real.strip_prefix(&h) {
-            return format!("~{}", rest);
+        // Only at a path boundary: `/Users/me-old` is not under `/Users/me`.
+        if real == h {
+            return "~".into();
+        }
+        if let Some(rest) = real.strip_prefix(&format!("{h}/")) {
+            return format!("~/{rest}");
         }
     }
     real.to_string()
