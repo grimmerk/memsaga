@@ -75,8 +75,9 @@ Claude Code ─────────┬────────────�
 - Commit trailers: `Event`, `Account`, `Session`, `Cwd`, `Agent`, and `Session-Title` when the transcript names one.
 - Repo layout: `<label>/CLAUDE.md`, `<label>/<dir>/…`,
   `<label>/memory/<name>/…` (live `projects/<slug>/memory/`; `<name>` is the
-  slug with the home directory replaced by `HOME`, `roots::repo_name_of_slug`;
-  the mapping is `roots::repo_rel_of_live` and its inverse), plus `index.md`, `paths.json`,
+  slug with the home directory replaced by `HOME`, `roots::repo_name_of_slug`,
+  or the slug unchanged when the home's encoded prefix is ambiguous on this
+  machine (`prefix_is_ambiguous` in `roots.rs`); the mapping is `roots::repo_rel_of_live` and its inverse), plus `index.md`, `paths.json`,
   `.gitattributes`.
 - Config: `~/.config/memsaga/config.toml` (`MEMSAGA_CONFIG` overrides the path;
   `MEMSAGA_REPO` and `MEMSAGA_ROOTS` override values).

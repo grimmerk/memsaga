@@ -122,7 +122,13 @@ pub fn needs_sweep(cfg: &Config, scope: &Scope, state: &State) -> bool {
 
 /// Memory directories of `root` in the repository still under a live name
 /// that now maps to a home-relative one (grimmerk/memsaga-private#25).
+/// Memory directories of `root` still under a live name. A root missing on
+/// this machine counts none: the mirror skips it, so nothing could rename
+/// them, and counting them would sweep on every Stop.
 fn memory_renames_pending(cfg: &Config, root: &crate::config::Root) -> usize {
+    if !root.path.is_dir() {
+        return 0;
+    }
     std::fs::read_dir(cfg.repo.join(&root.label).join(crate::roots::MEMORY_DIR))
         .map(|rd| {
             rd.flatten()
@@ -268,7 +274,7 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     // Files changed on the repository side are not overwritten (step 1b of
     // docs/two-way-sync.md); hand edits found on the way join the list.
     let mut incoming = crate::sync::load_incoming(&state);
-    if crate::sync::rename_incoming(&mut incoming) {
+    if crate::sync::rename_incoming(&cfg.repo, &mut incoming)? {
         crate::sync::save_incoming(&state, &incoming)?;
     }
     let scope = Scope::new(cfg).with_guard(crate::sync::Guard::new(

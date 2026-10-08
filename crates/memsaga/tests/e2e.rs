@@ -121,6 +121,8 @@ fn git(fx: &Fx, args: &[&str]) -> String {
     let out = std::process::Command::new("git")
         .arg("-C")
         .arg(&fx.repo)
+        // The developer's own signing setup must not reach test commits.
+        .args(["-c", "commit.gpgsign=false"])
         .args(args)
         .output()
         .unwrap();
@@ -2299,6 +2301,24 @@ fn reinstall_updates_memsagas_entries_in_place() {
         &fx,
         &["install", "--root", root, "--bin", "/opt/old/memsaga"],
     );
+    // Copies accumulated by older installs from other paths: one alone in
+    // its entry, one sharing an entry with a foreign hook.
+    let mut v: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    v["hooks"]["Stop"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!(
+            { "hooks": [{ "type": "command", "command": "/opt/other/memsaga hook" }] }
+        ));
+    v["hooks"]["SessionEnd"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({ "hooks": [
+            { "type": "command", "command": "/opt/other/memsaga hook" },
+            { "type": "command", "command": "echo foreign" }
+        ] }));
+    fs::write(&settings, serde_json::to_string_pretty(&v).unwrap()).unwrap();
     run(
         &fx,
         &[
@@ -2311,6 +2331,23 @@ fn reinstall_updates_memsagas_entries_in_place() {
     );
     let v: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    let end: Vec<&str> = v["hooks"]["SessionEnd"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|e| e["hooks"].as_array().unwrap().iter())
+        .filter_map(|h| h["command"].as_str())
+        .collect();
+    assert_eq!(end, ["$HOME/.cargo/bin/memsaga hook", "echo foreign"]);
+    assert!(
+        v["hooks"]
+            .as_object()
+            .unwrap()
+            .values()
+            .flat_map(|l| l.as_array().unwrap())
+            .all(|e| !e["hooks"].as_array().unwrap().is_empty()),
+        "an entry left with no hooks: {v}"
+    );
     for (event, entries) in v["hooks"].as_object().unwrap() {
         let cmds: Vec<&str> = entries
             .as_array()
@@ -2487,20 +2524,28 @@ fn live_names_from_before_are_renamed_once_and_stay_restorable() {
     let m = Machine::new(tmp.path(), "gamma");
     let live = m.memory_dir("git/app").join("note.md");
     write(&live, "v1\n");
+    // The prompt history resolves the project's path, which the older
+    // paths.json stored absolute.
+    let history = m.claude.join("history.jsonl");
+    write(
+        &history,
+        &format!(
+            "{{\"display\":\"hi\",\"project\":\"{}\"}}\n",
+            m.home.join("git/app").display()
+        ),
+    );
     // As an older memsaga left it: run with a HOME that does not contain the
     // project, so the name is the live one.
-    let out = m
-        .cmd()
-        .env("HOME", tmp.path().join("elsewhere"))
-        .args(["init", "--no-backfill"])
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    init_with_live_names(&m, tmp.path());
     let old_name = live_name(&m.home.join("git/app"));
+    let paths = fs::read_to_string(m.repo.join("paths.json")).unwrap();
+    assert!(
+        paths.contains(&old_name) && paths.contains("gamma"),
+        "{paths}"
+    );
+    // The history is gone by the time of the rename: paths.json is the
+    // only source left.
+    fs::remove_file(&history).unwrap();
     let files = plain_git(&m.repo, &["ls-files"]);
     assert!(
         files.contains(&format!("claude/memory/{old_name}/note.md")),
@@ -2509,6 +2554,22 @@ fn live_names_from_before_are_renamed_once_and_stay_restorable() {
     let before = plain_git(&m.repo, &["rev-parse", "HEAD"])
         .trim()
         .to_string();
+    // A root missing on this machine, with a directory still under a live
+    // name: nothing can rename it here, so it is neither counted nor a reason
+    // to sweep.
+    let mut cfg_text = fs::read_to_string(&m.cfg).unwrap();
+    cfg_text.push_str(&format!(
+        "[[roots]]\npath = \"{}\"\nlabel = \"claude-work\"\n",
+        m.home.join(".claude-work").display()
+    ));
+    fs::write(&m.cfg, cfg_text).unwrap();
+    let stray = format!(
+        "claude-work/memory/{}/x.md",
+        live_name(&m.home.join("git/other"))
+    );
+    write(&m.repo.join(&stray), "x\n");
+    plain_git(&m.repo, &["add", "--", &stray]);
+    plain_git(&m.repo, &["commit", "-qm", "other machine"]);
     // The next Stop with the real home renames the directory, with no live change.
     let out = m
         .cmd()
@@ -2522,6 +2583,7 @@ fn live_names_from_before_are_renamed_once_and_stay_restorable() {
         files.contains("claude/memory/HOME-git-app/note.md"),
         "{files}"
     );
+    assert!(files.contains(&stray), "{files}");
     assert!(!files.contains(&old_name), "{files}");
     let subject = plain_git(&m.repo, &["log", "-1", "--format=%s"]);
     assert!(
@@ -2539,6 +2601,12 @@ fn live_names_from_before_are_renamed_once_and_stay_restorable() {
         ],
     );
     assert_eq!(log.lines().count(), 2, "history follows the rename: {log}");
+    // The old paths.json held the absolute path; it comes back home-relative.
+    let paths = fs::read_to_string(m.repo.join("paths.json")).unwrap();
+    assert!(
+        paths.contains("\"HOME-git-app\": \"~/git/app\"") && !paths.contains("gamma"),
+        "{paths}"
+    );
     // An old revision is still restorable by the new path.
     write(&live, "v2\n");
     m.run(&[
@@ -2549,6 +2617,120 @@ fn live_names_from_before_are_renamed_once_and_stay_restorable() {
         "--yes",
     ]);
     assert_eq!(fs::read_to_string(&live).unwrap(), "v1\n");
+}
+
+/// A machine whose repository still has live names, as an older memsaga
+/// left them: init with a HOME that does not contain the project.
+fn init_with_live_names(m: &Machine, base: &Path) {
+    let out = m
+        .cmd()
+        .env("HOME", base.join("elsewhere"))
+        .args(["init", "--no-backfill"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn a_waiting_file_moves_with_the_rename_and_still_reaches_the_live_file() {
+    let tmp = TempDir::new().unwrap();
+    let m = Machine::new(tmp.path(), "delta");
+    let live = m.memory_dir("git/app").join("note.md");
+    write(&live, "v1\n");
+    init_with_live_names(&m, tmp.path());
+    let old_name = live_name(&m.home.join("git/app"));
+    // A hand edit in the repository, recorded by a sweep while the names are
+    // still live ones: an incoming entry under the old name.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    write(
+        &m.repo.join(format!("claude/memory/{old_name}/note.md")),
+        "edited in the repo\n",
+    );
+    let out = m
+        .cmd()
+        .env("HOME", tmp.path().join("elsewhere"))
+        .args(["sweep"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(
+        &m.cmd()
+            .env("HOME", tmp.path().join("elsewhere"))
+            .args(["status", "--json"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert!(
+        v["incoming"][format!("claude/memory/{old_name}/note.md")].is_object(),
+        "{v}"
+    );
+    // The renaming Stop must carry the edit to the new name, not prune it.
+    let out = m
+        .cmd()
+        .arg("hook")
+        .write_stdin(stop("s1"))
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(
+        fs::read_to_string(m.repo.join("claude/memory/HOME-git-app/note.md")).unwrap(),
+        "edited in the repo\n"
+    );
+    m.run(&["sync"]);
+    assert_eq!(fs::read_to_string(&live).unwrap(), "edited in the repo\n");
+}
+
+#[test]
+fn an_old_revision_from_another_home_is_restorable_by_the_new_name() {
+    let tmp = TempDir::new().unwrap();
+    let a = Machine::new(tmp.path(), "alpha");
+    let b = Machine::new(tmp.path(), "beta");
+    write(&a.memory_dir("git/app").join("note.md"), "v1\n");
+    init_with_live_names(&a, tmp.path());
+    let before = plain_git(&a.repo, &["rev-parse", "HEAD"])
+        .trim()
+        .to_string();
+    a.run(&["sweep"]); // renames to HOME-git-app
+    write(&a.memory_dir("git/app").join("note.md"), "v2\n");
+    a.run(&["sweep"]);
+    let origin = tmp.path().join("origin.git");
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q", "--bare"])
+        .arg(&origin)
+        .status()
+        .unwrap()
+        .success());
+    plain_git(
+        &a.repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    a.run(&["push"]);
+    assert!(std::process::Command::new("git")
+        .args(["clone", "-q"])
+        .arg(&origin)
+        .arg(&b.repo)
+        .status()
+        .unwrap()
+        .success());
+    // At `before` the file was under alpha's live name, which beta cannot
+    // compute from its own home: found through the rename in history.
+    b.run(&[
+        "restore",
+        "claude/memory/HOME-git-app/note.md",
+        "--at",
+        &before,
+        "--yes",
+    ]);
+    assert_eq!(
+        fs::read_to_string(b.memory_dir("git/app").join("note.md")).unwrap(),
+        "v1\n"
+    );
 }
 
 #[test]

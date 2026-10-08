@@ -49,8 +49,13 @@ pub fn load_incoming(state: &State) -> Incoming {
 
 /// Rewrite entries recorded under a memory directory's live name to its
 /// repository name (grimmerk/memsaga-private#25), so the sweep that renames the directory
-/// protects and settles the same files. True when anything changed.
-pub fn rename_incoming(incoming: &mut Incoming) -> bool {
+/// protects and settles the same files. The waiting repository file moves
+/// with its entry: the mirror never writes a protected path, and it prunes
+/// the old directory, so a file left there would be lost and settle would
+/// read the newer version as deleted. When both names have an entry, the
+/// old one is kept: its base is the last version the live file agreed with.
+/// The caller holds the sweep lock. True when anything changed.
+pub fn rename_incoming(repo: &Path, incoming: &mut Incoming) -> Result<bool> {
     let renamed: Vec<(String, String)> = incoming
         .keys()
         .filter_map(|k| {
@@ -70,11 +75,18 @@ pub fn rename_incoming(incoming: &mut Incoming) -> bool {
         })
         .collect();
     for (old, new) in &renamed {
+        let (from, to) = (repo.join(old), repo.join(new));
+        if from.symlink_metadata().is_ok() && to.symlink_metadata().is_err() {
+            if let Some(dir) = to.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::rename(&from, &to).with_context(|| format!("moving {old} to {new}"))?;
+        }
         if let Some(e) = incoming.remove(old) {
-            incoming.entry(new.clone()).or_insert(e);
+            incoming.insert(new.clone(), e);
         }
     }
-    !renamed.is_empty()
+    Ok(!renamed.is_empty())
 }
 
 /// The caller holds the sweep lock. An empty list removes the file.

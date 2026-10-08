@@ -54,14 +54,39 @@ fn is_ours(entry: &Value) -> bool {
 /// home directory, so a `settings.json` restored or synced to a machine with
 /// another home still finds the binary (Claude Code runs hook commands through
 /// a shell, which expands `$HOME`; checked on 2.1.291). Anything else as given.
+/// Quoted when the home or the path holds a character the shell would split
+/// or interpret (a space, a quote, `$`).
 pub fn portable_bin(bin: &str) -> String {
-    if let Some(home) = dirs::home_dir() {
+    portable_bin_in(bin, dirs::home_dir().as_deref())
+}
+
+fn portable_bin_in(bin: &str, home: Option<&Path>) -> String {
+    let plain = |s: &str| {
+        s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-+@%,:".contains(c))
+    };
+    if let Some(home) = home {
         let home = home.to_string_lossy();
         if let Some(rest) = bin.strip_prefix(&format!("{home}/")) {
-            return format!("$HOME/{rest}");
+            if plain(&home) && plain(rest) {
+                return format!("$HOME/{rest}");
+            }
+            // Double quotes keep `$HOME` expanding and its value one word.
+            let mut quoted = String::new();
+            for c in rest.chars() {
+                if matches!(c, '"' | '\\' | '$' | '`') {
+                    quoted.push('\\');
+                }
+                quoted.push(c);
+            }
+            return format!("\"$HOME/{quoted}\"");
         }
     }
-    bin.to_string()
+    if plain(bin) {
+        bin.to_string()
+    } else {
+        format!("'{}'", bin.replace('\'', r"'\''"))
+    }
 }
 
 /// `memsaga hook` or `memsaga report`: which of memsaga's commands an entry runs.
@@ -91,41 +116,47 @@ pub fn install(settings: &Path, bin: &str, reporter: bool) -> Result<bool> {
     for (event, matcher, command, is_async) in wanted(bin, reporter) {
         let list = hooks.entry(event).or_insert_with(|| Value::Array(vec![]));
         let list = list.as_array_mut().context("hook list is not an array")?;
-        let present = list.iter().any(|e| {
-            e.get("hooks")
-                .and_then(|h| h.as_array())
-                .map(|arr| {
-                    arr.iter().any(|h| {
-                        h.get("command").and_then(|c| c.as_str()) == Some(command.as_str())
-                    })
-                })
-                .unwrap_or(false)
-        });
-        if present {
-            continue;
-        }
-        // The same memsaga command under another path (an absolute one from an
-        // older install, or a moved binary): update it in place, so a reinstall
-        // never registers a second copy.
+        // The same memsaga command, possibly under another path (an absolute
+        // one from an older install, or a moved binary): the first is updated
+        // in place and any further copy removed, so the hook runs once.
         let kind = command_kind(&command);
-        let mut updated = false;
-        for entry in list.iter_mut() {
+        let same = |old: &str| old == command || (kind.is_some() && command_kind(old) == kind);
+        let mut found = false;
+        let mut emptied = Vec::new();
+        for (i, entry) in list.iter_mut().enumerate() {
             let Some(hooks) = entry.get_mut("hooks").and_then(|h| h.as_array_mut()) else {
                 continue;
             };
-            for h in hooks.iter_mut() {
+            let before = hooks.len();
+            hooks.retain_mut(|h| {
                 let old = h
                     .get("command")
                     .and_then(|c| c.as_str())
                     .unwrap_or_default();
-                if kind.is_some() && command_kind(old) == kind {
+                if !same(old) {
+                    return true;
+                }
+                if found {
+                    return false;
+                }
+                found = true;
+                if old != command {
                     h["command"] = json!(command);
-                    updated = true;
+                    changed = true;
+                }
+                true
+            });
+            if hooks.len() < before {
+                changed = true;
+                if hooks.is_empty() {
+                    emptied.push(i);
                 }
             }
         }
-        if updated {
-            changed = true;
+        for i in emptied.into_iter().rev() {
+            list.remove(i);
+        }
+        if found {
             continue;
         }
         let mut hook = json!({ "type": "command", "command": command, "timeout": 60 });
@@ -229,5 +260,31 @@ mod tests {
             portable_bin(&format!("{home}-other/memsaga")),
             format!("{home}-other/memsaga")
         );
+    }
+
+    #[test]
+    fn portable_bin_stays_one_word_in_the_shell() {
+        use super::portable_bin_in;
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            portable_bin_in("/opt/my tools/memsaga", None),
+            "'/opt/my tools/memsaga'"
+        );
+        // A home with a space: `$HOME` must expand inside quotes.
+        let home = std::env::temp_dir().join(format!("memsaga home {}", std::process::id()));
+        let exe = home.join("bin").join("memsaga");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, "#!/bin/sh\necho \"ran $1\"\n").unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let word = portable_bin_in(&exe.to_string_lossy(), Some(&home));
+        assert_eq!(word, "\"$HOME/bin/memsaga\"");
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{word} hook"))
+            .env("HOME", &home)
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(&home).unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "ran hook\n");
     }
 }

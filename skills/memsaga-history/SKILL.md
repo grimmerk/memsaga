@@ -29,7 +29,9 @@ Code 2.1.275 it is the git common dir, so every worktree and subdirectory of `~/
 shares one directory, and a non-repo directory such as `~/git` keeps its own. In the
 repository a project under home is named without the home: `claude/memory/HOME-git-webapp/`
 (live `-Users-me-git-webapp`), `claude/memory/HOME-git/` for `~/git`; a project outside home
-keeps its slug. Before grimmerk/memsaga-private#25 (2026-10) the repository used the slugs themselves
+keeps its slug, and so does every project on a machine where another directory encodes like
+a path under home (`/Users/me-old` next to `/Users/me`), where the home cannot be told
+apart in the slug. Before grimmerk/memsaga-private#25 (2026-10) the repository used the slugs themselves
 (`claude/memory/-Users-me-git-webapp/`); that is a rename, so use `--follow`. Older slugs such as
 `-Users-me-git-webapp-<worktree>-packages-api` are per-cwd leftovers from
 before that change; their files are still mirrored but no longer loaded.

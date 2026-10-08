@@ -198,8 +198,10 @@ once; otherwise run `memsaga install` after the restore. Two machines can be
 used side by side: a push that origin rejects merges origin first, and edits
 from the other machine reach the live files through `memsaga sync` or the
 hooks (see [Edits made elsewhere](#edits-made-elsewhere-two-way-sync)).
-Memory directories are named after the absolute project path, so a project
-shares its memory between machines only when it sits at the same path on both.
+A project shares its memory between machines when it sits at the same path
+relative to the home directory on both (`~/git/webapp`, whatever the home is),
+or, outside home, at the same absolute path; see the layout above for the one
+exception.
 
 ## Tests
 

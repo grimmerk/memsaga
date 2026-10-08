@@ -74,18 +74,20 @@ pub fn write_index(cfg: &Config, scope: &Scope) -> Result<()> {
                 let (count, newest) = dir_stats(&dir);
                 let name = crate::roots::repo_name_of_slug(s);
                 // The previous map may be keyed by the repository name, or by
-                // the live name it had before grimmerk/memsaga-private#25.
+                // the live name it had before grimmerk/memsaga-private#25, whose values were
+                // absolute: shorten those too.
                 let prev = previous.get(&root.label);
-                let real = slug::resolve(&map, s)
-                    .map(|p| slug::display_path(&p))
-                    .or_else(|| {
-                        prev.and_then(|m| m.get(&name).or_else(|| m.get(s)))
-                            .cloned()
-                    });
+                let real = slug::resolve(&map, s).or_else(|| {
+                    prev.and_then(|m| m.get(&name).or_else(|| m.get(s)))
+                        .cloned()
+                });
+                let real = real.map(|p| slug::display_path(&p));
                 if let Some(r) = &real {
                     per_root.insert(name.clone(), r.clone());
                 }
-                let label = real.clone().unwrap_or_else(|| format!("(unresolved) {s}"));
+                let label = real
+                    .clone()
+                    .unwrap_or_else(|| format!("(unresolved) {name}"));
                 let link = format!("{}/memory/{}", root.label, name);
                 rows.push((label, link, count, newest, name));
             }
