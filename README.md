@@ -224,9 +224,12 @@ The copy is stored under `extra/` by its real path, is never deleted by
 memsaga, and gets edits made elsewhere like any other file (use case 10). For a
 group of files, make a folder under the config directory (for example
 `~/.claude/drafts/`) and add it to `dirs`:
-`dirs = ["skills", "hooks", "scripts", "drafts"]`. Whole folders outside the
-config directory are not supported yet; until then, list their files one by
-one.
+`dirs = ["skills", "hooks", "scripts", "drafts"]`. The same goes for
+hand-written Claude Code mods: add `"mods"` and their source is versioned and
+synced like your skills (exclude the folder the mod engine regenerates, with
+`exclude_paths = ["skills/synced", "mods/*/.claude-plugin/types"]`). Whole
+folders outside the config directory are not supported yet; until then, list
+their files one by one.
 
 ### 6. Add your own files to the repository
 
@@ -268,6 +271,11 @@ are in [setting up another machine](#setting-up-another-machine)). After that
 both machines commit and push. A push that GitHub rejects because the other
 machine pushed first merges the other machine's commits and pushes again, and
 their edits reach your live files as described in use case 10.
+
+Everything in scope travels this way, not only memory: a skill, hook or script
+written on one machine, and a hand-written Claude Code mod once its folder is in
+`dirs`, is on the other machine's disk after its next prompt there. Your global
+`CLAUDE.md` stays the same on both.
 
 A project shares its memory between machines when it sits at the same path
 relative to the home directory on both, for example `~/git/webapp`, even when
@@ -336,7 +344,7 @@ a new hook. Try it, read the diff, keep it or roll it back.
 |---|---|---|
 | Session transcripts | Large, and mostly the content of your work rather than configuration | Raise `cleanupPeriodDays` in `settings.json` so Claude Code keeps them longer |
 | Plugins installed from a marketplace | They are packages you can install again, not files you wrote | Install them again; with `settings.json` mirrored (opt-in, `files`), its `enabledPlugins` list records which ones |
-| Hand-written Claude Code mods | Not in the default scope | Add their directory to `dirs` (for example `dirs = ["skills", "hooks", "scripts", "mods"]`) for a backup; give a mod you share or develop seriously its own git repository, since one commit per turn is a backup, not a development history |
+| Hand-written Claude Code mods | Not in the default scope | Add `"mods"` to `dirs` (use case 5) to version and sync them; give a mod you share or develop seriously its own git repository too, since one commit per turn is a backup, not a development history |
 | Credentials, OAuth tokens, `~/.claude.json` | Secrets and account state must never enter a repository | Your system keychain or a password manager |
 | `settings.json` keys that change all the time (`model`, `effortLevel`) | Claude Code rewrites them on every `/model` and `/effort` | Nothing: memsaga leaves them out of the repository and keeps each machine's own values (`settings_ignore_keys`) |
 
