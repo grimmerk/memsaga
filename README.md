@@ -81,8 +81,10 @@ Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
     11. [Let Claude reorganise its memory, safely](#11-let-claude-reorganise-its-memory-safely)
 - [What memsaga does not cover, and what to use instead](#what-memsaga-does-not-cover-and-what-to-use-instead)
 - [How it works](#how-it-works)
+- [When something looks wrong](#when-something-looks-wrong)
 - [Reference](#reference): [commands](#commands), [what is mirrored](#what-is-mirrored), [memory directory names](#memory-directory-names), [configuration](#configuration), [two-way sync](#two-way-sync), [commit messages](#commit-messages), [setting up another machine](#setting-up-another-machine)
 - [Tests](#tests)
+- [Roadmap](#roadmap)
 - [The name](#the-name)
 
 Diagrams: the overview above (where files flow), and one in
@@ -91,8 +93,8 @@ elsewhere).
 
 ## Quick start
 
-You need Rust (`cargo`) and git; `gh` (the GitHub command-line tool) is
-optional, for creating the GitHub repository.
+You need macOS or Linux, git, Rust (`cargo`) and Claude Code. `gh` (the GitHub
+command-line tool) is optional, for creating the GitHub repository.
 
 ```sh
 cargo install --git https://github.com/grimmerk/memsaga memsaga --locked
@@ -107,6 +109,13 @@ From then on nothing else is needed. Every turn that changed something in
 scope ends with a commit, and the terminal shows a one-line notice. Pushes
 happen on their own, at most once every ten minutes and at the end of a
 session.
+
+**Keep the data repository private.** Memory holds whatever Claude learned
+while working with you, which often includes details of your work. memsaga
+never copies credentials, `~/.claude.json` or transcripts, and copies
+`settings.json` only if you ask. To keep one project's memory out entirely,
+for example client work, exclude it by its Claude Code directory name:
+`exclude_projects = ["*-git-client-*"]`.
 
 ## What you can do with it
 
@@ -150,6 +159,21 @@ The title and ID work in both directions:
 Claude Code deletes transcripts after 30 days by default; raise
 `cleanupPeriodDays` in `settings.json` to keep them longer. The commits stay
 either way.
+
+Three more questions that git answers directly:
+
+- **Why is this line in `CLAUDE.md`?**
+  `git -C ~/git/memories blame claude/CLAUDE.md` gives the commit of each
+  line, and that commit's `Session:` line gives the conversation.
+- **When was a sentence added, or removed?**
+  `git -C ~/git/memories log -S 'run the tests first' --oneline`
+- **What changed this week?**
+  `git -C ~/git/memories log --since=1.week --stat`
+
+You also see changes as they happen. After a turn that committed, the terminal
+shows one line such as `memsaga: 2 files committed (a1b2c3d)`, so a memory
+Claude wrote on its own does not go unnoticed. For one commit per edit instead
+of one per turn, set `granularity = "edit"`.
 
 The repository is also easy to read on GitHub: `index.md` lists every project
 with its real directory, and the memory files already use frontmatter and
@@ -334,6 +358,21 @@ a new hook. Try it, read the diff, keep it or roll it back.
 
 More: [`docs/architecture.md`](docs/architecture.md).
 
+## When something looks wrong
+
+- `memsaga status` shows the last sweep, the push state (a failed or deferred
+  push, and why), files waiting to come in from elsewhere, and a missing config
+  file.
+- A hook never stops a turn. Its errors go to `<repo>/.git/memsaga/memsaga.log`,
+  and every sweep, push and merge to `events.jsonl` next to it.
+- `memsaga diff` shows what the next sweep would commit; `memsaga sweep`
+  commits now.
+- An edit from elsewhere that conflicts with yours waits, and `memsaga sync`
+  reports it. Pick a side with `memsaga sync --take live <path>` or
+  `--take repo <path>`, or edit the live file and run `memsaga sync` again.
+- To stop, `memsaga uninstall` removes the hooks. The repository and its
+  history stay.
+
 ## Reference
 
 ### Commands
@@ -486,6 +525,18 @@ once; otherwise run `memsaga install` after the restore.
 config directories in a temporary directory (`crates/memsaga/tests/e2e.rs`),
 plus unit tests for pure logic. CI runs them on Ubuntu and macOS with
 `cargo fmt --check` and `cargo clippy -D warnings`.
+
+## Roadmap
+
+Plans, not promises:
+
+- More sources: other coding agents (Codex first), whole folders outside the
+  config directory, data fetched from an API.
+- A Claude Code mod that shows the sync state in the status line, and later
+  runs the hook work inside Claude Code instead of a new process per event.
+- Folder aliases for machines whose project folders differ below home
+  (`~/code` on one, `~/git` on the other).
+- Files that belong to one machine only, kept per machine in the repository.
 
 ## The name
 
