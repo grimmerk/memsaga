@@ -1,5 +1,7 @@
 # Claude Code 記憶與設定的版本控制：設計文件
 
+> 英文版：[`design.md`](design.md)。作者雇主及其私有 repo 的名稱（以及工作帳號的簡稱）已換成佔位名稱，例如 `acme`、`webapp`、`team-docs`、`work`。
+
 版本 0.1，2026-09-13。作者：author + Claude Code（Fable 5.1）。狀態：設計已定案到 Phase 1 可施工，等 author 拍板未決事項（§12）後安裝。
 
 本文件的讀者假設沒有這次討論的脈絡。名詞在第一次出現時解釋；量測數據全部來自 author 這台機器的實測，附錄 A 有原始數字。
@@ -69,7 +71,7 @@
     │       └── <topic>.md                   ← 一檔一事實
     ├── -Users-me-git-webapp/memory/      ← 89
     ├── -Users-me-git-webapp-ui/memory/   ← 1（transcript 已被 Claude Code 清掉，只剩 memory）
-    ├── -Users-me-git-webapp-improve-token-usage-packages-api/memory/  ← 1
+    ├── -Users-me-git-webapp-some-branch-packages-some-package/memory/  ← 1
     └── …（共 13 個有內容的 memory 目錄）
 
 ~/.claude-work/                              ← 帳號 work，獨立的一棵樹
@@ -440,7 +442,7 @@ author 把雙向定為 nice-to-have 與 must 之間：repo 就是拿來 browse �
 
 **回填歷史（backfill，Phase 2 選配）。** 匯入時 memory 檔的「上一版」其實還找得到：transcript 記錄了每一次 Write（含完整內容）和 Edit（含 old/new 字串）以及時間戳，`file-history/` 也有 Claude 編輯過的檔案快照。這台機器的 transcript 從 2026-07-06 到現在約 10 週，其中對 memory 和 CLAUDE.md 的工具寫入約 1,000 次可以重放，Bash 改的 441 次是缺口，缺口用下一次完整 Write 或 file-history 快照補齊。做法：按時間重放這些操作，每個時間點產生一個帶 `GIT_AUTHOR_DATE` 的 commit（或按天合併），trailer 一樣記 session 與 cwd。結果是 repo 一建立就有過去 10 週的歷史，`git log --since='2 weeks ago'` 立刻有意義。限制：Claude Code 依 `cleanupPeriodDays` 清舊 transcript，官方預設 **30 天**（你沒設；這台機器實際還留著 7 月 6 日起的檔，代表清理是有條件的，但不能指望），`file-history` 只留最近 100 個 checkpoint 且隨 session 一起清；memory 目錄本身不會被清。回填深度以此為限，所以**排進 Phase 1 的 `init`**：`init` 先重放 transcript 產生歷史 commit，再疊上現狀的匯入 commit，repo 從第一天就有過去幾週的歷史。重放結果與現在的檔案不一致時以現在的檔案為準，差異記在 commit message。
 
-若 Phase 1 來不及做回填，之後補也不必重建 repo：用 `git replace --graft <匯入 commit> <回填的最後一個 commit>` 把回填歷史接在匯入 commit 前面，再用 `git filter-repo` 固化。這會改寫匯入之後所有 commit 的 SHA，但內容全部保留，包含期間手改鏡像或雙向寫回產生的 commit；私有個人 repo 沒有協作者，force-push 一次沒有問題（work repo 禁 force-push 的規則不適用於此）。真正會損失的只有被清掉的 transcript，這是「早做」的唯一理由。這正是 okf-skills 的 `backfill` 想法，也是 §3.2 自製的理由之一：沒有現成工具做這件事。
+若 Phase 1 來不及做回填，之後補也不必重建 repo：用 `git replace --graft <匯入 commit> <回填的最後一個 commit>` 把回填歷史接在匯入 commit 前面，再用 `git filter-repo` 固化。這會改寫匯入之後所有 commit 的 SHA，但內容全部保留，包含期間手改鏡像或雙向寫回產生的 commit；私有個人 repo 沒有協作者，force-push 一次沒有問題（雇主 repo 禁 force-push 的規則不適用於此）。真正會損失的只有被清掉的 transcript，這是「早做」的唯一理由。這正是 okf-skills 的 `backfill` 想法，也是 §3.2 自製的理由之一：沒有現成工具做這件事。
 
 ## 5. 成本
 
@@ -489,7 +491,7 @@ Repo 大小：兩個全量 commit 後 `.git` 2.2 MB；每次 CLAUDE.md 改動加
 | 別人怎麼裝 | curl 下載 | `pipx install` | `npm i -g` | `brew install <tap>/<tool>` 或下載 binary；`go install` 要 Go toolchain | `brew install` 或下載 binary；`cargo install` 要編譯數分鐘 |
 | 開發速度 / 可讀性 | 短但坑多 | 高 | 高 | 高 | 中，學習曲線 |
 | 這類 CLI 的生態 | | | | gh、kubectl、terraform、hugo | ripgrep、fd、bat、uv、ruff |
-| 這裡的熟悉度 | | | codev 是 TS | acme 有 Go 服務 | 個人已裝 cargo |
+| 這裡的熟悉度 | | | codev 是 TS | 作者的雇主有 Go 服務 | 個人已裝 cargo |
 
 **安裝便利性的答案**：Go 與 Rust 對使用者是一樣的，都是一個 binary，用 Homebrew tap 或直接下載；差別在開發者這邊：Go 的交叉編譯與 goreleaser 一條龍最省事，Rust 要多裝 target 但 cargo-dist 也做得到。體感上「越來越多 Rust CLI」是真的（uv、ruff、bat、fd），Go CLI 在 devops 工具圈仍是主流（gh、kubectl）。這個工具的內容是檔案走訪、rsync 邏輯、呼叫 git，是 process 編排不是計算，Rust 的無 GC 與零成本抽象用不上。
 
@@ -609,7 +611,7 @@ type = "claude-root"   path = "~/.claude"        label = "personal"
 [[sources]]
 type = "local-dir"     path = "~/git/webapp/docs"  include = ["**/*.md"]  dest = "kb/webapp-docs"
 [[sources]]
-type = "git-remote"    url  = "git@github.com:acme/docs.git"  paths = ["docs/"]  dest = "kb/docs"  schedule = "hourly"
+type = "git-remote"    url  = "git@github.com:acme/team-docs.git"  paths = ["docs/"]  dest = "kb/team-docs"  schedule = "hourly"
 [[sources]]
 type = "http" | "mcp"  …                          # 之後才定
 ```
@@ -626,14 +628,14 @@ flowchart LR
         S1["~/.claude（claude-root）"]
         S2["~/.claude-work（claude-root）"]
         S3["~/git/webapp/docs（local-dir）"]
-        S4["acme/docs（git-remote，定時）"]
+        S4["acme/team-docs（git-remote，定時）"]
         S5["公司 KB API / MCP（http / mcp，最後）"]
     end
     subgraph R["~/git/claude-memory（private）"]
         T1["claude/（工具擁有）"]
         T2["claude-work/（工具擁有）"]
         T3["kb/webapp-docs/（工具擁有）"]
-        T4["kb/docs/（工具擁有）"]
+        T4["kb/team-docs/（工具擁有）"]
         T5["manual/ companion/（使用者擁有，工具不碰）"]
         T6["okf/（publish 匯出，§9.4）"]
     end
@@ -658,7 +660,7 @@ flowchart LR
 
 **繁中對照文件（提前到 Phase 2）。** 情境：公司 repo 的英文 md 已 commit，你請 Claude 產一份繁中版，但不能 commit 進公司 repo。做法：
 
-1. 路徑慣例：資料 repo 的 `companion/<repo 名>/<repo 內相對路徑>.zh-tw.md`，例如 `companion/webapp/docs/api.md` 的翻譯放 `companion/webapp/docs/api.zh-tw.md`。這是使用者擁有的路徑，rsync 不碰。
+1. 路徑慣例：資料 repo 的 `companion/<repo 名>/<repo 內相對路徑>.zh-tw.md`，例如 `companion/webapp-service/docs/some-package.md` 的翻譯放 `companion/webapp-service/docs/some-package.zh-tw.md`。這是使用者擁有的路徑，rsync 不碰。
 2. 讓 Claude 知道往哪寫：一個 `companion-docs` skill（自己也被版控），描述路徑慣例、「翻譯不進公司 repo」的規則、以及怎麼從公司檔案路徑推出對照路徑。Claude 用 Write 寫進去。
 3. 進歷史：Write 的路徑不在 root 的 allowlist 內，所以第 1 層不會觸發；第 2 層 `Stop` 的 fast path 要多一步 `git -C ~/git/claude-memory status --porcelain --untracked-files=all`（約 20 ms），有東西就走一般的 `git add -A` 加 commit。這一步同時涵蓋 `manual/` 和任何使用者擁有的路徑。
 4. 閱讀：GitHub 或 Obsidian 並排開英文原檔與 `.zh-tw.md`；Obsidian 可以用 `[[companion/…]]` 互連。
@@ -689,7 +691,7 @@ OKF 是 **Google Cloud** Data Cloud 團隊的規格（不是 Microsoft），v0.1
 
 **(b) skills、CLAUDE.md、memory：不採用，也不需要。** SKILL.md 的 frontmatter 屬於 Agent Skills 開放標準（Anthropic 發起，Codex、Cursor、Copilot 等已採用）；claude.ai 上傳與 Skills API 對未知 top-level 欄位是硬錯誤，本機 Claude Code 未文件化；唯一的自由槽是 `metadata:`。OKF 要求 top-level `type`，兩個標準搶同一層，所以 SKILL.md 不動。CLAUDE.md 不支援 frontmatter，放了就是整段 YAML 進 context。Memory 檔：官方文件說 `type` 在 top-level（`user|feedback|project|reference`），本機 232 個檔有 14 個如此、147 個是這個 harness 寫的 `metadata.type`；top-level 版本剛好符合 OKF 的最低要求，但 model 重寫檔案時額外欄位不保證留存、也沒有 consumer 會看，而 `[[wikilink]]` 是 memory 規範且 Obsidian 原生。唯一值得借的概念是 `stale_after` / `status: deprecated` 當 memory 衛生，可以先以 `metadata.stale_after` 加一條 CLAUDE.md 指令試驗，不改格式。
 
-**(c) 其他 markdown 文件：在「給 agent 讀的知識」上採最小核心，在指令檔與公司 repo 上先不要。** 最小核心（`type`、`title`、`description`、`index.md`、`log.md`、bundle 相對連結）幾乎零成本、GitHub 直接渲染、Obsidian 相容，且 v0.2 的 lifecycle 與 trust 欄位正是 author 已在 docs 用文字執行的規則：「as of <日期>」變成 `stale_after`、「誰驗證過」變成 `verified: [{by: human:author, at}]`、「agent 產的」變成 `generated.by`。適合：docs、個人知識庫、Phase 5 從公司 KB 抓來的內容（`generated.by: process:kb-fetch`、`sources[].resource` 是原始 URL）。三類不適合：(1) 給 agent 的**指令檔** CLAUDE.md、AGENTS.md、SKILL.md、`.claude/rules/*.md`（rules 是 Claude Code 的路徑範圍指令檔，frontmatter 只有 `paths`），它們各自屬於另一個標準；(2) PR、issue、Slack 草稿，沒有任何會讀 frontmatter 的 consumer，加了只是雜訊；(3) 公司 repo 的文件，三個月大的 v0.x、六週就從 v0.1 跳 v0.2、範例以 BigQuery 為中心，先在自己的 notebook 驗證再說。
+**(c) 其他 markdown 文件：在「給 agent 讀的知識」上採最小核心，在指令檔與公司 repo 上先不要。** 最小核心（`type`、`title`、`description`、`index.md`、`log.md`、bundle 相對連結）幾乎零成本、GitHub 直接渲染、Obsidian 相容，且 v0.2 的 lifecycle 與 trust 欄位正是 author 已在 team-docs 用文字執行的規則：「as of <日期>」變成 `stale_after`、「誰驗證過」變成 `verified: [{by: human:author, at}]`、「agent 產的」變成 `generated.by`。適合：team-docs、個人知識庫、Phase 5 從公司 KB 抓來的內容（`generated.by: process:kb-fetch`、`sources[].resource` 是原始 URL）。三類不適合：(1) 給 agent 的**指令檔** CLAUDE.md、AGENTS.md、SKILL.md、`.claude/rules/*.md`（rules 是 Claude Code 的路徑範圍指令檔，frontmatter 只有 `paths`），它們各自屬於另一個標準；(2) PR、issue、Slack 草稿，沒有任何會讀 frontmatter 的 consumer，加了只是雜訊；(3) 公司 repo 的文件，三個月大的 v0.x、六週就從 v0.1 跳 v0.2、範例以 BigQuery 為中心，先在自己的 notebook 驗證再說。
 
 ### 9.5 Claude Mods（function hooks）：本設計的「原生版」，等它 GA 再做
 
