@@ -107,9 +107,10 @@ memsaga status            # last sweep, pending changes, push state
 ```
 
 From then on nothing else is needed. Every turn that changed something in
-scope ends with a commit, and the terminal shows a one-line notice. Pushes
-happen on their own, at most once every ten minutes and at the end of a
-session.
+scope ends with a commit, and the terminal shows a one-line notice. Once the
+data repository has an `origin` remote (the optional `gh repo create` line
+above), pushes happen on their own, at most once every ten minutes and at the
+end of a session; without one, the history stays on this machine.
 
 **Keep the data repository private.** Memory holds whatever Claude learned
 while working with you, which often includes details of your work. The default
