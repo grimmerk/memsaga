@@ -112,9 +112,12 @@ happen on their own, at most once every ten minutes and at the end of a
 session.
 
 **Keep the data repository private.** Memory holds whatever Claude learned
-while working with you, which often includes details of your work. memsaga
-never copies credentials, `~/.claude.json` or transcripts, and copies
-`settings.json` only if you ask. To keep one project's memory out entirely,
+while working with you, which often includes details of your work. The default
+scope leaves out `~/.claude.json` (where Claude Code keeps its login),
+credentials and transcripts, and takes `settings.json` only if you ask. memsaga
+does not scan what it copies for secrets, so keep credentials out of anything
+you add to `files`, `dirs` or `extra_files`. To keep one project's memory out
+entirely,
 for example client work, exclude it by its Claude Code directory name:
 `exclude_projects = ["*-git-client-*"]`.
 
@@ -320,8 +323,13 @@ sequenceDiagram
    texts are merged. Edits to the same lines are left alone and reported.
 3. The model gets a short notice with the changed lines, so it does not answer
    from the copy it loaded earlier.
-4. Before a Read, Write or Edit of a file that changed elsewhere, the hook
-   waits for that pull, so a write never overwrites the newer text.
+4. Before a Write or Edit, the hook asks GitHub again unless it asked in the
+   last ten seconds, and pulls a change it finds first. A Write that would
+   replace text that just arrived is refused, and Claude is told to read the
+   file again; a change that cannot be merged is refused and left to you. A
+   Read uses the last answer and refreshes it in the background, so an edit
+   made elsewhere within the last minute may reach a read only at the next
+   prompt.
 
 To do this by hand: `memsaga sync` (both directions) or `memsaga pull` (only
 inbound). Details: [two-way sync](#two-way-sync).
