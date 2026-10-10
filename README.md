@@ -10,18 +10,20 @@ history. Two sessions that edit the same file on one day leave no trace of the
 earlier version, and a memory clean-up that deletes or merges files is final.
 
 memsaga keeps one git repository you own, the data repository, and fills it
-from three places:
+from three places, told apart by where a file lives:
 
-1. **Claude Code's own files.** Memory, `CLAUDE.md`, skills, hooks, scripts and
-   (if you want) `settings.json`: the files Claude Code itself reads and
-   rewrites. They are mirrored without changing where they live or how Claude
-   Code writes them.
-2. **Any other file you choose.** A notes file, a draft, a dotfile, a folder
-   of your own under the config directory: whoever edits it, you or Claude, the
-   change is committed.
-3. **Whatever you put in the repository yourself.** It is a normal git
-   repository: add files, edit and push from anywhere. memsaga commits what you
-   add and never deletes it.
+1. **Claude Code's config directory** (`~/.claude`). What Claude Code reads
+   and writes there: memory, `CLAUDE.md`, skills, hooks, scripts and (if you
+   want) `settings.json`, plus folders of your own such as drafts or
+   hand-written mods. They are mirrored without changing where they live or how
+   Claude Code writes them.
+2. **Files elsewhere that you choose.** A notes file, a plan in your home
+   directory, a dotfile: whoever edits it, you or Claude, the change is
+   committed.
+3. **Content that lives only in the repository.** It is a normal git
+   repository: add notes, companion documents (translations or annotated
+   copies of other repositories' docs), anything else; edit and push from
+   anywhere. memsaga commits what you add and never deletes it.
 
 At the end of every turn a hook copies what changed and commits it, one commit
 per turn. Each commit names the session that made the change, by title and by
@@ -36,11 +38,11 @@ flowchart LR
     S["Claude Code sessions<br/>(one or more accounts)"]
     subgraph LIVE["Live files on this machine"]
         direction TB
-        X1["2. Other files you chose<br/>notes, drafts, dotfiles"]
-        L1["1. Claude Code's own files<br/>CLAUDE.md, memory/, skills/,<br/>hooks/, settings"]
+        X1["2. Files elsewhere you choose<br/>notes, plans, dotfiles"]
+        L1["1. Claude Code's config directory<br/>CLAUDE.md, memory/, skills/, hooks/,<br/>settings, mods, drafts"]
     end
     R["Data repository<br/>~/git/memories"]
-    Y["3. Your own content"]
+    Y["3. Content only in the repository<br/>notes, companion docs"]
     GH[("Private GitHub<br/>repository")]
     M2["Machine 2<br/>(same setup)"]
     WEB["GitHub web editor,<br/>a phone"]
@@ -57,19 +59,18 @@ Status: early, in daily use by its author on macOS (CI also runs on Linux).
 Claude Code is the only source today; other agents and sources are on the
 roadmap. Contributor notes: [`docs/architecture.md`](docs/architecture.md).
 Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
-[`docs/design.md`](docs/design.md) (original in Traditional Chinese,
-[`docs/design-zh-tw.md`](docs/design-zh-tw.md)).
+[`docs/design.md`](docs/design.md).
 
 ## Contents
 
 - [Quick start](#quick-start)
 - [What you can do with it](#what-you-can-do-with-it)
-  - Claude Code's own files
+  - Claude Code's config directory
     1. [See what Claude remembered, and when it changed](#1-see-what-claude-remembered-and-when-it-changed)
     2. [Undo a bad edit or a memory clean-up](#2-undo-a-bad-edit-or-a-memory-clean-up)
     3. [Ask Claude about the history](#3-ask-claude-about-the-history)
     4. [Start with the history you already have](#4-start-with-the-history-you-already-have)
-  - Other files, and your own content
+  - Files elsewhere, and content only in the repository
     5. [Version any file Claude edits for you](#5-version-any-file-claude-edits-for-you)
     6. [Add your own files to the repository](#6-add-your-own-files-to-the-repository)
     7. [Keep notes beside a repository without committing them](#7-keep-notes-beside-a-repository-without-committing-them)

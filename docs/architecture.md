@@ -1,8 +1,7 @@
 # memsaga architecture
 
 Engineering notes for contributors. The user-facing description is the
-[README](../README.md); the Traditional Chinese design history is
-[`design-zh-tw.md`](design-zh-tw.md).
+[README](../README.md); the design history is [`design.md`](design.md).
 
 ## The one-paragraph model
 

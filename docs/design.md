@@ -1,7 +1,6 @@
 # Version Control for Claude Code Memory and Settings: Design Document
 
-> **About this document.** This is the design record written in September 2026 while memsaga was built. It was first written in Traditional Chinese ([`design-zh-tw.md`](design-zh-tw.md)); this file is its English translation. Sections that carry a date are kept as history, so they use old names (memvc and config-vc for the tool; ccmem and claude-memory for the data repo) and plans that later changed. The current behaviour is described in [README.md](../README.md), [docs/architecture.md](architecture.md) and [docs/two-way-sync.md](two-way-sync.md).
-> Names of the author's employer and its private repositories (and the short label of the work account) are replaced by placeholders such as `acme`, `webapp`, `team-docs` and `work`.
+> **About this document.** This is the design record written in September 2026 while memsaga was built. Sections that carry a date are kept as history, so they use old names (memvc and config-vc for the tool; ccmem and claude-memory for the data repo) and plans that later changed. The current behaviour is described in [README.md](../README.md), [docs/architecture.md](architecture.md) and [docs/two-way-sync.md](two-way-sync.md).
 
 Version 0.1, 2026-09-13. Authors: author and Claude Code (model Fable 5.1). Status: the design is final enough to build Phase 1. It waits for author to decide the open questions (§12) before it is installed.
 
