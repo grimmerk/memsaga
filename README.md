@@ -70,10 +70,17 @@ or the live path.
 
 ## What is mirrored
 
-Per config directory (root), by default: `CLAUDE.md`, `skills/`, `hooks/`,
-`scripts/`, and every non-empty `projects/<slug>/memory/`; `settings.json` is
-opt-in (`files = ["CLAUDE.md", "settings.json"]`). Never: transcripts, `~/.claude.json`, caches, `file-history`, plugins, and Claude Code's
-own synced skills under `skills/synced/`.
+Per config directory (root), by default, what you write there that Claude Code
+reads ([its directory reference](https://code.claude.com/docs/en/claude-directory)):
+`CLAUDE.md`, `keybindings.json`, `skills/`, `commands/`, `agents/`,
+`agent-memory/`, `rules/`, `output-styles/`, `themes/`, `workflows/`, and every
+non-empty `projects/<slug>/memory/`. Also `hooks/` and `scripts/`, which Claude
+Code does not read itself but which hold what `settings.json` points at by
+convention. A folder you add yourself, such as `drafts/` or hand-written
+`mods/`, goes in `dirs`. `settings.json` is opt-in
+(`files = ["CLAUDE.md", "keybindings.json", "settings.json"]`). Never:
+transcripts, `~/.claude.json`, caches, `file-history`, plugins, and Claude
+Code's own synced skills under `skills/synced/` and `skills/.trash/`.
 
 Repo layout:
 
@@ -114,13 +121,13 @@ prints the effective values.
 
 ```toml
 repo = "~/git/memories"
-files = ["CLAUDE.md"]
-dirs = ["skills", "hooks", "scripts"]
+files = ["CLAUDE.md", "keybindings.json"]
+dirs = ["skills", "commands", "agents", "agent-memory", "rules", "output-styles", "themes", "workflows", "hooks", "scripts"]
 memory = true
 exclude = ["*.codev-bak*", "*.codev-tmp-*", ".DS_Store", "__pycache__"]
 settings_ignore_keys = ["model", "effortLevel", "modelSettings"]  # dropped from the mirrored settings.json: Claude Code rewrites them on every /model and /effort
 exclude_projects = []            # slug globs
-exclude_paths = ["skills/synced"] # root-relative subtrees
+exclude_paths = ["skills/synced", "skills/.trash"] # root-relative subtrees
 extra_files = []                  # single files outside every root, e.g. "~/.config/codev/accounts.json"
 granularity = "turn"             # or "edit": one commit per Write/Edit
 reporter = true                  # one-line notice in the terminal after a commit
