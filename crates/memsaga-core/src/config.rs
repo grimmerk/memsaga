@@ -75,8 +75,26 @@ impl Default for Config {
         Config {
             repo: expand_tilde("~/git/memories"),
             roots: Vec::new(),
-            files: vec!["CLAUDE.md".into()],
-            dirs: vec!["skills".into(), "hooks".into(), "scripts".into()],
+            // What the user writes in a config directory. Claude Code reads
+            // CLAUDE.md, keybindings.json and the directories from skills to
+            // agent-memory itself (code.claude.com/docs/en/claude-directory);
+            // hooks/ and scripts/ are only a convention for what settings.json
+            // points at. A missing one costs nothing.
+            files: vec!["CLAUDE.md".into(), "keybindings.json".into()],
+            dirs: [
+                "skills",
+                "commands",
+                "agents",
+                "agent-memory",
+                "rules",
+                "output-styles",
+                "themes",
+                "workflows",
+                "hooks",
+                "scripts",
+            ]
+            .map(String::from)
+            .to_vec(),
             memory: true,
             exclude: vec![
                 "*.codev-bak*".into(),
@@ -85,7 +103,9 @@ impl Default for Config {
                 "__pycache__".into(),
             ],
             exclude_projects: Vec::new(),
-            exclude_paths: vec!["skills/synced".into()],
+            // Claude Code's own copies of skills synced from claude.ai, and
+            // where it moves the ones the sync removed.
+            exclude_paths: vec!["skills/synced".into(), "skills/.trash".into()],
             extra_files: Vec::new(),
             settings_ignore_keys: vec![
                 "model".into(),

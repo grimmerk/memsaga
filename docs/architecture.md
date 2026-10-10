@@ -8,7 +8,9 @@ Engineering notes for contributors. The user-facing description is the
 A *root* is a Claude Code config directory (`~/.claude`, or any directory
 launched with `CLAUDE_CONFIG_DIR`). Each root holds files worth versioning
 (global `CLAUDE.md`, per-project auto-memory under `projects/<slug>/memory/`,
-`skills/`, `hooks/`, `scripts/`) next to a lot that is not (transcripts,
+the user directories Claude Code reads such as `skills/`, `agents/` and
+`commands/`, and by convention `hooks/` and `scripts/`; the full default list is
+in the README) next to a lot that is not (transcripts,
 caches, OAuth state). memsaga writes into a root only on purpose (`restore`,
 and two-way sync's `sync` / `pull`, see `two-way-sync.md`). It copies an allowlist from
 every root into a *mirror* git repo, one subtree per root, and commits when the
@@ -30,7 +32,7 @@ Claude Code ─────────┬────────────�
 | Module | Owns | Key facts |
 |---|---|---|
 | `config` | `Config`, `Root`, `Granularity`; TOML load + env overrides; root discovery | Precedence: `[[roots]]` in the file, else codev's `accounts.json`, else `~/.claude`. `current_root()` reads `CLAUDE_CONFIG_DIR`, which hooks inherit from the `claude` process. |
-| `roots` | `Scope`: what is in scope for a root (`entries`) and whether an absolute path is (`contains`) | `contains` never touches the filesystem: the PostToolUse fast path must stay at process-startup cost. Exclusions: basename globs (`exclude`), slug globs (`exclude_projects`), root-relative subtrees (`exclude_paths`, default `skills/synced`). |
+| `roots` | `Scope`: what is in scope for a root (`entries`) and whether an absolute path is (`contains`) | `contains` never touches the filesystem: the PostToolUse fast path must stay at process-startup cost. Exclusions: basename globs (`exclude`), slug globs (`exclude_projects`), root-relative subtrees (`exclude_paths`, default `skills/synced` and `skills/.trash`). An excluded path that was mirrored before is pruned from the repository by the next sweep. |
 | `slug` | Claude Code's project-dir encoding and the reverse map | `encode` = every non-alphanumeric byte → `-`. The reverse map comes from each root's `history.jsonl` (`project` field per prompt), never from parsing the slug. |
 | `mirror` | One-way copy of a root into `repo/<label>/` | rsync semantics: copy when size or mtime differ, preserve mtime, delete extras, keep symlinks. A top-level symlink into another root is rewritten relative (`../claude/CLAUDE.md`); a symlink inside a mirrored dir that escapes the tree becomes absolute. Deletion is confined to tool-owned subtrees; `.git` is never removed. |
 | `git` | Spawning the system `git` | Always `-c commit.gpgsign=false` and `GIT_TERMINAL_PROMPT=0`: a hook has no TTY and must never wait on a signing or credential prompt. No libgit2, so the user's credential helpers and config apply. |
