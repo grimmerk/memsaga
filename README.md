@@ -116,10 +116,10 @@ while working with you, which often includes details of your work. The default
 scope leaves out `~/.claude.json` (where Claude Code keeps its login),
 credentials and transcripts, and takes `settings.json` only if you ask. memsaga
 does not scan what it copies for secrets, so keep credentials out of anything
-you add to `files`, `dirs` or `extra_files`. To keep one project's memory out
-entirely,
-for example client work, exclude it by its Claude Code directory name:
-`exclude_projects = ["*-git-client-*"]`.
+you add to `files`, `dirs` or `extra_files`. To keep a project's memory out
+entirely, for example client work, exclude it by its Claude Code directory
+name. For `~/git/client` and every project below it:
+`exclude_projects = ["*-git-client", "*-git-client-*"]`.
 
 ## What you can do with it
 
