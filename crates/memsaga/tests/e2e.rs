@@ -363,6 +363,56 @@ fn excludes_apply_to_names_and_projects() {
 }
 
 #[test]
+fn default_scope_covers_claude_codes_user_directories() {
+    // The exclusions before skills/.trash joined the defaults, so the first
+    // import mirrors it as older versions did.
+    let old_excludes = "exclude_paths = [\"skills/synced\"]\n";
+    let fx = fixture("turn", old_excludes);
+    // What Claude Code reads from a config directory besides CLAUDE.md and
+    // skills (code.claude.com/docs/en/claude-directory).
+    let user = [
+        "keybindings.json",
+        "commands/deploy.md",
+        "agents/reviewer.md",
+        "agent-memory/reviewer/MEMORY.md",
+        "rules/style.md",
+        "output-styles/terse.md",
+        "themes/dusk.json",
+        "workflows/release.js",
+    ];
+    for f in user {
+        write(&fx.claude.join(f), "x\n");
+    }
+    // Where Claude Code moves synced skills the claude.ai sync removed.
+    write(
+        &fx.claude.join("skills/.trash/123-ab/docx/SKILL.md"),
+        "vendor\n",
+    );
+    run(&fx, &["init", "--no-backfill"]);
+    let files = head_files(&fx);
+    for f in user {
+        assert!(
+            files.iter().any(|p| p == &format!("claude/{f}")),
+            "{f} missing: {files:?}"
+        );
+    }
+    assert!(
+        files.iter().any(|f| f.contains("skills/.trash")),
+        "{files:?}"
+    );
+    // With the defaults, the next sweep removes the copy already mirrored.
+    let cfg = fs::read_to_string(&fx.cfg).unwrap();
+    fs::write(&fx.cfg, cfg.replace(old_excludes, "")).unwrap();
+    run(&fx, &["sweep"]);
+    let files = head_files(&fx);
+    assert!(
+        !files.iter().any(|f| f.contains("skills/.trash")),
+        "{files:?}"
+    );
+    assert!(files.iter().any(|f| f == "claude/agents/reviewer.md"));
+}
+
+#[test]
 fn exclude_paths_prune_subtrees_and_outside_symlinks_become_absolute() {
     let fx = fixture("turn", "");
     // Claude Code's synced skills live under skills/synced: excluded by default.
