@@ -364,7 +364,10 @@ fn excludes_apply_to_names_and_projects() {
 
 #[test]
 fn default_scope_covers_claude_codes_user_directories() {
-    let fx = fixture("turn", "");
+    // The exclusions before skills/.trash joined the defaults, so the first
+    // import mirrors it as older versions did.
+    let old_excludes = "exclude_paths = [\"skills/synced\"]\n";
+    let fx = fixture("turn", old_excludes);
     // What Claude Code reads from a config directory besides CLAUDE.md and
     // skills (code.claude.com/docs/en/claude-directory).
     let user = [
@@ -394,9 +397,19 @@ fn default_scope_covers_claude_codes_user_directories() {
         );
     }
     assert!(
+        files.iter().any(|f| f.contains("skills/.trash")),
+        "{files:?}"
+    );
+    // With the defaults, the next sweep removes the copy already mirrored.
+    let cfg = fs::read_to_string(&fx.cfg).unwrap();
+    fs::write(&fx.cfg, cfg.replace(old_excludes, "")).unwrap();
+    run(&fx, &["sweep"]);
+    let files = head_files(&fx);
+    assert!(
         !files.iter().any(|f| f.contains("skills/.trash")),
         "{files:?}"
     );
+    assert!(files.iter().any(|f| f == "claude/agents/reviewer.md"));
 }
 
 #[test]
