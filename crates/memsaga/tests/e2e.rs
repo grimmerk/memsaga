@@ -2010,6 +2010,76 @@ fn a_prompt_names_changed_files_the_session_used() {
     );
 }
 
+#[test]
+fn a_diff_preview_of_a_file_that_keeps_changing_is_not_a_hand_edit() {
+    // `memsaga diff` writes the live copy into the clone without committing.
+    // When the live file changes again before the next sweep, that preview
+    // copy matches neither HEAD nor the live file, and must still not be
+    // taken for an edit made in the repository.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let live = fx.claude.join("projects/-h-git-a/memory/one.md");
+    let tick = || std::thread::sleep(std::time::Duration::from_millis(1100));
+    tick();
+    fs::write(&live, "fact v2\n").unwrap();
+    run(&fx, &["diff"]);
+    tick();
+    fs::write(&live, "fact v3\n").unwrap();
+    // A tool call on the file looks for a hand edit in the clone first.
+    hook(&fx, &pre_tool("Edit", &live, "s1"));
+    let incoming = status_json(&fx)["incoming"].clone();
+    assert!(incoming.as_object().unwrap().is_empty(), "{incoming}");
+    // And so does the next sweep.
+    hook(&fx, &stop("s1"));
+    let incoming = status_json(&fx)["incoming"].clone();
+    assert!(incoming.as_object().unwrap().is_empty(), "{incoming}");
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "fact v3\n"
+    );
+    // A real hand edit after a preview is still caught.
+    tick();
+    fs::write(&live, "fact v4\n").unwrap();
+    run(&fx, &["diff"]);
+    tick();
+    fs::write(
+        fx.repo.join("claude/memory/-h-git-a/one.md"),
+        "edited in the clone\n",
+    )
+    .unwrap();
+    hook(&fx, &stop("s2"));
+    let incoming = status_json(&fx)["incoming"].clone();
+    assert!(
+        incoming["claude/memory/-h-git-a/one.md"].is_object(),
+        "{incoming}"
+    );
+}
+
+#[test]
+fn a_live_file_deleted_after_a_diff_preview_stays_deleted() {
+    // The preview copies a new live file into the clone; the live file is
+    // then deleted. Taken for a hand edit, the copy would be kept and settled
+    // back into the live tree, bringing the deleted file back.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let live = fx.claude.join("projects/-h-git-a/memory/scratch.md");
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    fs::write(&live, "temporary\n").unwrap();
+    run(&fx, &["diff"]);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    fs::remove_file(&live).unwrap();
+    hook(&fx, &stop("s1"));
+    run(&fx, &["sync"]);
+    let incoming = status_json(&fx)["incoming"].clone();
+    assert!(incoming.as_object().unwrap().is_empty(), "{incoming}");
+    assert!(!live.exists(), "the deleted live file came back");
+    assert!(
+        !head_files(&fx).iter().any(|f| f.ends_with("scratch.md")),
+        "{:?}",
+        head_files(&fx)
+    );
+}
+
 fn pre_tool(tool: &str, path: &Path, session: &str) -> String {
     hook_json(
         "PreToolUse",
