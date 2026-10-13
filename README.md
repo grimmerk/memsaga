@@ -33,28 +33,6 @@ repository can live on GitHub and be shared by several machines and Claude Code
 accounts; an edit made in one place (another machine, GitHub's web editor, a
 phone) reaches the live files everywhere else.
 
-```mermaid
-flowchart LR
-    S["Claude Code sessions<br/>(one or more accounts)"]
-    subgraph LIVE["Live files on this machine"]
-        direction TB
-        X1["2. Files elsewhere you choose<br/>notes, plans, dotfiles"]
-        L1["1. Claude Code's config directory<br/>CLAUDE.md, memory/, skills/, hooks/,<br/>settings, mods, drafts"]
-    end
-    R["Data repository<br/>~/git/memories"]
-    Y["3. Content only in the repository<br/>notes, companion docs"]
-    GH[("Private GitHub<br/>repository")]
-    M2["Machine 2<br/>(same setup)"]
-    WEB["GitHub web editor,<br/>a phone"]
-    S -- "write" --> LIVE
-    LIVE -- "memsaga hooks,<br/>end of turn:<br/>copy and commit" --> R
-    Y -- "add, commit" --> R
-    R -. "edits made<br/>elsewhere" .-> LIVE
-    R <-- "push / pull" --> GH
-    GH <-- "push / pull" --> M2
-    WEB -- "edit" --> GH
-```
-
 Status: early, in daily use by its author on macOS (CI also runs on Linux).
 Claude Code is the only source today; other agents and sources are on the
 roadmap. Contributor notes: [`docs/architecture.md`](docs/architecture.md).
@@ -88,9 +66,9 @@ Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
 - [Roadmap](#roadmap)
 - [The name](#the-name)
 
-Diagrams: the overview above (where files flow), and one in
-[use case 10](#10-edit-from-anywhere) (what happens when a file changed
-elsewhere).
+Pictures: the image at the top (where files come from, and where the history
+goes), and a diagram in [use case 10](#10-edit-from-anywhere) (what happens
+when a file changed elsewhere).
 
 ## Quick start
 
