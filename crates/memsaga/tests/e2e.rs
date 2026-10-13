@@ -2055,6 +2055,31 @@ fn a_diff_preview_of_a_file_that_keeps_changing_is_not_a_hand_edit() {
     );
 }
 
+#[test]
+fn a_live_file_deleted_after_a_diff_preview_stays_deleted() {
+    // The preview copies a new live file into the clone; the live file is
+    // then deleted. Taken for a hand edit, the copy would be kept and settled
+    // back into the live tree, bringing the deleted file back.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let live = fx.claude.join("projects/-h-git-a/memory/scratch.md");
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    fs::write(&live, "temporary\n").unwrap();
+    run(&fx, &["diff"]);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    fs::remove_file(&live).unwrap();
+    hook(&fx, &stop("s1"));
+    run(&fx, &["sync"]);
+    let incoming = status_json(&fx)["incoming"].clone();
+    assert!(incoming.as_object().unwrap().is_empty(), "{incoming}");
+    assert!(!live.exists(), "the deleted live file came back");
+    assert!(
+        !head_files(&fx).iter().any(|f| f.ends_with("scratch.md")),
+        "{:?}",
+        head_files(&fx)
+    );
+}
+
 fn pre_tool(tool: &str, path: &Path, session: &str) -> String {
     hook_json(
         "PreToolUse",
