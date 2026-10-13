@@ -1,0 +1,4 @@
+{
+  "themeVariables": { "fontFamily": "Helvetica, Arial, sans-serif", "fontSize": "15px" },
+  "sequence": { "noteMargin": 14, "boxMargin": 12, "actorMargin": 60, "wrap": false }
+}

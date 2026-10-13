@@ -72,7 +72,7 @@ Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
 - [The name](#the-name)
 
 Pictures: the image at the top (where files come from, and where the history
-goes), and a diagram in [use case 10](#10-edit-from-anywhere) (what happens
+goes), and a sequence diagram in [use case 10](#10-edit-from-anywhere) (what happens
 when a file changed elsewhere).
 
 ## Quick start
@@ -282,22 +282,10 @@ You can fix a memory file in GitHub's web editor, on a phone, on another
 machine, or by hand in the local clone. memsaga does not overwrite such an edit.
 It brings it to the live file:
 
-```mermaid
-sequenceDiagram
-    participant You as You (GitHub web editor)
-    participant GH as GitHub
-    participant Hook as memsaga hooks
-    participant Live as Live file
-    participant Model as Claude
-    You->>GH: edit and commit a memory file
-    Note over Hook: next session start or prompt
-    Hook->>GH: did origin move? (at most once a minute)
-    GH-->>Hook: yes
-    Hook->>Hook: merge origin into the data repository
-    Hook->>Live: write the new version (merge if both sides changed)
-    Hook->>Model: notice: this file changed, here are the changed lines
-    Model->>Live: reads the file again before using it
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/sync-sequence-dark.png">
+  <img src="docs/assets/sync-sequence-light.png" width="100%" alt="Sequence: you edit and commit a memory file in GitHub's web editor. At the next session start or prompt, the memsaga hooks ask GitHub whether origin moved (at most once a minute); it did, so they merge origin into the data repository, write the new version to the live file (merging if both sides changed), and send Claude a notice with the changed lines. Claude reads the file again before using it.">
+</picture>
 
 1. At session start and at each prompt, a hook asks GitHub whether the
    repository moved. This takes about half a second and happens at most once a
