@@ -90,6 +90,48 @@ pub fn rename_incoming(repo: &Path, incoming: &mut Incoming) -> Result<bool> {
 }
 
 /// The caller holds the sweep lock. An empty list removes the file.
+/// Copies a `diff` preview wrote into the clone and left uncommitted, as
+/// repo-relative path -> blob id. Until the next sweep replaces them, such a
+/// copy is memsaga's own and not a hand edit, even after the live file has
+/// changed again (it then equals neither HEAD nor the live file).
+const PREVIEW: &str = "preview.json";
+
+pub fn load_preview(state: &State) -> BTreeMap<String, String> {
+    std::fs::read_to_string(state.marker(PREVIEW))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+/// Add the files a preview wrote. The caller holds the sweep lock.
+pub fn record_preview(cfg: &Config, state: &State, written: &[PathBuf]) -> Result<()> {
+    if written.is_empty() {
+        return Ok(());
+    }
+    let git = Git::new(&cfg.repo);
+    let mut preview = load_preview(state);
+    for path in written {
+        let Ok(rel) = path.strip_prefix(&cfg.repo) else {
+            continue;
+        };
+        if let Some(blob) = hash_of(&git, path) {
+            preview.insert(rel.to_string_lossy().to_string(), blob);
+        }
+    }
+    state.write_marker(PREVIEW, &serde_json::to_string_pretty(&preview)?)
+}
+
+/// A sweep has mirrored over every preview copy (or kept a hand edit made
+/// since): the record has done its job. The caller holds the sweep lock.
+pub fn clear_preview(state: &State) {
+    state.remove(PREVIEW);
+}
+
+/// Is the clone's `rel` exactly what a `diff` preview wrote there?
+fn is_preview_copy(preview: &BTreeMap<String, String>, rel: &str, blob: Option<&String>) -> bool {
+    blob.is_some() && preview.get(rel) == blob
+}
+
 pub fn save_incoming(state: &State, incoming: &Incoming) -> Result<()> {
     if incoming.is_empty() {
         state.remove(INCOMING);
@@ -207,6 +249,8 @@ pub struct Guard {
     found: RefCell<BTreeMap<String, Option<String>>>,
     /// Keys the mirror drops from `settings.json`, to compare like with like.
     settings_ignore_keys: Vec<String>,
+    /// Copies an uncommitted `diff` preview wrote (`load_preview`).
+    preview: BTreeMap<String, String>,
 }
 
 impl Guard {
@@ -217,6 +261,7 @@ impl Guard {
             protected: incoming.keys().map(|k| cfg.repo.join(k)).collect(),
             found: RefCell::new(BTreeMap::new()),
             settings_ignore_keys: cfg.settings_ignore_keys.clone(),
+            preview: load_preview(&State::new(cfg.state_dir())),
         }
     }
 
@@ -247,8 +292,12 @@ impl Guard {
         let rel = rel.to_string_lossy().to_string();
         let git = Git::new(&self.repo);
         let base = blob_at(&git, "HEAD", &rel);
-        if base.is_some() && base == hash_of(&git, dst) {
+        let now = hash_of(&git, dst);
+        if base.is_some() && base == now {
             return true; // equal to what memsaga committed
+        }
+        if is_preview_copy(&self.preview, &rel, now.as_ref()) {
+            return true; // memsaga's own copy from a `diff` preview
         }
         if src.is_some_and(|s| self.is_mirror_of(dst, s)) {
             return true; // memsaga's own copy, e.g. left by a `diff` preview
@@ -852,7 +901,12 @@ pub fn note_hand_edit(cfg: &Config, repo_rel: &str) -> Result<bool> {
         return Ok(false);
     }
     let base = blob_at(&git, "HEAD", repo_rel);
-    if base.is_some() && base == hash_of(&git, &path) {
+    let now = hash_of(&git, &path);
+    if base.is_some() && base == now {
+        return Ok(false);
+    }
+    // What a `diff` preview wrote: memsaga's own copy, however the live file moved on.
+    if is_preview_copy(&load_preview(&state), repo_rel, now.as_ref()) {
         return Ok(false);
     }
     // Equal to the live file: a sweep that stopped before committing, not an edit.

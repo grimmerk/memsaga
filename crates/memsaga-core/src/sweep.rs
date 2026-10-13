@@ -179,10 +179,12 @@ pub fn refresh_mirror(cfg: &Config, scope: &Scope) -> Result<mirror::Stats> {
         stats.copied += s.copied + s.linked;
         stats.deleted += s.deleted;
         stats.restat.extend(s.restat);
+        stats.written.extend(s.written);
     }
     let s = mirror::sync_self_and_extras(scope)?;
     stats.copied += s.copied;
     stats.restat.extend(s.restat);
+    stats.written.extend(s.written);
     index::write_index(cfg, scope)?;
     Ok(stats)
 }
@@ -207,7 +209,12 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
         state.mtime("last-sweep"),
         &incoming,
     ));
-    let restat = refresh_mirror(cfg, &scope)?.restat;
+    let stats = refresh_mirror(cfg, &scope)?;
+    // The copies stay in the clone uncommitted; remember them, or a live file
+    // that changes again before the next sweep would make its preview copy
+    // look like a hand edit.
+    crate::sync::record_preview(cfg, &state, &stats.written)?;
+    let restat = stats.restat;
     // Stage into a throwaway index so new files show up in the diff without
     // touching whatever the user may have staged in the real one.
     let temp_index = |args: &[&str]| -> Result<String> {
@@ -288,6 +295,9 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         .map(|r| memory_renames_pending(cfg, r))
         .sum();
     let stats = refresh_mirror(cfg, &scope)?;
+    // Every preview copy is now replaced by the live file or kept as a hand
+    // edit made since; it is committed below either way.
+    crate::sync::clear_preview(&state);
     if let Some(g) = &scope.guard {
         if crate::sync::record_hand_edits(&mut incoming, g.take_found()) > 0 {
             crate::sync::save_incoming(&state, &incoming)?;

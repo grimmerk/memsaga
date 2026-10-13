@@ -25,6 +25,9 @@ pub struct Stats {
     /// size and an mtime in the same second. `git add` skips such a file
     /// unless told to re-read it (`git add --renormalize`).
     pub restat: Vec<PathBuf>,
+    /// Every repository file a copy created or replaced (not links or
+    /// deletions): what a `diff` preview leaves uncommitted in the clone.
+    pub written: Vec<PathBuf>,
 }
 
 impl Stats {
@@ -33,15 +36,20 @@ impl Stats {
         self.deleted += o.deleted;
         self.linked += o.linked;
         self.restat.extend(o.restat);
+        self.written.extend(o.written);
     }
 
     fn count(&mut self, c: Copied, dst: &Path) {
         match c {
             Copied::No => {}
-            Copied::Yes => self.copied += 1,
+            Copied::Yes => {
+                self.copied += 1;
+                self.written.push(dst.to_path_buf());
+            }
             Copied::SameStat => {
                 self.copied += 1;
                 self.restat.push(dst.to_path_buf());
+                self.written.push(dst.to_path_buf());
             }
         }
     }
