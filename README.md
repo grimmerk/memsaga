@@ -3,6 +3,11 @@
 Version control and two-way sync for the files your AI coding agent works
 with: what it remembers, how you configure it, and anything else you choose.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.png">
+  <img src="docs/assets/hero-light.png" width="100%" alt="memsaga: three sources (Claude Code's config directory in every account, files elsewhere you choose, and content kept only in the repository) become a readable history in a git repository you own, each change named after its session, from fixing a login redirect to restoring CLAUDE.md to Monday's version. The repository syncs both ways between this machine, a private GitHub repository and another machine, and edits made on the web or a phone come back.">
+</picture>
+
 Claude Code keeps your global instructions in `~/.claude/CLAUDE.md`, writes
 what it learns about each project into `~/.claude/projects/<slug>/memory/`,
 and reads your skills, hooks and scripts from `~/.claude/`. None of that has
