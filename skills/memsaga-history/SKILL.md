@@ -1,6 +1,6 @@
 ---
 name: memsaga-history
-description: Look up the version history of Claude Code's own memory and config — global CLAUDE.md, per-project auto-memory files (MEMORY.md and topic files), and user skills — which memsaga mirrors into a git repo (`memsaga config` shows the path; default ~/git/memories) on every turn. Use when the user asks what a memory or CLAUDE.md said last week, when a memory was added/changed/deleted and by which session, wants to diff two versions, wants to recover a deleted or overwritten memory file, or mentions memsaga, memories, the old names memvc / ccmem, or "memory 歷史/版本/還原".
+description: Look up the version history of Claude Code's own memory and config — global CLAUDE.md, per-project auto-memory files (MEMORY.md and topic files), and user skills — which memsaga mirrors into a git repo (`memsaga config` shows the path; default ~/git/memories) on every turn. Use when the user asks what a memory or CLAUDE.md said last week, when a memory was added/changed/deleted and by which session, wants to diff two versions, wants to recover a deleted or overwritten memory file, or mentions memsaga, memories, or the old names memvc / ccmem. The user may ask in any language (for example 記憶の履歴, memory 歷史/版本/還原; examples only).
 ---
 
 # memsaga history
