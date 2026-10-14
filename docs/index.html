@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- The project's landing page. GitHub Pages serves docs/ as plain files (docs/.nojekyll turns
+     Jekyll off); pictures and recordings are in docs/assets/. Example data only. -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="memsaga: your AI agent's memory, kept as history">
+<meta property="og:description" content="Version control and two-way sync for Claude Code's memory, instructions and skills: every change becomes a commit in a git repository you own, named after the conversation that made it.">
+<meta property="og:url" content="https://grimmerk.github.io/memsaga/">
+<meta property="og:image" content="https://grimmerk.github.io/memsaga/assets/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23A8681A'/%3E%3Ctext x='16' y='23' font-family='Arial,sans-serif' font-size='20' font-weight='700' text-anchor='middle' fill='white'%3Em%3C/text%3E%3C/svg%3E">
+<title>memsaga</title>
+<meta name="description" content="Version control and two-way sync for the files your AI coding agent works with: what it remembers, how you configure it, and anything else you choose.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column (max 1120px) of full-width bands. The story runs promise (hero),
+   proof (recording), who it is for, what goes in, how it runs, how edits come back, why it is
+   safe, then setup. Palette and faces come from docs/assets/hero.html: amber = history and
+   commit ids, teal = anything that moves between places. */
+:root {
+  --page: #EEF1F5;
+  --surface: #FFFFFF;
+  --card: #F6F8FB;
+  --ink: #17202C;
+  --muted: #5B6575;
+  --line: #D3D9E2;
+  --dots: #DCE2EA;
+  --accent: #A8681A;
+  --sync: #17766F;
+  --removed: #C2412F;
+  --code-bg: #17202C;
+  --code-ink: #E6EAF1;
+  --code-dim: #8E9AAB;
+  --code-line: #2A3546;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #0B1017; --surface: #111824; --card: #172030; --ink: #E6EAF1; --muted: #9AA5B5;
+    --line: #2A3546; --dots: #1C2533; --accent: #E5A945; --sync: #4FB8AE; --removed: #F08A7A;
+    --code-bg: #070B11; --code-ink: #E6EAF1; --code-dim: #8E9AAB; --code-line: #1F2938; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --page: #0B1017; --surface: #111824; --card: #172030; --ink: #E6EAF1; --muted: #9AA5B5;
+  --line: #2A3546; --dots: #1C2533; --accent: #E5A945; --sync: #4FB8AE; --removed: #F08A7A;
+  --code-bg: #070B11; --code-ink: #E6EAF1; --code-dim: #8E9AAB; --code-line: #1F2938; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; background: var(--page); color: var(--ink); font: 400 1.0625rem/1.6 var(--body); }
+a { color: var(--sync); text-underline-offset: .18em; }
+a:focus-visible, button:focus-visible, video:focus-visible { outline: 2px solid var(--sync); outline-offset: 2px; border-radius: 4px; }
+code { font-family: var(--mono); font-size: .88em; }
+img, video { max-width: 100%; display: block; }
+
+.wrap { max-width: 1120px; margin: 0 auto; padding-inline: 20px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
+h2 { font-weight: 700; font-size: clamp(1.75rem, 3.6vw, 2.5rem); line-height: 1.08; letter-spacing: -.02em; }
+h3 { font-weight: 700; font-size: 1.2rem; line-height: 1.25; }
+p { margin: 0; }
+.eyebrow { font: 600 .78rem/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+.lede { color: var(--muted); font-size: 1.125rem; max-width: 62ch; }
+.small { font-size: .9rem; color: var(--muted); }
+.band { padding-block: clamp(56px, 8vw, 96px); }
+.band + .band { border-top: 1px solid var(--line); }
+.band-head { display: grid; gap: 14px; margin-bottom: 36px; max-width: 760px; }
+
+/* ---------- top bar ---------- */
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: color-mix(in srgb, var(--page) 88%, transparent);
+  backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+.top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 12px; }
+.brand { display: flex; align-items: center; gap: 10px; font: 700 1.1rem/1 var(--display); color: var(--ink); text-decoration: none; }
+.mark { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; background: var(--accent); color: var(--surface);
+  font: 700 1.05rem/1 var(--display); }
+.top nav { display: flex; gap: 4px 18px; flex-wrap: wrap; justify-content: flex-end; font-size: .95rem; }
+.top nav a { color: var(--muted); text-decoration: none; }
+.top nav a:hover { color: var(--ink); }
+@media (max-width: 640px) { .top nav .opt { display: none; } }
+
+/* ---------- hero ---------- */
+.hero { padding-block: clamp(44px, 7vw, 88px) clamp(48px, 7vw, 80px);
+  background-image: radial-gradient(var(--dots) 1.2px, transparent 1.3px); background-size: 22px 22px; }
+.hero .wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: clamp(28px, 5vw, 64px); align-items: center; }
+@media (max-width: 880px) { .hero .wrap { grid-template-columns: minmax(0, 1fr); } }
+.thesis { display: grid; gap: 22px; }
+.thesis h1 { font-size: clamp(2.5rem, 6vw, 4.1rem); line-height: 1.02; letter-spacing: -.03em; }
+.thesis h1 em { font-style: normal; color: var(--accent); }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 999px; font: 700 .98rem/1 var(--body);
+  text-decoration: none; border: 1.5px solid var(--ink); color: var(--ink); background: transparent; }
+.btn.primary { background: var(--ink); color: var(--surface); }
+@media (prefers-reduced-motion: no-preference) { .btn:hover { transform: translateY(-1px); } }
+
+.log { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+  box-shadow: 0 18px 40px -24px color-mix(in srgb, var(--ink) 45%, transparent); min-width: 0; }
+.log header { display: flex; justify-content: space-between; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line);
+  font: 600 .8rem/1 var(--mono); color: var(--muted); }
+.log header .dots { display: flex; gap: 6px; }
+.log header .dots span { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+.commits { list-style: none; margin: 0; padding: 18px 18px 14px 50px; display: grid; gap: 15px; position: relative; }
+.commits::before { content: ""; position: absolute; left: 24px; top: 26px; bottom: 34px; width: 2px; background: var(--line); }
+.commits li { position: relative; line-height: 1.45; }
+.commits li::before { content: ""; position: absolute; left: -31px; top: 5px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--surface); border: 3px solid var(--accent); }
+.commits li.restore::before { border-color: var(--sync); }
+.when { font: 600 .74rem/1 var(--mono); color: var(--accent); margin-right: 6px; }
+.restore .when { color: var(--sync); }
+.what { font-weight: 700; }
+.meta { color: var(--muted); font-size: .9rem; }
+.meta i { font: 400 .76rem/1 var(--mono); font-style: normal; opacity: .8; margin-left: 6px; }
+.notice { margin: 0 18px 16px; padding: 9px 12px; border-radius: 8px; font: 600 .8rem/1.3 var(--mono); background: var(--surface);
+  border: 1px dashed var(--accent); overflow-wrap: anywhere; }
+.notice span { color: var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  .commits li { animation: rise .5s ease-out both; }
+  .commits li:nth-child(2) { animation-delay: .08s; } .commits li:nth-child(3) { animation-delay: .16s; } .commits li:nth-child(4) { animation-delay: .24s; }
+  .commits li:first-child::before { animation: ping 2.4s ease-out .6s 1; }
+  @keyframes rise { from { transform: translateY(6px); } to { transform: none; } }
+  @keyframes ping { 0% { box-shadow: 0 0 0 0 var(--accent); } 100% { box-shadow: 0 0 0 12px transparent; } }
+}
+
+/* ---------- recordings ---------- */
+.demo { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 32px; align-items: center; }
+@media (max-width: 880px) { .demo { grid-template-columns: minmax(0, 1fr); } }
+.screen { border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: #121314; }
+.screen video { width: 100%; height: auto; cursor: pointer; }
+.demo .copy { display: grid; gap: 12px; align-content: start; }
+.demo .copy p { color: var(--muted); }
+pre.cmd { margin: 0; padding: 12px 14px; border-radius: 8px; background: var(--code-bg); color: var(--code-ink); font: 400 .82rem/1.55 var(--mono);
+  overflow-x: auto; }
+
+/* ---------- people ---------- */
+.people { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+@media (max-width: 760px) { .people { grid-template-columns: minmax(0, 1fr); } }
+.person { display: grid; gap: 10px; align-content: start; padding: 24px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
+.person .who { font: 600 .74rem/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--sync); }
+.person blockquote { margin: 0; font: 700 1.2rem/1.3 var(--display); }
+.person p { color: var(--muted); font-size: .98rem; }
+
+/* ---------- three places ---------- */
+.sources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+@media (max-width: 820px) { .sources { grid-template-columns: minmax(0, 1fr); } }
+.src { display: grid; gap: 10px; align-content: start; padding: 22px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+.src .n { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--ink); color: var(--surface);
+  font: 700 .9rem/1 var(--mono); }
+.src p { color: var(--muted); font-size: .98rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips span { font: 400 .76rem/1 var(--mono); padding: 5px 8px; border-radius: 6px; background: var(--card); border: 1px solid var(--line); color: var(--ink); }
+
+/* ---------- how it runs ---------- */
+.flow { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); counter-reset: s; }
+@media (max-width: 880px) { .flow { grid-template-columns: minmax(0, 1fr); gap: 22px; } }
+.flow li { counter-increment: s; position: relative; padding: 0 22px 0 0; display: grid; gap: 8px; align-content: start; }
+.flow li::before { content: counter(s); display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 50%;
+  border: 2px solid var(--accent); color: var(--accent); background: var(--surface); font: 700 .95rem/1 var(--mono); position: relative; z-index: 1; }
+.flow li::after { content: ""; position: absolute; top: 17px; left: 34px; right: 0; height: 2px; background: var(--line); }
+.flow li:last-child::after { display: none; }
+.flow li.sync::before { border-color: var(--sync); color: var(--sync); }
+.flow p { color: var(--muted); font-size: .97rem; }
+@media (max-width: 880px) {
+  .flow li { padding: 0 0 0 50px; }
+  .flow li::before { position: absolute; left: 0; top: 0; }
+  .flow li::after { top: 40px; left: 16px; width: 2px; height: calc(100% - 18px); right: auto; }
+}
+
+/* ---------- edits come back: three panels ---------- */
+.panels { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; }
+@media (max-width: 880px) { .panels { grid-template-columns: minmax(0, 1fr); gap: 48px; } }
+.panel { position: relative; display: grid; gap: 12px; align-content: start; min-width: 0; }
+.panel p { color: var(--muted); font-size: .97rem; }
+.panel + .panel::before { content: "→"; position: absolute; left: -31px; top: 96px; font: 700 1.4rem/1 var(--body); color: var(--sync); }
+@media (max-width: 880px) { .panel + .panel::before { content: "↓"; left: 50%; top: -38px; transform: translateX(-50%); } }
+.where { font: 600 .74rem/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--sync); }
+.mock { border-radius: 10px; border: 1px solid var(--line); background: var(--surface); font: 400 .8rem/1.55 var(--mono); overflow: hidden;
+  min-height: 160px; display: grid; align-content: start; }
+.mock-bar { padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: .74rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.diff { padding: 10px 0; }
+.diff div { padding: 2px 12px; overflow-wrap: anywhere; }
+.diff .ctx { color: var(--muted); }
+.diff .del { background: color-mix(in srgb, var(--removed) 14%, transparent); }
+.diff .del::before { content: "− "; color: var(--removed); }
+.diff .add { background: color-mix(in srgb, var(--sync) 18%, transparent); font-weight: 600; }
+.diff .add::before { content: "+ "; color: var(--sync); }
+.diff .new { background: color-mix(in srgb, var(--sync) 18%, transparent); font-weight: 600; box-shadow: inset 3px 0 0 var(--sync); }
+.mock-foot { padding: 0 12px 12px; display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.commit-btn { font: 700 .74rem/1 var(--body); padding: 7px 10px; border-radius: 6px; background: var(--sync); color: var(--surface); }
+.pill { font: 600 .72rem/1 var(--mono); padding: 5px 8px; border-radius: 999px; color: var(--sync); border: 1px solid var(--sync); }
+.chat { padding: 12px; gap: 10px; background: var(--card); font-family: var(--body); font-size: .9rem; }
+.bubble { padding: 8px 12px; border-radius: 12px; max-width: 92%; line-height: 1.4; }
+.bubble.you { justify-self: end; background: var(--ink); color: var(--surface); border-bottom-right-radius: 4px; }
+.bubble.claude { justify-self: start; background: var(--surface); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+.bubble.claude .tool { font: 400 .74rem/1 var(--mono); color: var(--accent); }
+.proof { margin-top: 56px; }
+.after { margin-top: 28px; max-width: 72ch; }
+
+/* ---------- guarantees ---------- */
+.promises { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 28px; border-top: 1px solid var(--line); }
+@media (max-width: 820px) { .promises { grid-template-columns: minmax(0, 1fr); } }
+.promise { padding-block: 22px; border-bottom: 1px solid var(--line); display: grid; gap: 6px; align-content: start; }
+.promise h3 { font-size: 1.05rem; }
+.promise p { color: var(--muted); font-size: .97rem; }
+
+/* ---------- use cases ---------- */
+.cases { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 28px 24px; }
+@media (max-width: 960px) { .cases { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .cases { grid-template-columns: minmax(0, 1fr); } }
+.cases h3 { font-size: 1rem; padding-bottom: 10px; border-bottom: 2px solid var(--accent); margin-bottom: 12px; }
+.cases ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.cases li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 6px; font-size: .97rem; line-height: 1.4; }
+.cases li b { font: 600 .8rem/1.6 var(--mono); color: var(--accent); }
+.cases a { color: var(--ink); text-decoration-color: var(--line); }
+.cases a:hover { text-decoration-color: var(--sync); }
+
+/* ---------- install ---------- */
+.install { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 36px; align-items: start; }
+@media (max-width: 880px) { .install { grid-template-columns: minmax(0, 1fr); } }
+.install .band-head { margin-bottom: 0; }
+.term { border-radius: 12px; overflow: hidden; background: var(--code-bg); color: var(--code-ink); min-width: 0; color-scheme: dark; }
+.term header { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--code-line);
+  font: 600 .76rem/1 var(--mono); color: var(--code-dim); }
+.term button { font: 600 .76rem/1 var(--mono); color: var(--code-ink); background: transparent; border: 1px solid var(--code-dim); border-radius: 6px;
+  padding: 6px 10px; cursor: pointer; }
+.term pre { margin: 0; padding: 16px; font: 400 .84rem/1.7 var(--mono); overflow-x: auto; }
+.term .c { color: var(--code-dim); }
+.term .p { color: #E5A945; user-select: none; }
+.steps { margin: 0; padding-left: 1.2em; display: grid; gap: 10px; color: var(--muted); }
+.steps strong { color: var(--ink); }
+.note { margin-top: 4px; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--accent); background: var(--surface); font-size: .95rem; }
+
+/* ---------- not covered ---------- */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: .95rem; }
+th, td { text-align: left; vertical-align: top; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+th { font: 600 .74rem/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); background: var(--card); }
+tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 700; }
+.status { margin-top: 14px; }
+
+/* ---------- companion docs ---------- */
+.trees { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 18px; align-items: center; }
+@media (max-width: 760px) { .trees { grid-template-columns: minmax(0, 1fr); } }
+.tree { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow: hidden; min-width: 0; }
+.tree.mine { border-color: var(--accent); }
+.tree-head { display: grid; gap: 2px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--card); }
+.tree-head strong { font: 600 .85rem/1.3 var(--mono); overflow-wrap: anywhere; }
+.tree-head span { font-size: .82rem; color: var(--muted); }
+.tree ul { list-style: none; margin: 0; padding: 12px 14px; display: grid; gap: 4px; font: 400 .82rem/1.5 var(--mono); }
+.tree li { overflow-wrap: anywhere; }
+.tree li.dir { color: var(--muted); }
+.tree li.in { padding-left: 1.4em; }
+.tree li.hl { color: var(--accent); font-weight: 600; }
+.tree li em { font: 400 .78rem/1.5 var(--body); font-style: normal; color: var(--muted); margin-left: 6px; }
+.tree-link { display: grid; gap: 6px; justify-items: center; text-align: center; font: 600 .72rem/1.3 var(--mono); color: var(--sync); }
+.tree-link::before { content: "→"; font: 700 1.4rem/1 var(--body); }
+@media (max-width: 760px) { .tree-link::before { content: "↓"; } .tree-link br { display: none; } }
+.comp-term { margin-top: 20px; }
+.comp-term pre { font-size: .78rem; }
+.points { margin-top: 28px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: 24px; border-top: 1px solid var(--line); }
+@media (max-width: 960px) { .points { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .points { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---------- footer ---------- */
+footer { border-top: 1px solid var(--line); padding-block: 44px 56px; background: var(--surface); }
+footer .wrap { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 32px; }
+@media (max-width: 760px) { footer .wrap { grid-template-columns: minmax(0, 1fr); } }
+.name { display: grid; gap: 10px; max-width: 58ch; }
+.name p { color: var(--muted); }
+.name .saga { font: 700 1.4rem/1.2 var(--display); color: var(--ink); }
+.name .saga em { font-style: normal; color: var(--accent); }
+.links { display: grid; gap: 8px; align-content: start; font-size: .97rem; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#top"><span class="mark">m</span>memsaga</a>
+    <nav aria-label="Sections">
+      <a class="opt" href="#who">Who it is for</a>
+      <a class="opt" href="#anywhere">Two-way sync</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/grimmerk/memsaga">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+<section class="hero">
+  <div class="wrap">
+    <div class="thesis">
+      <span class="eyebrow">Version control for Claude Code</span>
+      <h1>Your AI agent's memory, <em>kept as history.</em></h1>
+      <p class="lede">Claude Code writes what it learns about you and your projects into files, next to your instructions and skills. None of it has history. memsaga commits every change to a git repository you own, names each commit after the conversation that made it, and brings back the edits you make anywhere else.</p>
+      <div class="cta">
+        <a class="btn primary" href="#install">Install</a>
+        <a class="btn" href="https://github.com/grimmerk/memsaga-example/commits/main">Browse an example history</a>
+      </div>
+      <p class="small">Free and open source (MIT) · macOS and Linux · your data stays in your own repository</p>
+    </div>
+
+    <div class="log" role="img" aria-label="Example history: Tuesday, a session fixing a login redirect updated memory; Wednesday, a memory tidy-up merged duplicates and you added a notes file by hand; Thursday, CLAUDE.md was restored to Monday's version.">
+      <header><span>history · ~/git/memories</span><span class="dots"><span></span><span></span><span></span></span></header>
+      <ol class="commits">
+        <li><span class="when">Tue 14:02</span> <span class="what">Fixed login redirect · memory updated</span><br>
+          <span class="meta">Session: fix login redirect after OAuth <i>a1b2c3d</i></span></li>
+        <li><span class="when">Wed 09:40</span> <span class="what">Tidied memory: merged duplicates</span><br>
+          <span class="meta">Session: weekly memory tidy-up <i>9e41f07</i></span></li>
+        <li><span class="when">Wed 18:15</span> <span class="what">Added notes/decisions.md</span><br>
+          <span class="meta">by you, in the repo <i>7d3e2c1</i></span></li>
+        <li class="restore"><span class="when">Thu 10:03</span> <span class="what">Restored CLAUDE.md to Monday's version</span><br>
+          <span class="meta">after reviewing the diff <i>5c2d8aa</i></span></li>
+      </ol>
+      <p class="notice"><span>memsaga:</span> 2 files committed (a1b2c3d)</p>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="see">
+  <div class="wrap">
+    <div class="band-head">
+      <span class="eyebrow">See it</span>
+      <h2>Every change, and the conversation behind it</h2>
+    </div>
+    <div class="demo">
+      <div class="screen">
+        <video src="assets/demo.mp4#t=2" data-start="2" data-still="20" autoplay muted playsinline preload="auto" aria-label="Terminal recording on example data: a week of memsaga commits, each named after its session; the commit trailers; git log -S finding the session that removed a rule from CLAUDE.md, and the restore that brought it back. Click to pause."></video>
+      </div>
+      <div class="copy">
+        <h3>Find the conversation behind any change</h3>
+        <p>Each commit carries the session's title and ID. Go from a line in <code>CLAUDE.md</code> to the conversation that wrote it, or from a conversation to everything it changed, and reopen it with <code>claude --resume</code>.</p>
+        <pre class="cmd">git log -S 'run the tests first'
+git log --grep 'Session-Title: .*login'</pre>
+        <p class="small">Recorded on example data. <a href="https://github.com/grimmerk/memsaga-example/commits/main">The same history on GitHub</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="who">
+  <div class="wrap">
+    <div class="band-head">
+      <span class="eyebrow">Who it is for</span>
+      <h2>Anyone whose Claude Code knows things worth keeping</h2>
+      <p class="lede">Claude Code is used for more than code. If it keeps notes for you, the notes deserve a history.</p>
+    </div>
+    <div class="people">
+      <div class="person">
+        <span class="who">You write code across many projects</span>
+        <blockquote>"Why is this rule in CLAUDE.md, and who added it?"</blockquote>
+        <p><code>git blame</code> names the commit, and the commit names the conversation. Undo a bad edit with <code>memsaga restore</code>, after reading the diff.</p>
+      </div>
+      <div class="person">
+        <span class="who">You write, research or plan with Claude</span>
+        <blockquote>"It rewrote my style guide. What did it say on Monday?"</blockquote>
+        <p>Your instructions, the facts Claude saved about your work, and any file you point memsaga at, such as <code>~/notes/plan.md</code>, are kept like drafts of a manuscript. Every earlier draft is still there.</p>
+      </div>
+      <div class="person">
+        <span class="who">You work on two machines, or two accounts</span>
+        <blockquote>"I taught it this on my laptop. Does my desktop know?"</blockquote>
+        <p>Memory, skills and hooks reach the other machine the next time you use Claude there. A work account and a personal account each keep their own folder in one repository.</p>
+      </div>
+      <div class="person">
+        <span class="who">You let Claude tidy its own memory</span>
+        <blockquote>"Merge the duplicates, drop what is stale. I will review."</blockquote>
+        <p>The clean-up lands as ordinary commits under one conversation. Keep what helps, and roll back the rest with <code>memsaga restore --all</code>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="what">
+  <div class="wrap">
+    <div class="band-head">
+      <span class="eyebrow">What goes in</span>
+      <h2>One repository, filled from three places</h2>
+      <p class="lede">Nothing moves. Claude Code keeps reading and writing its files where it always has, and memsaga keeps every version of them.</p>
+    </div>
+    <div class="sources">
+      <div class="src">
+        <span class="n">1</span>
+        <h3>Claude Code's config directory</h3>
+        <p>What Claude Code reads and writes in <code>~/.claude</code>, in every account you run.</p>
+        <div class="chips"><span>CLAUDE.md</span><span>memory</span><span>skills</span><span>agents</span><span>commands</span><span>hooks</span><span>mods</span></div>
+      </div>
+      <div class="src">
+        <span class="n">2</span>
+        <h3>Files elsewhere that you choose</h3>
+        <p>A plan in your home directory, a notes file, another tool's config. Whoever edits it, you or Claude, the change is committed.</p>
+        <div class="chips"><span>notes</span><span>plans</span><span>other tools' configs</span></div>
+      </div>
+      <div class="src">
+        <span class="n">3</span>
+        <h3>Content only in the repository</h3>
+        <p>It is a normal git repository. Add your own notes, translations of other repositories' docs, anything. memsaga commits it and never deletes it.</p>
+        <div class="chips"><span>notes</span><span>companion docs</span><span>anything you add</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="how">
+  <div class="wrap">
+    <div class="band-head">
+      <span class="eyebrow">How it runs</span>
+      <h2>On its own, after every reply</h2>
+      <p class="lede">There is nothing to remember to run. The work happens in the background and takes well under a second.</p>
+    </div>
+    <ol class="flow">
+      <li><h3>Claude changes a file</h3><p>A memory, <code>CLAUDE.md</code>, a skill, or a file you listed.</p></li>
+      <li><h3>The reply ends</h3><p>Everything that changed becomes one commit, named after the conversation.</p></li>
+      <li class="sync"><h3>It is pushed</h3><p>To your private GitHub repository, at most every ten minutes and when the session ends.</p></li>
+      <li class="sync"><h3>Your other machine has it</h3><p>The next time you start a session or send a prompt there.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section class="band" id="anywhere">
+  <div class="wrap">
+    <div class="band-head">
+      <span class="eyebrow">Two-way sync</span>
+      <h2>Fix a memory from your phone</h2>
+      <p class="lede">The repository syncs both ways. An edit made on GitHub, on another machine or in the local copy reaches the file Claude reads. A conversation that already read the old text is told what changed.</p>
+    </div>
+    <ol class="panels">
+      <li class="panel">
+        <span class="where">On your phone · GitHub</span>
+        <div class="mock">
+          <div class="mock-bar">memories / claude / memory / HOME-git-webapp / deploys.md</div>
+          <div class="diff">
+            <div class="ctx">Staging deploys on merge to main.</div>
+            <div class="del">Production deploys from a tag.</div>
+            <div class="add">Production deploys every Friday from a tag.</div>
+          </div>
+          <div class="mock-foot"><span class="commit-btn">Commit changes</span></div>
+        </div>
+        <p>You correct a memory in GitHub's web editor.</p>
+      </li>
+      <li class="panel">
+        <span class="where">On your laptop · next session or prompt</span>
+        <div class="mock">
+          <div class="mock-bar">~/.claude/projects/…/memory/deploys.md</div>
+          <div class="diff">
+            <div class="ctx">Staging deploys on merge to main.</div>
+            <div class="new">Production deploys every Friday from a tag.</div>
+          </div>
+          <div class="mock-foot"><span class="pill">↓ from GitHub</span></div>
+        </div>
+        <p>memsaga writes the edit into the file Claude reads. Lines you changed on the laptop meanwhile are kept too.</p>
+      </li>
+      <li class="panel">
+        <span class="where">In Claude Code</span>
+        <div class="mock chat">
+          <div class="bubble you">How does webapp deploy to production?</div>
+          <div class="bubble claude"><span class="tool">Read deploys.md</span><br>Every Friday, from a git tag.</div>
+        </div>
+        <p>Claude reads the file and answers from your correction. Had it already read the old text, it would be told what changed.</p>
+      </li>
+    </ol>
+    <div class="demo proof">
+      <div class="screen">
+        <video src="assets/sync-demo.mp4" data-start="0" data-still="21" autoplay muted playsinline preload="auto" aria-label="A real Claude Code session on example data: deploys.md was edited on GitHub just before; asked how webapp deploys, Claude reads the file again and answers that production deploys every Friday from a git tag. Click to pause."></video>
+      </div>
+      <div class="copy">
+        <h3>The same thing, in a real session</h3>
+        <p>Just before this session, <code>deploys.md</code> was edited on GitHub. Asked how webapp deploys, Claude reads the file and answers from the new text.</p>
+      </div>
+    </div>
+    <p class="small after">Changed the same line in both places? Nothing is overwritten: memsaga leaves both versions as they are and tells you, so you can pick one. <a href="https://github.com/grimmerk/memsaga/blob/main/docs/two-way-sync.md">How two-way sync works</a></p>
+  </div>
+</section>
+
+<section class="band" id="companions">
+  <div class="wrap">
+    <div class="band-head">
+      <span class="eyebrow">Companion docs</span>
+      <h2>Notes that belong with a repository, but not in it</h2>
+      <p class="lede">A translation of a project's docs, your annotated copy of a design, a draft written before the real document exists. Some notes must not be committed to the repository they are about, for example when it belongs to your employer or a client. Ask Claude for one, in any language, and it is filed in your data repository under the source's own path.</p>
+    </div>
+    <div class="trees">
+      <div class="tree">
+        <div class="tree-head"><strong>~/git/webapp</strong><span>the project · not yours to commit to</span></div>
+        <ul>
+          <li class="dir">docs/</li>
+          <li class="in hl">architecture.md</li>
+          <li class="in">review-process.md</li>
+          <li>README.md</li>
+        </ul>
+      </div>
+      <div class="tree-link" aria-hidden="true"><span>same path, <br>plus the language</span></div>
+      <div class="tree mine">
+        <div class="tree-head"><strong>companion/webapp</strong><span>in your data repository</span></div>
+        <ul>
+          <li class="dir">_notes/</li>
+          <li class="in">pr-2107-review.md <em>note</em></li>
+          <li class="dir">docs/</li>
+          <li class="in hl">architecture.zh-tw.md <em>translation</em></li>
+          <li class="in">new-design.zh-tw.md <em>draft, no source yet</em></li>
+        </ul>
+      </div>
+    </div>
+    <div class="term comp-term">
+      <header><span>/companions webapp</span></header>
+<pre><span class="c">stable</span>  webapp/_notes/pr-2107-review.md    <span class="c">~ docs/review-process.md, acme/webapp#2107</span>
+<span class="c">stable</span>  webapp/docs/architecture.zh-tw.md  <span class="c">&lt;- ~/git/webapp/docs/architecture.md</span>
+<span class="c">draft </span>  webapp/docs/new-design.zh-tw.md    <span class="c">(no source yet)</span></pre>
+    </div>
+    <div class="points">
+      <div class="promise"><h3>Ask in your own words</h3><p>The <code>companion-docs</code> skill starts when you ask for a version of a document in another language (中文版, 日本語版, en français) or for a note about a repository. Claude writes it at the path that mirrors the source.</p></div>
+      <div class="promise"><h3>Found again by its path</h3><p>Before Claude summarises or translates a document, it checks whether a companion exists, so the next conversation builds on the last one instead of starting over.</p></div>
+      <div class="promise"><h3>Drafts before the source</h3><p>Write a design in your own language first. It waits at the path the real document will have, marked as a draft.</p></div>
+      <div class="promise"><h3>One list of them all</h3><p>The <code>companions</code> skill adds <code>/companions</code> to Claude Code; <code>memsaga companions</code> prints the same list in a terminal: status, path and source.</p></div>
+    </div>
+    <p class="small after">Both skills come with <code>memsaga install --skills</code>. Companions are committed, pushed and synced like everything else, so you can read them on GitHub from anywhere. <a href="https://github.com/grimmerk/memsaga-example/tree/main/companion/webapp">These three, in the example repository</a></p>
+  </div>
+</section>
+
+<section class="band" id="safe">
+  <div class="wrap">
+    <div class="band-head">
+      <span class="eyebrow">Built to be trusted</span>
+      <h2>It keeps history. It does not take over.</h2>
+    </div>
+    <div class="promises">
+      <div class="promise"><h3>Your files stay where they are</h3><p>The repository holds copies. memsaga writes Claude's files only when you restore one, or when an edit you made elsewhere arrives.</p></div>
+      <div class="promise"><h3>Every version can come back</h3><p>Restore one file, or all of them, from any point in history. A restore shows the diff and waits for your yes.</p></div>
+      <div class="promise"><h3>It stays out of Claude's way</h3><p>If something fails, Claude Code carries on as usual, and <code>memsaga status</code> tells you what happened.</p></div>
+      <div class="promise"><h3>What you add stays</h3><p>Files you put in the repository yourself are committed and never removed by memsaga.</p></div>
+      <div class="promise"><h3>Secrets stay out</h3><p>Not copied: <code>~/.claude.json</code>, credentials, transcripts and caches. <code>settings.json</code> only if you ask.</p></div>
+      <div class="promise"><h3>You own the repository</h3><p>Plain git, on your disk and in your own private GitHub repository. No service to sign up for, no telemetry.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="cases">
+  <div class="wrap">
+    <div class="band-head">
+      <span class="eyebrow">Use cases</span>
+      <h2>Eleven things it lets you do</h2>
+      <p class="lede">Each one links to its steps in the README.</p>
+    </div>
+    <div class="cases">
+      <div>
+        <h3>Claude Code's config directory</h3>
+        <ol>
+          <li><b>1</b><a href="https://github.com/grimmerk/memsaga#1-see-what-claude-remembered-and-when-it-changed">See what Claude remembered, and when it changed</a></li>
+          <li><b>2</b><a href="https://github.com/grimmerk/memsaga#2-undo-a-bad-edit-or-a-memory-clean-up">Undo a bad edit or a memory clean-up</a></li>
+          <li><b>3</b><a href="https://github.com/grimmerk/memsaga#3-ask-claude-about-the-history">Ask Claude about the history</a></li>
+          <li><b>4</b><a href="https://github.com/grimmerk/memsaga#4-start-with-the-history-you-already-have">Start with the history you already have</a></li>
+        </ol>
+      </div>
+      <div>
+        <h3>Your own files</h3>
+        <ol>
+          <li><b>5</b><a href="https://github.com/grimmerk/memsaga#5-version-any-file-claude-edits-for-you">Version any file Claude edits for you</a></li>
+          <li><b>6</b><a href="https://github.com/grimmerk/memsaga#6-add-your-own-files-to-the-repository">Add your own files to the repository</a></li>
+          <li><b>7</b><a href="https://github.com/grimmerk/memsaga#7-keep-notes-beside-a-repository-without-committing-them">Keep notes beside a repository without committing them</a></li>
+        </ol>
+      </div>
+      <div>
+        <h3>Everywhere you work</h3>
+        <ol>
+          <li><b>8</b><a href="https://github.com/grimmerk/memsaga#8-two-claude-code-accounts">Two Claude Code accounts</a></li>
+          <li><b>9</b><a href="https://github.com/grimmerk/memsaga#9-two-machines">Two machines</a></li>
+          <li><b>10</b><a href="https://github.com/grimmerk/memsaga#10-edit-from-anywhere">Edit from anywhere</a></li>
+        </ol>
+      </div>
+      <div>
+        <h3>Going further</h3>
+        <ol>
+          <li><b>11</b><a href="https://github.com/grimmerk/memsaga#11-let-claude-reorganise-its-memory-safely">Let Claude reorganise its memory, safely</a></li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="install">
+  <div class="wrap install">
+    <div class="band-head">
+      <span class="eyebrow">Install</span>
+      <h2>Set it up once</h2>
+      <ol class="steps">
+        <li><strong>cargo install</strong> builds memsaga. You need git and Rust's <code>cargo</code>, on macOS or Linux.</li>
+        <li><strong>init</strong> creates the data repository and replays the edits your recent conversations recorded, so the history starts weeks back. It lives in <code>~/git/memories</code> unless the <code>repo</code> setting points elsewhere.</li>
+        <li><strong>install</strong> connects memsaga to Claude Code. With <code>--skills</code>, Claude can also answer questions about the history.</li>
+        <li><strong>gh repo create</strong> is optional. With a private GitHub repository, pushes and two-way sync happen on their own.</li>
+      </ol>
+      <p class="note"><strong>Keep the data repository private.</strong> Memory holds whatever Claude learned while working with you, which often includes details of your work.</p>
+    </div>
+    <div class="term">
+      <header><span>terminal</span><button type="button" id="copy-install">Copy</button></header>
+<pre id="install-cmds"><span class="p">$ </span>cargo install --locked memsaga \
+    --git https://github.com/grimmerk/memsaga
+<span class="p">$ </span>memsaga init --dry-run   <span class="c"># what would be imported</span>
+<span class="p">$ </span>memsaga init
+<span class="p">$ </span>memsaga install --skills
+<span class="p">$ </span>gh repo create memories --private --push \
+    --source ~/git/memories
+<span class="p">$ </span>memsaga status</pre>
+      <pre style="border-top:1px solid var(--code-line)"><span class="c"># to try it on example data first, run these after cargo install;</span>
+<span class="c"># your real Claude Code config is never read or written</span>
+<span class="p">$ </span>git clone https://github.com/grimmerk/memsaga
+<span class="p">$ </span>memsaga/demo/setup.sh &amp;&amp; source /tmp/memsaga-demo/env.sh</pre>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="not">
+  <div class="wrap">
+    <div class="band-head">
+      <span class="eyebrow">Out of scope</span>
+      <h2>What memsaga leaves alone, and what to use instead</h2>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>What</th><th>Why it is left out</th><th>Instead</th></tr></thead>
+        <tbody>
+          <tr><td>Conversation transcripts</td><td>Large, and mostly your work rather than configuration</td><td>Raise <code>cleanupPeriodDays</code> in <code>settings.json</code> to keep them longer</td></tr>
+          <tr><td>Marketplace plugins</td><td>Packages you can install again, not files you wrote</td><td>Install them again; a mirrored <code>settings.json</code> lists which</td></tr>
+          <tr><td>Credentials and login state</td><td>Secrets must never enter a repository</td><td>Your system keychain or a password manager</td></tr>
+          <tr><td>Fast-changing settings (<code>model</code>, <code>effortLevel</code>)</td><td>Rewritten on every <code>/model</code> and <code>/effort</code></td><td>Nothing: each machine keeps its own</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="small status">Status: early, in daily use by its author on macOS, tested in CI on Linux. Claude Code is the only agent today; others are on the roadmap.</p>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="name">
+      <p class="saga">mem, for memory. <em>saga</em>, for history.</p>
+      <p>Saga is Old Norse for "story" or "history", the word for the medieval Icelandic narratives that followed people and events across generations. A repository of memory that keeps every version is the story of how that memory came to be, one change at a time.</p>
+    </div>
+    <div class="links">
+      <a href="https://github.com/grimmerk/memsaga">Source and README</a>
+      <a href="https://github.com/grimmerk/memsaga-example">Example data repository</a>
+      <a href="https://github.com/grimmerk/memsaga/blob/main/docs/two-way-sync.md">How two-way sync works</a>
+      <a href="https://github.com/grimmerk/memsaga/blob/main/docs/architecture.md">Architecture, for contributors</a>
+      <span class="small">MIT licensed</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  // Recordings: play muted on a loop from data-start (demo.mp4 opens on a 2 s title card the page
+  // already shows); click pauses. With reduced motion, stay still on a telling frame, with controls.
+  var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  Array.prototype.forEach.call(document.querySelectorAll('video[data-start]'), function (v) {
+    var start = parseFloat(v.dataset.start) || 0;
+    var still = parseFloat(v.dataset.still) || start;
+    v.muted = true;
+    if (reduce) {
+      v.removeAttribute('autoplay');
+      v.pause();
+      v.controls = true;
+      v.addEventListener('loadedmetadata', function () { try { v.currentTime = still; } catch (e) {} }, { once: true });
+      return;
+    }
+    v.addEventListener('ended', function () { try { v.currentTime = start; } catch (e) {} v.play().catch(function () {}); });
+    v.addEventListener('click', function () { if (v.paused) v.play().catch(function () {}); else v.pause(); });
+    // Autoplay refused (a phone in low-power mode): show controls and a telling frame, not a blank one.
+    v.play().catch(function () { v.controls = true; try { v.currentTime = still; } catch (e) {} });
+  });
+
+  var btn = document.getElementById('copy-install');
+  var pre = document.getElementById('install-cmds');
+  function select() {
+    var r = document.createRange(); r.selectNodeContents(pre);
+    var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+    btn.textContent = 'Press Cmd/Ctrl+C';
+  }
+  btn.addEventListener('click', function () {
+    var text = pre.innerText.split('\n').map(function (l) { return l.replace(/^\$ /, '').replace(/\s+#.*$/, ''); }).join('\n');
+    var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1600); };
+    try { navigator.clipboard.writeText(text).then(done, select); } catch (e) { select(); }
+  });
+})();
+</script>
+</body>
+</html>
