@@ -1,0 +1,14 @@
+sequenceDiagram
+    participant You as You (GitHub web editor)
+    participant GH as GitHub
+    participant Hook as memsaga hooks
+    participant Live as Live file
+    participant Model as Claude
+    You->>GH: edit and commit a memory file
+    Note over Hook: next session start or prompt
+    Hook->>GH: did origin move? (at most once a minute)
+    GH-->>Hook: yes
+    Hook->>Hook: merge origin into the data repository
+    Hook->>Live: write the new version (merge if both sides changed)
+    Hook->>Model: notice: this file changed, here are the changed lines
+    Model->>Live: reads the file again before using it

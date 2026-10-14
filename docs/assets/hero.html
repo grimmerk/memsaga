@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>memsaga hero</title>
+<!-- The README's hero image and the GitHub social preview (1280 x 640).
+     Render both themes to PNG with docs/assets/render-hero.sh; ?theme=dark picks the dark one.
+     All content is example data. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one 2:1 card (1280x640, the README hero and the social preview), every size in
+   container units so it scales as one picture; left = thesis + three sources, right = the
+   commit log they become, then the machines it syncs between. */
+:root {
+  --page: #EEF1F5;
+  --hero: #FFFFFF;
+  --card: #F6F8FB;
+  --ink: #17202C;
+  --muted: #5B6575;
+  --line: #D3D9E2;
+  --dots: #DCE2EA;
+  --accent: #A8681A;   /* gilded amber: the saga's illuminated initial, and every commit id */
+  --sync: #17766F;     /* teal: anything that moves between places */
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #0B1017; --hero: #111824; --card: #172030; --ink: #E6EAF1; --muted: #9AA5B5;
+    --line: #2A3546; --dots: #1C2533; --accent: #E5A945; --sync: #4FB8AE; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --page: #0B1017; --hero: #111824; --card: #172030; --ink: #E6EAF1; --muted: #9AA5B5;
+  --line: #2A3546; --dots: #1C2533; --accent: #E5A945; --sync: #4FB8AE; color-scheme: dark;
+}
+
+body { background: var(--page); color: var(--ink); font-family: var(--body); }
+.wrap { max-width: 1320px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 40px; display: grid; gap: 16px; }
+
+.bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.bar h1 { font: 700 1rem/1.3 var(--display); margin: 0; letter-spacing: .01em; }
+.bar p { margin: 0; color: var(--muted); font-size: .875rem; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.seg button { font: 600 .8125rem var(--body); color: var(--muted); background: transparent; border: 0; padding: 6px 14px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--hero); }
+.seg button:focus-visible { outline: 2px solid var(--sync); outline-offset: -2px; }
+
+/* ---------- the picture ---------- */
+.frame { overflow-x: auto; }
+.hero {
+  container-type: inline-size;
+  position: relative; width: 100%; min-width: 300px; aspect-ratio: 2 / 1;
+  background-color: var(--hero);
+  background-image: radial-gradient(var(--dots) 0.13cqw, transparent 0.14cqw);
+  background-size: 1.875cqw 1.875cqw;
+  border-radius: 1.1cqw; overflow: hidden;
+  box-shadow: 0 0 0 1px var(--line);
+}
+.hero svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+.left { position: absolute; left: 5cqw; top: 5cqw; width: 39cqw; display: grid; gap: 1.6cqw; }
+.eyebrow { font: 600 1.4cqw/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); display: flex; align-items: center; gap: .9cqw; }
+.eyebrow b { display: inline-grid; place-items: center; width: 2.6cqw; height: 2.6cqw; border-radius: .5cqw; background: var(--accent); color: var(--hero); font: 700 1.6cqw/1 var(--display); letter-spacing: 0; }
+.headline { font: 700 3.9cqw/1.04 var(--display); letter-spacing: -.02em; margin: 0; text-wrap: balance; }
+.headline em { font-style: normal; color: var(--accent); }
+.lede { font: 400 1.5cqw/1.42 var(--body); color: var(--muted); margin: 0; max-width: 37cqw; }
+
+.sources { position: absolute; left: 5cqw; top: 29.9cqw; width: 37.5cqw; display: grid; gap: .8cqw; }
+.src { display: grid; grid-template-columns: 2.5cqw 1fr; column-gap: 1.1cqw; align-items: center;
+  background: var(--card); border: 0.08cqw solid var(--line); border-radius: .8cqw; padding: .7cqw 1.2cqw; }
+.src i { grid-row: span 2; width: 2.5cqw; height: 2.5cqw; border-radius: 50%; display: grid; place-items: center;
+  font: 700 1.25cqw/1 var(--mono); font-style: normal; color: var(--hero); background: var(--ink); }
+.src strong { font: 700 1.4cqw/1.2 var(--body); }
+.src span { font: 400 1.1cqw/1.3 var(--mono); color: var(--muted); }
+
+.log { position: absolute; left: 51cqw; top: 5cqw; width: 44cqw; background: var(--card); border: 0.08cqw solid var(--line);
+  border-radius: .9cqw; overflow: hidden; }
+.log header { display: flex; justify-content: space-between; align-items: center; padding: .85cqw 1.4cqw;
+  border-bottom: 0.08cqw solid var(--line); font: 600 1.15cqw/1 var(--mono); color: var(--muted); }
+.log header .dots { display: flex; gap: .55cqw; }
+.log header .dots span { width: .85cqw; height: .85cqw; border-radius: 50%; background: var(--line); }
+.commits { list-style: none; margin: 0; padding: 1.3cqw 1.4cqw 1.1cqw 4.2cqw; display: grid; gap: 1.25cqw; position: relative; }
+.commits::before { content: ""; position: absolute; left: 2.05cqw; top: 2.1cqw; bottom: 2.6cqw; width: .2cqw; background: var(--line); }
+.commits li { position: relative; font: 400 1.1cqw/1.45 var(--mono); }
+.commits li::before { content: ""; position: absolute; left: -2.62cqw; top: .42cqw; width: 1cqw; height: 1cqw; border-radius: 50%;
+  background: var(--hero); border: .22cqw solid var(--accent); }
+.commits li.restore::before { border-color: var(--sync); }
+.sha { color: var(--accent); font-weight: 600; }
+.subj { color: var(--ink); font-weight: 600; }
+.k { color: var(--muted); }
+.tag { display: inline-block; margin-left: .6cqw; padding: .1cqw .6cqw; border-radius: .4cqw; font: 600 1cqw/1.5 var(--mono);
+  color: var(--sync); border: .08cqw solid var(--sync); vertical-align: .1cqw; }
+.notice { margin: 0 1.4cqw 1.3cqw; padding: .8cqw 1.1cqw; border-radius: .6cqw; font: 600 1.1cqw/1.3 var(--mono);
+  color: var(--ink); background: var(--hero); border: .08cqw dashed var(--accent); }
+.notice span { color: var(--accent); }
+
+.places { position: absolute; left: 51cqw; top: 36cqw; width: 44cqw; height: 10cqw; }
+.place { position: absolute; top: 0; width: 11.6cqw; height: 6.6cqw; border: .1cqw solid var(--sync); border-radius: .8cqw;
+  background: var(--hero); display: grid; place-content: center; text-align: center; gap: .2cqw; }
+.place strong { font: 700 1.3cqw/1.15 var(--body); }
+.place span { font: 400 1.02cqw/1.2 var(--mono); color: var(--muted); }
+.place.p1 { left: 0; } .place.p2 { left: 16.2cqw; } .place.p3 { right: 0; }
+.place.p2 { border-style: solid; border-width: .18cqw; }
+.web { position: absolute; left: 13.2cqw; top: 8.6cqw; width: 17.6cqw; text-align: center; font: 400 1.02cqw/1.2 var(--mono); color: var(--sync); }
+
+.variant { display: grid; gap: 8px; }
+.vlabel { margin: 0; font: 600 .9375rem/1.3 var(--body); color: var(--ink); display: flex; gap: 8px; align-items: center; }
+.vlabel b { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: var(--ink); color: var(--hero); font: 700 .8125rem/1 var(--mono); }
+.commits.readable { gap: .95cqw; }
+.commits.readable li { font: 400 1.08cqw/1.5 var(--body); }
+.readable .when { font: 600 1cqw/1 var(--mono); color: var(--accent); margin-right: .5cqw; }
+.readable .restore .when { color: var(--sync); }
+.readable .what { font: 700 1.28cqw/1.3 var(--body); color: var(--ink); }
+.readable .meta { color: var(--muted); }
+.readable .meta i { font: 400 .95cqw/1 var(--mono); font-style: normal; opacity: .75; margin-left: .5cqw; }
+.caption { color: var(--muted); font-size: .875rem; line-height: 1.5; max-width: 72ch; margin: 0; }
+.caption code { font-family: var(--mono); font-size: .8125rem; }
+@media (prefers-reduced-motion: no-preference) {
+  .commits li:first-child::before { animation: ping 2.4s ease-out 1; }
+  @keyframes ping { 0% { box-shadow: 0 0 0 0 var(--accent); } 100% { box-shadow: 0 0 0 1.2cqw transparent; } }
+}
+</style>
+<style>
+html, body { margin: 0; background: var(--hero); }
+.hero { width: 1280px; min-width: 0; border-radius: 0; box-shadow: none; }
+.commits li:first-child::before { animation: none !important; }
+</style>
+<script>
+if (new URLSearchParams(location.search).get('theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+else document.documentElement.setAttribute('data-theme', 'light');
+</script>
+</head>
+<body>
+<div class="hero" role="img" aria-label="memsaga: Claude Code's config directory, files elsewhere you choose and content kept only in the repository become commits with the session's title and ID in a git repository you own, which syncs both ways between your machines, GitHub and edits made on the web or a phone.">
+  <svg class="wires" viewBox="0 0 1280 640" aria-hidden="true">
+    <defs>
+      <marker id="tip-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+      </marker>
+      <marker id="tip-s" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--sync)"/>
+      </marker>
+    </defs>
+    <!-- the three sources converge on the log -->
+    <g fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round">
+      <path d="M546 412 C 600 412, 598 318, 648 318" marker-end="url(#tip-a)"/>
+      <path d="M546 480 C 606 480, 602 324, 648 324" />
+      <path d="M546 548 C 612 548, 606 330, 648 330" />
+    </g>
+    <!-- log to this machine's repo, and the sync line between places -->
+    <g fill="none" stroke="var(--sync)" stroke-width="2.2" stroke-linecap="round">
+      <path d="M727 402 L 727 452" marker-end="url(#tip-s)"/>
+      <path d="M806 503 L 855 503" marker-start="url(#tip-s)" marker-end="url(#tip-s)"/>
+      <path d="M1012 503 L 1063 503" marker-start="url(#tip-s)" marker-end="url(#tip-s)"/>
+      <path d="M934 569 L 934 551" marker-end="url(#tip-s)"/>
+    </g>
+  </svg>
+
+  <div class="left">
+    <div class="eyebrow"><b>m</b> memsaga</div>
+    <h2 class="headline">Your AI agent's memory, <em>kept as history.</em></h2>
+    <p class="lede">After every turn, what changed becomes a commit in a git repo you own, named after the session that made it. Edits made anywhere come back.</p>
+  </div>
+
+  <div class="sources">
+    <div class="src"><i>1</i><strong>Claude Code config, every account</strong><span>CLAUDE.md · memory · skills · agents · mods</span></div>
+    <div class="src"><i>2</i><strong>Files elsewhere you choose</strong><span>notes · plans · other tools' configs</span></div>
+    <div class="src"><i>3</i><strong>Content only in the repo</strong><span>notes · companion docs · anything you add</span></div>
+  </div>
+
+  <div class="log">
+    <header><span>history · ~/git/memories</span><span class="dots"><span></span><span></span><span></span></span></header>
+    <ol class="commits readable">
+      <li><span class="when">Tue 14:02</span> <span class="what">Fixed login redirect · memory updated</span><br>
+        <span class="meta">Session: fix login redirect after OAuth <i>a1b2c3d</i></span></li>
+      <li><span class="when">Wed 09:40</span> <span class="what">Tidied memory: merged duplicates</span><br>
+        <span class="meta">Session: weekly memory tidy-up <i>9e41f07</i></span></li>
+      <li><span class="when">Wed 18:15</span> <span class="what">Added notes/decisions.md</span><br>
+        <span class="meta">by you, in the repo <i>7d3e2c1</i></span></li>
+      <li class="restore"><span class="when">Thu 10:03</span> <span class="what">Restored CLAUDE.md to Monday's version</span><br>
+        <span class="meta">after reviewing the diff <i>5c2d8aa</i></span></li>
+    </ol>
+    <p class="notice"><span>memsaga:</span> 2 files committed (a1b2c3d)</p>
+  </div>
+
+  <div class="places">
+    <div class="place p1"><strong>This machine</strong><span>~/git/memories</span></div>
+    <div class="place p2"><strong>GitHub</strong><span>private repo</span></div>
+    <div class="place p3"><strong>Other machine</strong><span>same setup</span></div>
+    <div class="web">edit on the web or a phone</div>
+  </div>
+</div>
+</body>
+</html>

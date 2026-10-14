@@ -3,6 +3,11 @@
 Version control and two-way sync for the files your AI coding agent works
 with: what it remembers, how you configure it, and anything else you choose.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.png">
+  <img src="docs/assets/hero-light.png" width="100%" alt="memsaga: three sources (Claude Code's config directory in every account, files elsewhere you choose, and content kept only in the repository) become a readable history in a git repository you own, each change named after its session, from fixing a login redirect to restoring CLAUDE.md to Monday's version. The repository syncs both ways between this machine, a private GitHub repository and another machine, and edits made on the web or a phone come back.">
+</picture>
+
 Claude Code keeps your global instructions in `~/.claude/CLAUDE.md`, writes
 what it learns about each project into `~/.claude/projects/<slug>/memory/`,
 and reads your skills, hooks and scripts from `~/.claude/`. None of that has
@@ -32,28 +37,6 @@ from a conversation to everything it changed. The
 repository can live on GitHub and be shared by several machines and Claude Code
 accounts; an edit made in one place (another machine, GitHub's web editor, a
 phone) reaches the live files everywhere else.
-
-```mermaid
-flowchart LR
-    S["Claude Code sessions<br/>(one or more accounts)"]
-    subgraph LIVE["Live files on this machine"]
-        direction TB
-        X1["2. Files elsewhere you choose<br/>notes, plans, dotfiles"]
-        L1["1. Claude Code's config directory<br/>CLAUDE.md, memory/, skills/, hooks/,<br/>settings, mods, drafts"]
-    end
-    R["Data repository<br/>~/git/memories"]
-    Y["3. Content only in the repository<br/>notes, companion docs"]
-    GH[("Private GitHub<br/>repository")]
-    M2["Machine 2<br/>(same setup)"]
-    WEB["GitHub web editor,<br/>a phone"]
-    S -- "write" --> LIVE
-    LIVE -- "memsaga hooks,<br/>end of turn:<br/>copy and commit" --> R
-    Y -- "add, commit" --> R
-    R -. "edits made<br/>elsewhere" .-> LIVE
-    R <-- "push / pull" --> GH
-    GH <-- "push / pull" --> M2
-    WEB -- "edit" --> GH
-```
 
 Status: early, in daily use by its author on macOS (CI also runs on Linux).
 Claude Code is the only source today; other agents and sources are on the
@@ -88,9 +71,9 @@ Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
 - [Roadmap](#roadmap)
 - [The name](#the-name)
 
-Diagrams: the overview above (where files flow), and one in
-[use case 10](#10-edit-from-anywhere) (what happens when a file changed
-elsewhere).
+Pictures: the image at the top (where files come from, and where the history
+goes), and a sequence diagram in [use case 10](#10-edit-from-anywhere) (what happens
+when a file changed elsewhere).
 
 ## Quick start
 
@@ -299,22 +282,10 @@ You can fix a memory file in GitHub's web editor, on a phone, on another
 machine, or by hand in the local clone. memsaga does not overwrite such an edit.
 It brings it to the live file:
 
-```mermaid
-sequenceDiagram
-    participant You as You (GitHub web editor)
-    participant GH as GitHub
-    participant Hook as memsaga hooks
-    participant Live as Live file
-    participant Model as Claude
-    You->>GH: edit and commit a memory file
-    Note over Hook: next session start or prompt
-    Hook->>GH: did origin move? (at most once a minute)
-    GH-->>Hook: yes
-    Hook->>Hook: merge origin into the data repository
-    Hook->>Live: write the new version (merge if both sides changed)
-    Hook->>Model: notice: this file changed, here are the changed lines
-    Model->>Live: reads the file again before using it
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/sync-sequence-dark.png">
+  <img src="docs/assets/sync-sequence-light.png" width="100%" alt="Sequence: you edit and commit a memory file in GitHub's web editor. At the next session start or prompt, the memsaga hooks ask GitHub whether origin moved (at most once a minute); it did, so they merge origin into the data repository, write the new version to the live file (merging if both sides changed), and send Claude a notice with the changed lines. Claude reads the file again before using it.">
+</picture>
 
 1. At session start and at each prompt, a hook asks GitHub whether the
    repository moved. This takes about half a second and happens at most once a
