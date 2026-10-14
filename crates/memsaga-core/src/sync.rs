@@ -89,49 +89,71 @@ pub fn rename_incoming(repo: &Path, incoming: &mut Incoming) -> Result<bool> {
     Ok(!renamed.is_empty())
 }
 
-/// The caller holds the sweep lock. An empty list removes the file.
-/// Copies a `diff` preview wrote into the clone and left uncommitted, as
-/// repo-relative path -> blob id. Until the next sweep replaces them, such a
-/// copy is memsaga's own and not a hand edit, even after the live file has
-/// changed again (it then equals neither HEAD nor the live file).
-const PREVIEW: &str = "preview.json";
+/// Every copy memsaga wrote into the clone and has not committed yet, as
+/// repo-relative path -> blob id: a `diff` preview's copies, and a sweep's
+/// own copies until its commit. Such a copy is memsaga's own and not a hand
+/// edit, even after the live file has changed again (it then equals neither
+/// HEAD nor the live file). One record at the point of writing, instead of a
+/// rule per way a copy can be left behind. The file keeps the name it got
+/// when only a preview wrote it, so a record from an older binary still reads.
+const UNCOMMITTED: &str = "preview.json";
 
-pub fn load_preview(state: &State) -> BTreeMap<String, String> {
-    std::fs::read_to_string(state.marker(PREVIEW))
+pub fn load_uncommitted(state: &State) -> BTreeMap<String, String> {
+    std::fs::read_to_string(state.marker(UNCOMMITTED))
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()
 }
 
-/// Add the files a preview wrote. The caller holds the sweep lock.
-pub fn record_preview(cfg: &Config, state: &State, written: &[PathBuf]) -> Result<()> {
+/// Add the files the mirror just wrote. A file whose blob cannot be computed
+/// loses any older entry, rather than keep one that no longer describes it.
+/// The caller holds the sweep lock.
+pub fn record_uncommitted(cfg: &Config, state: &State, written: &[PathBuf]) -> Result<()> {
+    let written: Vec<(&PathBuf, String)> = written
+        .iter()
+        .filter_map(|p| {
+            let rel = p.strip_prefix(&cfg.repo).ok()?;
+            Some((p, rel.to_string_lossy().to_string()))
+        })
+        .collect();
     if written.is_empty() {
         return Ok(());
     }
     let git = Git::new(&cfg.repo);
-    let mut preview = load_preview(state);
-    for path in written {
-        let Ok(rel) = path.strip_prefix(&cfg.repo) else {
-            continue;
+    let paths: Vec<&PathBuf> = written.iter().map(|(p, _)| *p).collect();
+    let blobs = hash_many(&git, &paths);
+    let mut record = load_uncommitted(state);
+    for ((_, rel), blob) in written.into_iter().zip(blobs) {
+        match blob {
+            Some(b) => record.insert(rel, b),
+            None => record.remove(&rel),
         };
-        if let Some(blob) = hash_of(&git, path) {
-            preview.insert(rel.to_string_lossy().to_string(), blob);
-        }
     }
-    state.write_marker(PREVIEW, &serde_json::to_string_pretty(&preview)?)
+    state.write_marker(UNCOMMITTED, &serde_json::to_string_pretty(&record)?)
 }
 
-/// A sweep has mirrored over every preview copy (or kept a hand edit made
-/// since): the record has done its job. The caller holds the sweep lock.
-pub fn clear_preview(state: &State) {
-    state.remove(PREVIEW);
+/// A sweep has committed every copy memsaga wrote (or kept a hand edit made
+/// since): the record has done its job. Called only after the commit, so a
+/// sweep that fails or is stopped half-way leaves the record for the next
+/// one. The caller holds the sweep lock.
+pub fn clear_uncommitted(state: &State) {
+    state.remove(UNCOMMITTED);
 }
 
-/// Is the clone's `rel` exactly what a `diff` preview wrote there?
-fn is_preview_copy(preview: &BTreeMap<String, String>, rel: &str, blob: Option<&String>) -> bool {
-    blob.is_some() && preview.get(rel) == blob
+/// Does the clone's `rel` hold exactly what memsaga wrote there and has not
+/// committed? Content alone decides: a file byte-for-byte equal to
+/// memsaga's own copy carries nothing that could tell a hand edit apart, and
+/// treating it as memsaga's keeps a `touch` or `git stash pop` from looking
+/// like an edit.
+fn is_uncommitted_copy(
+    record: &BTreeMap<String, String>,
+    rel: &str,
+    blob: Option<&String>,
+) -> bool {
+    blob.is_some() && record.get(rel) == blob
 }
 
+/// The caller holds the sweep lock. An empty list removes the file.
 pub fn save_incoming(state: &State, incoming: &Incoming) -> Result<()> {
     if incoming.is_empty() {
         state.remove(INCOMING);
@@ -237,6 +259,34 @@ fn hash_of(git: &Git, abs: &Path) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// `hash_of` for many files in one git process (`--stdin-paths`), in order.
+/// Falls back to one process per file when the batch cannot be used: a path
+/// git would read differently from a line (a newline or carriage return in
+/// it, since git drops a trailing `\r`; a leading `"`, which it unquotes), or
+/// a file that vanished (git then stops at it).
+fn hash_many(git: &Git, paths: &[&PathBuf]) -> Vec<Option<String>> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut input = Vec::new();
+    for p in paths {
+        let bytes = p.as_os_str().as_bytes();
+        if bytes.contains(&b'\n') || bytes.contains(&b'\r') || bytes.first() == Some(&b'"') {
+            return paths.iter().map(|p| hash_of(git, p)).collect();
+        }
+        input.extend_from_slice(bytes);
+        input.push(b'\n');
+    }
+    if let Ok(out) = git.run_with_input(&["hash-object", "--stdin-paths"], input) {
+        let ids: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect();
+        if out.status.success() && ids.len() == paths.len() {
+            return ids.into_iter().map(Some).collect();
+        }
+    }
+    paths.iter().map(|p| hash_of(git, p)).collect()
+}
+
 /// Handed to the mirror for one sweep (step 1b).
 pub struct Guard {
     repo: PathBuf,
@@ -249,8 +299,8 @@ pub struct Guard {
     found: RefCell<BTreeMap<String, Option<String>>>,
     /// Keys the mirror drops from `settings.json`, to compare like with like.
     settings_ignore_keys: Vec<String>,
-    /// Copies an uncommitted `diff` preview wrote (`load_preview`).
-    preview: BTreeMap<String, String>,
+    /// Copies memsaga wrote and has not committed (`load_uncommitted`).
+    uncommitted: BTreeMap<String, String>,
 }
 
 impl Guard {
@@ -261,7 +311,7 @@ impl Guard {
             protected: incoming.keys().map(|k| cfg.repo.join(k)).collect(),
             found: RefCell::new(BTreeMap::new()),
             settings_ignore_keys: cfg.settings_ignore_keys.clone(),
-            preview: load_preview(&State::new(cfg.state_dir())),
+            uncommitted: load_uncommitted(&State::new(cfg.state_dir())),
         }
     }
 
@@ -296,8 +346,8 @@ impl Guard {
         if base.is_some() && base == now {
             return true; // equal to what memsaga committed
         }
-        if is_preview_copy(&self.preview, &rel, now.as_ref()) {
-            return true; // memsaga's own copy from a `diff` preview
+        if is_uncommitted_copy(&self.uncommitted, &rel, now.as_ref()) {
+            return true; // memsaga's own uncommitted copy (a preview, a stopped sweep)
         }
         if src.is_some_and(|s| self.is_mirror_of(dst, s)) {
             return true; // memsaga's own copy, e.g. left by a `diff` preview
@@ -905,8 +955,9 @@ pub fn note_hand_edit(cfg: &Config, repo_rel: &str) -> Result<bool> {
     if base.is_some() && base == now {
         return Ok(false);
     }
-    // What a `diff` preview wrote: memsaga's own copy, however the live file moved on.
-    if is_preview_copy(&load_preview(&state), repo_rel, now.as_ref()) {
+    // What memsaga wrote and has not committed (a preview, a stopped sweep):
+    // its own copy, however the live file moved on.
+    if is_uncommitted_copy(&load_uncommitted(&state), repo_rel, now.as_ref()) {
         return Ok(false);
     }
     // Equal to the live file: a sweep that stopped before committing, not an edit.
@@ -1507,7 +1558,31 @@ pub fn before_tool(cfg: &Config, session: &str, live: &Path, tool: &str) -> Resu
 
 #[cfg(test)]
 mod tests {
-    use super::github_slug;
+    use super::{github_slug, hash_many, hash_of};
+    use crate::git::Git;
+
+    #[test]
+    fn hash_many_never_hashes_another_file_for_a_path_git_would_read_differently() {
+        // `git hash-object --stdin-paths` drops a trailing `\r` from each
+        // line, so `note.md\r` would silently be hashed as `note.md`.
+        let dir = std::env::temp_dir().join(format!("memsaga-hash-many-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::process::Command::new("git")
+            .args(["init", "-q"])
+            .arg(&dir)
+            .status()
+            .unwrap();
+        let plain = dir.join("note.md");
+        let cr = dir.join("note.md\r");
+        std::fs::write(&plain, "plain\n").unwrap();
+        std::fs::write(&cr, "carriage return\n").unwrap();
+        let git = Git::new(&dir);
+        let got = hash_many(&git, &[&cr, &plain]);
+        let want = vec![hash_of(&git, &cr), hash_of(&git, &plain)];
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(got, want);
+        assert_ne!(got[0], got[1]);
+    }
 
     #[test]
     fn github_slug_reads_https_and_ssh_remotes() {

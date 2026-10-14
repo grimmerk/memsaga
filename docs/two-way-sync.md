@@ -141,11 +141,14 @@ overwrites or deletes any repository file:
    not touched since: go ahead. memsaga's own copies carry their source's
    mtime, so this is the common case, and it costs one `stat`.
 3. A newer file is a candidate. It is not a hand edit when its content equals
-   `HEAD` (memsaga committed it), equals what a `memsaga diff` preview wrote
-   there (the preview records each copy's blob in `.git/memsaga/preview.json`,
-   and the next sweep clears the record; needed because a live file that
-   changed again after the preview no longer matches that copy), or equals
-   what the mirror would write now (memsaga copied it without committing).
+   `HEAD` (memsaga committed it), equals a copy memsaga wrote there and has not
+   committed yet (a `memsaga diff` preview and every sweep record each file
+   the mirror writes by its blob in `.git/memsaga/preview.json`, and a sweep
+   clears the record once it has committed; needed because a live file that
+   changed again after the copy no longer matches it, and a sweep can fail or
+   be stopped between mirroring and committing), or equals what the mirror
+   would write now. Content alone decides: a file byte-for-byte equal to
+   memsaga's own copy is taken as that copy, even if it was rewritten later.
    Otherwise it is a hand edit: it goes on the incoming list with
    base = `HEAD:<path>` (none for a new file), and is left as it is.
 4. Commit. A hand edit is committed by this sweep like any other change, so it

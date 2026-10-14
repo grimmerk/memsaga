@@ -168,25 +168,20 @@ fn tree_newer_than(dir: &Path, marker: SystemTime) -> bool {
 
 /// Copy every root into the repo and regenerate the index, without touching
 /// git. Shared by `sweep` and `diff`. The caller holds the lock.
-pub fn refresh_mirror(cfg: &Config, scope: &Scope) -> Result<mirror::Stats> {
-    let mut stats = mirror::Stats::default();
+/// Mirror every root, memsaga's own config and `extra_files`, then rebuild the
+/// index. Counts go into `stats` as each file is written, so a caller still
+/// knows every file written so far when this returns an error part-way.
+pub fn refresh_mirror(cfg: &Config, scope: &Scope, stats: &mut mirror::Stats) -> Result<()> {
     for root in &cfg.roots {
         if !root.path.is_dir() {
             continue;
         }
-        let s = mirror::sync_root(scope, root, &cfg.repo)
+        mirror::sync_root(scope, root, &cfg.repo, stats)
             .with_context(|| format!("mirroring {}", root.path.display()))?;
-        stats.copied += s.copied + s.linked;
-        stats.deleted += s.deleted;
-        stats.restat.extend(s.restat);
-        stats.written.extend(s.written);
     }
-    let s = mirror::sync_self_and_extras(scope)?;
-    stats.copied += s.copied;
-    stats.restat.extend(s.restat);
-    stats.written.extend(s.written);
+    mirror::sync_self_and_extras(scope, stats)?;
     index::write_index(cfg, scope)?;
-    Ok(stats)
+    Ok(())
 }
 
 /// Refresh the mirror and return git's view of what a sweep would commit:
@@ -209,11 +204,14 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
         state.mtime("last-sweep"),
         &incoming,
     ));
-    let stats = refresh_mirror(cfg, &scope)?;
+    let mut stats = mirror::Stats::default();
+    let refreshed = refresh_mirror(cfg, &scope, &mut stats);
     // The copies stay in the clone uncommitted; remember them, or a live file
     // that changes again before the next sweep would make its preview copy
-    // look like a hand edit.
-    crate::sync::record_preview(cfg, &state, &stats.written)?;
+    // look like a hand edit. Recorded before the mirror's own error, if any,
+    // is returned: what it wrote before failing is just as uncommitted.
+    crate::sync::record_uncommitted(cfg, &state, &stats.written)?;
+    refreshed?;
     let restat = stats.restat;
     // Stage into a throwaway index so new files show up in the diff without
     // touching whatever the user may have staged in the real one.
@@ -294,10 +292,21 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         .iter()
         .map(|r| memory_renames_pending(cfg, r))
         .sum();
-    let stats = refresh_mirror(cfg, &scope)?;
-    // Every preview copy is now replaced by the live file or kept as a hand
-    // edit made since; it is committed below either way.
-    crate::sync::clear_preview(&state);
+    let mut stats = mirror::Stats::default();
+    let refreshed = refresh_mirror(cfg, &scope, &mut stats);
+    // Until the commit below, what the mirror just wrote is memsaga's own
+    // uncommitted copy. Record it first, so a sweep that fails or is stopped
+    // before committing leaves nothing that looks like a hand edit once the
+    // live file changes again: including a mirror that failed part-way, whose
+    // error is returned only after the record. Costs one `git hash-object` call, only when
+    // files changed: measured 2026-10-15 at +12 to +27 ms CPU and +33 to +66 ms
+    // wall on a busy machine, on a sweep that runs in the background anyway
+    // (docs/architecture.md, "Measured again"). If that ever matters, hash the
+    // content in-process instead (about 30 lines, no git process); the cost is
+    // a second kind of hash that the record and the check must both use, and
+    // that must stay the same across versions.
+    crate::sync::record_uncommitted(cfg, &state, &stats.written)?;
+    refreshed?;
     if let Some(g) = &scope.guard {
         if crate::sync::record_hand_edits(&mut incoming, g.take_found()) > 0 {
             crate::sync::save_incoming(&state, &incoming)?;
@@ -306,7 +315,7 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     git.add_renormalize(&stats.restat)?;
     let changed = git.add_all_and_check()?;
     let mut out = Outcome {
-        copied: stats.copied,
+        copied: stats.copied + stats.linked,
         deleted: stats.deleted,
         ..Default::default()
     };
@@ -334,6 +343,11 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         out.files = files;
         out.shortstat = shortstat;
     }
+    // Every copy memsaga wrote (a preview's, this sweep's) is now committed, or
+    // replaced and committed, or kept as a hand edit made since: the record
+    // has done its job. Not earlier: a sweep that fails before this point
+    // leaves copies uncommitted, and they must still be recognised next time.
+    crate::sync::clear_uncommitted(&state);
     // Promote the marker only after a successful pass; edits made during the
     // sweep have mtimes after `sweep_start` and are caught next time.
     set_marker(&state, sweep_start)?;

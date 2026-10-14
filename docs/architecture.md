@@ -36,7 +36,7 @@ Claude Code ─────────┬────────────�
 | `slug` | Claude Code's project-dir encoding and the reverse map | `encode` = every non-alphanumeric byte → `-`. The reverse map comes from each root's `history.jsonl` (`project` field per prompt), never from parsing the slug. |
 | `mirror` | One-way copy of a root into `repo/<label>/` | rsync semantics: copy when size or mtime differ, preserve mtime, delete extras, keep symlinks. A top-level symlink into another root is rewritten relative (`../claude/CLAUDE.md`); a symlink inside a mirrored dir that escapes the tree becomes absolute. Deletion is confined to tool-owned subtrees; `.git` is never removed. |
 | `git` | Spawning the system `git` | Always `-c commit.gpgsign=false` and `GIT_TERMINAL_PROMPT=0`: a hook has no TTY and must never wait on a signing or credential prompt. No libgit2, so the user's credential helpers and config apply. |
-| `state` | `.git/memsaga/`: flock, `last-sweep`, `dirty`, `last-push`, `push-pending` (due time of the deferred push), `config-fingerprint`, `report-offset`, `events.jsonl`, `memsaga.log`; for two-way sync `incoming.json`, `remote-check.json`, `session-files/`, and `preview.json` (the blobs an uncommitted `diff` preview wrote, cleared by the next sweep; see `two-way-sync.md` §4) | The lock is `flock(2)` on an open fd: a crashed process releases it, so there is no stale-lock logic. A sweep (holding the lock) renames `events.jsonl` to `events-<time>.jsonl` past 1 MiB; the reporter's `report-offset` is `<inode>:<offset>`, and a rename keeps the inode, so the reporter finishes the rotated file and every later one before the new file. |
+| `state` | `.git/memsaga/`: flock, `last-sweep`, `dirty`, `last-push`, `push-pending` (due time of the deferred push), `config-fingerprint`, `report-offset`, `events.jsonl`, `memsaga.log`; for two-way sync `incoming.json`, `remote-check.json`, `session-files/`, and `preview.json` (the blob of every copy memsaga wrote into the clone and has not committed, by a `diff` preview or a sweep; cleared once a sweep has committed; see `two-way-sync.md` §4) | The lock is `flock(2)` on an open fd: a crashed process releases it, so there is no stale-lock logic. A sweep (holding the lock) renames `events.jsonl` to `events-<time>.jsonl` past 1 MiB; the reporter's `report-offset` is `<inode>:<offset>`, and a rename keeps the inode, so the reporter finishes the rotated file and every later one before the new file. |
 | `status` | The `Status` value behind `status` and `status --json` | Read-only. One struct for both outputs, so the text and the JSON cannot disagree. |
 | `sweep` | `needs_sweep`, `refresh_mirror`, `pending`, `sweep`, commit message | `needs_sweep` is stat-only: allowlist and `extra_files` mtimes vs `last-sweep`, the config file's mtime, a digest of the effective config (`config-fingerprint` marker, so widening the scope sweeps even when nothing in the old scope is newer), a walk of user-owned top-level dirs in the repo, and a check for a pre-2026-09-18 `<label>/projects/`. The marker is set to the sweep's *start* time so edits made during a sweep are caught next time. |
 | `sync` | Two-way sync (`two-way-sync.md`): the incoming list, the mirror's `Guard`, merging origin, settling each file, the throttled remote check, and the SessionStart / UserPromptSubmit / PreToolUse entry points | Every write to a live file is atomic, under the sweep lock, and only for a path a root, the config file or `extra_files` maps. The sweep lock and the push lock are never held together. |
@@ -110,3 +110,18 @@ Run `cargo test`; CI runs the same on ubuntu-latest and macos-latest with
 | Stop with a change: copy + commit | 0.2–0.5 s |
 | `init` on two roots, 1,222 transcript ops → 503 commits | 78 s |
 | Share of turns that produce a commit | about 11 % |
+
+## Measured again (2026-10-15), and how to repeat it
+
+`demo/bench-hooks.py` runs two release builds interleaved inside the demo
+environment (`demo/setup.sh`; no remote, so no network), 60 to 100 calls each,
+and prints median and p90 wall and CPU time per call. The machine was busy
+(load average 15 to 28), so absolute numbers run high; the comparison between
+the two builds is the point.
+
+| Hook call | Wall (median) | CPU (median) | Change |
+|---|---|---|---|
+| PreToolUse Read, file out of scope | 5–6 ms | 3–4 ms | none measurable from the pre-dispatch data-repository check (±0.2 ms, sign flips between runs) |
+| PostToolUse Write, file out of scope | 4–6 ms | 3–4 ms | none measurable |
+| Stop, nothing changed | 30–46 ms | 14–21 ms | none measurable |
+| Stop, one memory file changed (commits) | 0.39–0.45 s | 155–172 ms | the uncommitted-copy record adds one `git hash-object` call: +33 to +66 ms wall, +12 to +27 ms CPU. The Stop sweep runs in the background, and only on the turns that commit |

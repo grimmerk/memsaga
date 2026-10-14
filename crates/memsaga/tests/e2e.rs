@@ -2080,6 +2080,101 @@ fn a_live_file_deleted_after_a_diff_preview_stays_deleted() {
     );
 }
 
+#[test]
+fn a_copy_memsaga_wrote_stays_its_own_after_a_touch() {
+    // A preview copy rewritten with the same bytes later (`touch`, a
+    // `git stash` and `pop`, a backup tool): content decides, so it is still
+    // memsaga's own copy and the newer live file replaces it.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let live = fx.claude.join("projects/-h-git-a/memory/one.md");
+    let clone = fx.repo.join("claude/memory/-h-git-a/one.md");
+    let tick = || std::thread::sleep(std::time::Duration::from_millis(1100));
+    tick();
+    fs::write(&live, "fact v2\n").unwrap();
+    run(&fx, &["diff"]);
+    tick();
+    fs::write(&live, "fact v3\n").unwrap();
+    tick();
+    fs::write(&clone, "fact v2\n").unwrap();
+    hook(&fx, &stop("s1"));
+    let incoming = status_json(&fx)["incoming"].clone();
+    assert!(incoming.as_object().unwrap().is_empty(), "{incoming}");
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "fact v3\n"
+    );
+}
+
+#[test]
+fn a_sweep_that_fails_after_mirroring_leaves_no_false_hand_edit() {
+    // A preview of v2; the live file moves to v3; a sweep mirrors v3 and then
+    // fails before committing; the live file moves to v4. Both copies left in
+    // the clone were memsaga's own, so nothing may look like a hand edit.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let live = fx.claude.join("projects/-h-git-a/memory/one.md");
+    let tick = || std::thread::sleep(std::time::Duration::from_millis(1100));
+    tick();
+    fs::write(&live, "fact v2\n").unwrap();
+    run(&fx, &["diff"]);
+    tick();
+    fs::write(&live, "fact v3\n").unwrap();
+    let lock = fx.repo.join(".git/index.lock");
+    write(&lock, "");
+    let failed = cmd(&fx).args(["sweep"]).output().unwrap();
+    assert!(
+        !failed.status.success(),
+        "the sweep should fail on index.lock"
+    );
+    fs::remove_file(&lock).unwrap();
+    assert_eq!(
+        fs::read_to_string(fx.repo.join("claude/memory/-h-git-a/one.md")).unwrap(),
+        "fact v3\n",
+        "the failed sweep had mirrored v3"
+    );
+    tick();
+    fs::write(&live, "fact v4\n").unwrap();
+    hook(&fx, &pre_tool("Edit", &live, "s1"));
+    let incoming = status_json(&fx)["incoming"].clone();
+    assert!(incoming.as_object().unwrap().is_empty(), "{incoming}");
+    hook(&fx, &stop("s1"));
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "fact v4\n"
+    );
+}
+
+#[test]
+fn a_mirror_that_fails_part_way_still_records_what_it_wrote() {
+    // The first root's copy is written, then the second root cannot be read:
+    // the mirror stops with an error, and the copy it did write must still be
+    // known as memsaga's own.
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let live = fx.claude.join("projects/-h-git-a/memory/one.md");
+    let unreadable = fx.work.join("projects/-h-git-a/memory/w.md");
+    let tick = || std::thread::sleep(std::time::Duration::from_millis(1100));
+    tick();
+    fs::write(&live, "fact v2\n").unwrap();
+    fs::write(&unreadable, "work fact v2\n").unwrap();
+    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+    let failed = cmd(&fx).args(["sweep"]).output().unwrap();
+    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(!failed.status.success(), "the second root should fail");
+    assert_eq!(
+        fs::read_to_string(fx.repo.join("claude/memory/-h-git-a/one.md")).unwrap(),
+        "fact v2\n",
+        "the first root was mirrored before the failure"
+    );
+    tick();
+    fs::write(&live, "fact v3\n").unwrap();
+    hook(&fx, &pre_tool("Edit", &live, "s1"));
+    let incoming = status_json(&fx)["incoming"].clone();
+    assert!(incoming.as_object().unwrap().is_empty(), "{incoming}");
+}
+
 fn pre_tool(tool: &str, path: &Path, session: &str) -> String {
     hook_json(
         "PreToolUse",
