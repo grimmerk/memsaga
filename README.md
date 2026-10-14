@@ -83,11 +83,18 @@ command-line tool) is optional, for creating the GitHub repository.
 ```sh
 cargo install --git https://github.com/grimmerk/memsaga memsaga --locked
 memsaga init --dry-run    # what would be imported, and how much history can be replayed
-memsaga init              # create ~/git/memories, replay history, import the current state
+memsaga init              # create the data repository, replay history, import the current state
 memsaga install           # register the hooks in each Claude Code config directory
 gh repo create memories --private --source ~/git/memories --push   # optional: a private remote
 memsaga status            # last sweep, pending changes, push state
 ```
+
+**Where the data repository goes.** `init` creates it as `memories` in the
+first of `~/git`, `~/code`, `~/src`, `~/Projects` and `~/dev` that exists, or as
+`~/memories` when none does, and records the choice as `repo` in
+`~/.config/memsaga/config.toml`. `memsaga init --repo <path>` puts it anywhere
+else, and `init --dry-run` shows the choice first. The examples in this README
+use `~/git/memories`; `memsaga config` prints yours.
 
 From then on nothing else is needed. Every turn that changed something in
 scope ends with a commit, and the terminal shows a one-line notice. Once the
@@ -461,7 +468,7 @@ one commit, and `restore --at` still reads older revisions from the old path.
 prints the effective values.
 
 ```toml
-repo = "~/git/memories"
+repo = "~/git/memories"          # written by init (see the quick start)
 files = ["CLAUDE.md", "keybindings.json"]
 dirs = ["skills", "commands", "agents", "agent-memory", "rules", "output-styles", "themes", "workflows", "hooks", "scripts"]
 memory = true
@@ -481,7 +488,9 @@ label = "claude"
 ```
 
 Without `[[roots]]`, memsaga reads CodeV's `~/.config/codev/accounts.json` if
-present, else uses `~/.claude`. If the config file disappears while the
+present, else uses `~/.claude`. Without `repo`, it uses an existing `memories`
+repository in one of the folders the quick start names, else the place `init`
+would choose. If the config file disappears while the
 repository still holds its mirrored copy, memsaga runs on its defaults: fewer
 files are mirrored, and copies of files that drop out of scope are left in the
 repository. The reporter prints a warning with the restore command after every
@@ -518,7 +527,8 @@ Tested with the same user name and the same `~/git` layout:
 1. Install Claude Code and sign in once, so `~/.claude` exists. Create the
    directory of every other account in your config (for example
    `~/.claude-work`); a root that does not exist is skipped, with a count.
-2. Clone the data repository: `gh repo clone <you>/memories ~/git/memories`.
+2. Clone the data repository to the same place as on the first machine (its
+   `repo` setting), for example `gh repo clone <you>/memories ~/git/memories`.
    Do **not** run `memsaga init` there: it would commit the new machine's
    empty state on top of your history.
 3. Install memsaga and copy the config:

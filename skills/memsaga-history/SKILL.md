@@ -1,24 +1,26 @@
 ---
 name: memsaga-history
-description: Look up the version history of Claude Code's own memory and config — global CLAUDE.md, per-project auto-memory files (MEMORY.md and topic files), and user skills — which memsaga mirrors into a git repo (`memsaga config` shows the path; default ~/git/memories) on every turn. Use when the user asks what a memory or CLAUDE.md said last week, when a memory was added/changed/deleted and by which session, wants to diff two versions, wants to recover a deleted or overwritten memory file, or mentions memsaga, memories, or the old names memvc / ccmem. The user may ask in any language (for example 記憶の履歴, memory 歷史/版本/還原; examples only).
+description: Look up the version history of Claude Code's own memory and config — global CLAUDE.md, per-project auto-memory files (MEMORY.md and topic files), and user skills — which memsaga mirrors into a git repo (`memsaga config` shows the path, for example ~/git/memories) on every turn. Use when the user asks what a memory or CLAUDE.md said last week, when a memory was added/changed/deleted and by which session, wants to diff two versions, wants to recover a deleted or overwritten memory file, or mentions memsaga, memories, or the old names memvc / ccmem. The user may ask in any language (for example 記憶の履歴, memory 歷史/版本/還原; examples only).
 ---
 
 # memsaga history
 
-Live files stay where Claude Code keeps them (`~/.claude/...`, `~/.claude-work/...`). memsaga
-copies an allowlist into `~/git/memories` and commits once per turn; the repo is a mirror
-plus history back to 2026-07 (replayed from transcripts). An edit made in the mirror (or on
+Live files stay where Claude Code keeps them (`~/.claude/...`, and one directory per further
+account, such as `~/.claude-work/...`). memsaga copies an allowlist into its data repository
+(the `repo` line of `memsaga config`; `~/git/memories` in the examples below) and commits once
+per turn; the repo is a mirror plus whatever earlier history `memsaga init` could replay from
+transcripts. An edit made in the mirror (or on
 GitHub) is kept and waits until `memsaga sync` (or the session-start / prompt hooks) brings it
 to the live file; `memsaga status` lists what waits. Restoring an older version is an explicit
 `memsaga restore`.
 
-## Layout of ~/git/memories
+## Layout of the data repository
 
 ```
-claude/CLAUDE.md                                  global CLAUDE.md (account main)
+claude/CLAUDE.md                                  global CLAUDE.md (the ~/.claude account)
 claude/skills/<name>/SKILL.md                     user skills
-claude/memory/<name>/{MEMORY.md,*.md}             auto-memory per project (main account); live path is projects/<slug>/memory/
-claude-work/...                                   same for the second account (work); CLAUDE.md and skills are symlinks to claude/
+claude/memory/<name>/{MEMORY.md,*.md}             auto-memory per project; live path is projects/<slug>/memory/
+claude-work/...                                   a further account, named after its directory; files it shares through symlinks stay symlinks to claude/
 paths.json                                        memory name -> real cwd, e.g. "HOME-git-webapp": "~/git/webapp"
 index.md                                          browsable table of every project
 ```
@@ -31,7 +33,7 @@ repository a project under home is named without the home: `claude/memory/HOME-g
 (live `-Users-me-git-webapp`), `claude/memory/HOME-git/` for `~/git`; a project outside home
 keeps its slug, and so does every project on a machine where another directory encodes like
 a path under home (`/Users/me-old` next to `/Users/me`), where the home cannot be told
-apart in the slug. Before grimmerk/memsaga-private#25 (2026-10) the repository used the slugs themselves
+apart in the slug. Repositories started before October 2026 used the slugs themselves
 (`claude/memory/-Users-me-git-webapp/`); that is a rename, so use `--follow`. Older slugs such as
 `-Users-me-git-webapp-<worktree>-packages-api` are per-cwd leftovers from
 before that change; their files are still mirrored but no longer loaded.
@@ -44,7 +46,7 @@ Claude session id), `Cwd:`, `Agent:`, and `Session-Title:` (full title, since 20
 ## Recipes (all read-only)
 
 ```bash
-R=~/git/memories
+R=$(memsaga config | sed -n 's/^repo = "\(.*\)"$/\1/p')     # the data repository
 memsaga status                                            # last sweep, pending dirty marker, recent events
 git -C $R log --since='7 days ago' --date=short --format='%h %ad %s' -- claude/CLAUDE.md
 git -C $R log -p --follow -- claude/memory/HOME-git-webapp/MEMORY.md
@@ -55,14 +57,14 @@ git -C $R log --format='%h %ad %s%n  %(trailers:key=Session,valueonly)' --date=s
 git -C $R log --grep='^Session-Title: <name>$' --format='%h %ad %s' --date=short   # every commit of one named session (a regex: escape . [ * in the name)
 ```
 
-Before 2026-09-18 the repo stored memory at `claude/projects/<slug>/memory/`; that commit is
-a pure rename, so use `--follow` (as above) to see history across it, and `git show
+Repositories started before 2026-09-18 stored memory at `claude/projects/<slug>/memory/`; the
+commit that moved it is a pure rename, so use `--follow` (as above) to see history across it, and `git show
 <old sha>:claude/projects/<slug>/memory/<file>.md` for content from before it. `memsaga restore
 --at <old sha>` handles the old path by itself.
 
 Backfilled history has gaps: an edit made through Bash is invisible to the replay, so a
-file may jump versions between two `backfill:` commits. The `import:` commit of
-2026-09-18 is the first exact snapshot; everything after it is exact.
+file may jump versions between two `backfill:` commits. The `import:` commit that
+`memsaga init` made is the first exact snapshot; everything after it is exact.
 
 ## Restoring
 

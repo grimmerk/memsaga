@@ -23,9 +23,10 @@ end of the turn.
 <memsaga repo>/companion/<repo name>/<path inside that repo>.<lang>.md
 ```
 
-- `<memsaga repo>` is the `repo` value of `memsaga config` (default `~/git/memories`).
-- `<repo name>` is the source repository's directory name under `~/git`
-  (`webapp`, `docs`), not the GitHub full name.
+- `<memsaga repo>` is the `repo` value of `memsaga config` (`~/git/memories` in
+  the examples here).
+- `<repo name>` is the last component of the source repository's path
+  (`webapp` for `~/git/webapp` or `~/code/webapp`), not the GitHub full name.
 - `<path inside that repo>` keeps the source's relative path and extension,
   then adds the language tag: `docs/architecture.md` -> `docs/architecture.zh-tw.md`.
   The tag is the companion's language (`zh-tw`, `ja`, `de`, `fr`); the examples
@@ -123,7 +124,7 @@ source (for a note, what it relates to); in a session the user can type `/compan
 
 ## When reading a document
 
-Before summarising or translating a file under `~/git/<repo>/`, check whether
+Before summarising or translating a file inside a git repository, check whether
 its companion exists at the path above and mention it to the user if it does.
 If the source has moved, `sources[].resource` in the companion's frontmatter
 names the old path; search by file name under `companion/<repo>/` and

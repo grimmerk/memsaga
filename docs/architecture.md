@@ -24,14 +24,14 @@ Claude Code ─────────┬────────────�
                      │ (5 ms, no git)                    │   → lock → mirror → index → commit
                      ▼                                    │   → throttled push
    roots (read only)                                      ▼
-   ~/.claude, ~/.claude-work  ──── rsync-like copy ────▶  ~/git/memories  (private git repo)
+   ~/.claude, ~/.claude-work  ──── rsync-like copy ────▶  data repo, e.g. ~/git/memories
 ```
 
 ## Modules (`crates/memsaga-core/src`)
 
 | Module | Owns | Key facts |
 |---|---|---|
-| `config` | `Config`, `Root`, `Granularity`; TOML load + env overrides; root discovery | Precedence: `[[roots]]` in the file, else codev's `accounts.json`, else `~/.claude`. `current_root()` reads `CLAUDE_CONFIG_DIR`, which hooks inherit from the `claude` process. |
+| `config` | `Config`, `Root`, `Granularity`, `RepoOrigin`; TOML load + env overrides; root discovery; repository location | Precedence: `[[roots]]` in the file, else codev's `accounts.json`, else `~/.claude`. `repo`: `MEMSAGA_REPO`, else the file, else `detect_repo()` (an existing `memories` repository in `~/git`, `~/code`, `~/src`, `~/Projects`, `~/dev` or `~`, else `memories` in the first of those folders that exists, else `~/memories`); `init` writes a detected or `--repo` location into the file (`record_repo`, one line prepended, the rest kept) so it never moves. `current_root()` reads `CLAUDE_CONFIG_DIR`, which hooks inherit from the `claude` process. |
 | `roots` | `Scope`: what is in scope for a root (`entries`) and whether an absolute path is (`contains`) | `contains` never touches the filesystem: the PostToolUse fast path must stay at process-startup cost. Exclusions: basename globs (`exclude`), slug globs (`exclude_projects`), root-relative subtrees (`exclude_paths`, default `skills/synced` and `skills/.trash`). An excluded path that was mirrored before is pruned from the repository by the next sweep. |
 | `slug` | Claude Code's project-dir encoding and the reverse map | `encode` = every non-alphanumeric byte → `-`. The reverse map comes from each root's `history.jsonl` (`project` field per prompt), never from parsing the slug. |
 | `mirror` | One-way copy of a root into `repo/<label>/` | rsync semantics: copy when size or mtime differ, preserve mtime, delete extras, keep symlinks. A top-level symlink into another root is rewritten relative (`../claude/CLAUDE.md`); a symlink inside a mirrored dir that escapes the tree becomes absolute. Deletion is confined to tool-owned subtrees; `.git` is never removed. |
