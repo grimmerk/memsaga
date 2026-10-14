@@ -69,11 +69,17 @@ def prepare(name):
 def one(binary, payload):
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
     t0 = time.perf_counter()
-    subprocess.run([binary, "hook"], input=payload, env=ENV, capture_output=True, check=False)
+    done = subprocess.run([binary, "hook"], input=payload, env=ENV, capture_output=True, check=False)
     wall = time.perf_counter() - t0
     after = resource.getrusage(resource.RUSAGE_CHILDREN)
     cpu = (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime)
-    return wall * 1000, cpu * 1000
+    return wall * 1000, cpu * 1000, done.returncode
+
+
+def head():
+    out = subprocess.run(["git", "-C", f"{HOME}/git/memories", "rev-parse", "HEAD"],
+                         capture_output=True, text=True, env=ENV, check=False)
+    return out.stdout.strip()
 
 
 def p90(xs):
@@ -92,13 +98,26 @@ def main():
             prepare(name)
             one(b, payload)
         res = {old: ([], []), new: ([], [])}
+        must_commit = "file changed" in name
+        rejected = {old: 0, new: 0}
         for _ in range(runs):
             for b in (old, new):
                 prepare(name)
-                w, c = one(b, payload)
+                before = head() if must_commit else None
+                w, c, code = one(b, payload)
+                # A hook exits 0 even when its sweep failed: only a call that did
+                # what the case names counts (checked outside the timing).
+                if code != 0 or (must_commit and head() == before):
+                    rejected[b] += 1
+                    continue
                 res[b][0].append(w)
                 res[b][1].append(c)
         print(f"\n{name}")
+        for label, b in (("old", old), ("new", new)):
+            if rejected[b]:
+                print(f"  {label}: {rejected[b]} call(s) left out: nonzero exit or no commit")
+            if not res[b][0]:
+                sys.exit(f"  {label}: no valid call; is the demo environment intact?")
         for label, b in (("old", old), ("new", new)):
             w, c = res[b]
             print(f"  {label}: wall {statistics.median(w):6.2f} / {p90(w):6.2f}   "

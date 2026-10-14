@@ -99,9 +99,8 @@ pub fn extra_repo_rel(p: &Path) -> PathBuf {
 /// `extra_files` entry to its `extra/` path. Missing sources are skipped, and
 /// nothing under `memsaga/` or `extra/` is ever deleted here: an entry removed
 /// from the config keeps its last mirrored copy until the user deletes it.
-pub fn sync_self_and_extras(scope: &Scope) -> Result<Stats> {
+pub fn sync_self_and_extras(scope: &Scope, stats: &mut Stats) -> Result<()> {
     let cfg = scope.cfg;
-    let mut stats = Stats::default();
     let own = crate::config::config_path();
     if own.is_file() {
         let dst = cfg.repo.join("memsaga/config.toml");
@@ -118,16 +117,17 @@ pub fn sync_self_and_extras(scope: &Scope) -> Result<Stats> {
             stats.count(copy_if_changed(&src, &dst)?, &dst);
         }
     }
-    Ok(stats)
+    Ok(())
 }
 
 /// Mirror every entry of `root` into `repo/<label>/`, then prune project
-/// directories whose memory vanished or became excluded.
-pub fn sync_root(scope: &Scope, root: &Root, repo: &Path) -> Result<Stats> {
-    let mut stats = Stats::default();
+/// directories whose memory vanished or became excluded. Counts go into
+/// `stats` as each file is written, so the caller still has the list of
+/// files written so far when a later step fails.
+pub fn sync_root(scope: &Scope, root: &Root, repo: &Path, stats: &mut Stats) -> Result<()> {
     let entries = scope.entries(root);
     for e in &entries {
-        stats.add(sync_entry(scope, root, e, repo)?);
+        sync_entry(scope, root, e, repo, stats)?;
     }
     // Files/dirs in the allowlist that disappeared from the root: remove copies.
     let base = repo.join(&root.label);
@@ -152,29 +152,34 @@ pub fn sync_root(scope: &Scope, root: &Root, repo: &Path) -> Result<Stats> {
         }
     }
     stats.add(prune_memory(scope, root, repo, &entries)?);
-    Ok(stats)
+    Ok(())
 }
 
-fn sync_entry(scope: &Scope, root: &Root, entry: &Entry, repo: &Path) -> Result<Stats> {
+fn sync_entry(
+    scope: &Scope,
+    root: &Root,
+    entry: &Entry,
+    repo: &Path,
+    stats: &mut Stats,
+) -> Result<()> {
     let src = entry.source(root);
     let dst = entry.dest(repo, root);
-    let mut stats = Stats::default();
     let meta = match src.symlink_metadata() {
         Ok(m) => m,
-        Err(_) => return Ok(stats),
+        Err(_) => return Ok(()),
     };
     if meta.file_type().is_symlink() {
         if scope.may_write(&dst, None) {
             stats.linked += mirror_symlink(scope, &src, &dst, repo)?;
         }
-        return Ok(stats);
+        return Ok(());
     }
     if meta.is_file() {
         if let Some(p) = dst.parent() {
             fs::create_dir_all(p)?;
         }
         if !scope.may_write(&dst, Some(&src)) {
-            return Ok(stats);
+            return Ok(());
         }
         let is_settings = matches!(entry, Entry::File { rel } if rel == "settings.json");
         let copied = if is_settings && !scope.cfg.settings_ignore_keys.is_empty() {
@@ -183,7 +188,7 @@ fn sync_entry(scope: &Scope, root: &Root, entry: &Entry, repo: &Path) -> Result<
             copy_if_changed(&src, &dst)?
         };
         stats.count(copied, &dst);
-        return Ok(stats);
+        return Ok(());
     }
     if meta.is_dir() {
         // A destination that used to be a symlink must be replaced by a real dir.
@@ -200,15 +205,20 @@ fn sync_entry(scope: &Scope, root: &Root, entry: &Entry, repo: &Path) -> Result<
             Entry::Memory { slug } => PathBuf::from("projects").join(slug).join("memory"),
             Entry::File { rel } => PathBuf::from(rel),
         };
-        stats.add(sync_dir(scope, &src, &dst, &prefix)?);
+        sync_dir(scope, &src, &dst, &prefix, stats)?;
     }
-    Ok(stats)
+    Ok(())
 }
 
 /// Recursive directory mirror with delete. `prefix` is `src` relative to its
 /// root, so root-relative `exclude_paths` can be applied while walking.
-pub fn sync_dir(scope: &Scope, src: &Path, dst: &Path, prefix: &Path) -> Result<Stats> {
-    let mut stats = Stats::default();
+pub fn sync_dir(
+    scope: &Scope,
+    src: &Path,
+    dst: &Path,
+    prefix: &Path,
+    stats: &mut Stats,
+) -> Result<()> {
     fs::create_dir_all(dst)?;
     let mut keep: BTreeSet<PathBuf> = BTreeSet::new();
     for item in WalkDir::new(src).follow_links(false).min_depth(1) {
@@ -274,7 +284,7 @@ pub fn sync_dir(scope: &Scope, src: &Path, dst: &Path, prefix: &Path) -> Result<
             stats.deleted += 1;
         }
     }
-    Ok(stats)
+    Ok(())
 }
 
 /// Copy when size or mtime differ; keep the source mtime on the copy.
