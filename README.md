@@ -93,7 +93,9 @@ memsaga status            # last sweep, pending changes, push state
 first of `~/git`, `~/code`, `~/src`, `~/Projects` and `~/dev` that exists, or as
 `~/memories` when none does, and records the choice as `repo` in
 `~/.config/memsaga/config.toml`. `memsaga init --repo <path>` puts it anywhere
-else, and `init --dry-run` shows the choice first. The examples in this README
+else, and `init --dry-run` shows the choice first. A folder of that name that
+already holds something else is never taken over: `init` stops and asks for
+`--repo`. The examples in this README
 use `~/git/memories`; `memsaga config` prints yours.
 
 From then on nothing else is needed. Every turn that changed something in
@@ -488,9 +490,9 @@ label = "claude"
 ```
 
 Without `[[roots]]`, memsaga reads CodeV's `~/.config/codev/accounts.json` if
-present, else uses `~/.claude`. Without `repo`, it uses an existing `memories`
-repository in one of the folders the quick start names, else the place `init`
-would choose. If the config file disappears while the
+present, else uses `~/.claude`. Without `repo`, it uses an existing memsaga
+repository called `memories` in one of the folders the quick start names, else
+the place `init` would choose. If the config file disappears while the
 repository still holds its mirrored copy, memsaga runs on its defaults: fewer
 files are mirrored, and copies of files that drop out of scope are left in the
 repository. The reporter prints a warning with the restore command after every
