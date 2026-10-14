@@ -27,6 +27,11 @@ end of the turn.
   the examples here).
 - `<repo name>` is the last component of the source repository's path
   (`webapp` for `~/git/webapp` or `~/code/webapp`), not the GitHub full name.
+  The same repository on two machines shares that name, which is the point.
+  Two different repositories with the same name (`~/git/webapp` and
+  `~/code/webapp` on one machine) would collide: when the existing
+  companions' `sources` point into another folder, use `<parent>-<name>`
+  (`code-webapp`) for the new repository.
 - `<path inside that repo>` keeps the source's relative path and extension,
   then adds the language tag: `docs/architecture.md` -> `docs/architecture.zh-tw.md`.
   The tag is the companion's language (`zh-tw`, `ja`, `de`, `fr`); the examples

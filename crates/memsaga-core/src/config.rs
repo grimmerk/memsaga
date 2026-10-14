@@ -96,7 +96,9 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            repo: detect_repo(),
+            // Filled in by `load`: the file's value, or `detect_repo()` only
+            // when the file has none (hooks then pay for no search).
+            repo: PathBuf::new(),
             repo_origin: RepoOrigin::Detected,
             file_repo: None,
             roots: Vec::new(),
@@ -149,20 +151,26 @@ impl Config {
     /// Load the config file (if any), apply env overrides, discover roots.
     pub fn load() -> Result<Config> {
         let path = config_path();
-        let mut cfg = if path.exists() {
+        let (mut cfg, file_sets_repo) = if path.exists() {
             let text = std::fs::read_to_string(&path)
                 .with_context(|| format!("reading {}", path.display()))?;
-            let mut c = toml::from_str::<Config>(&text)
+            let table = toml::from_str::<toml::Table>(&text)
                 .with_context(|| format!("parsing {}", path.display()))?;
-            if toml::from_str::<toml::Table>(&text).is_ok_and(|t| t.contains_key("repo")) {
-                c.repo_origin = RepoOrigin::File;
-                c.file_repo = Some(expand_tilde_path(&c.repo));
-            }
-            c
+            let sets_repo = table.contains_key("repo");
+            let c: Config = toml::Value::Table(table)
+                .try_into()
+                .with_context(|| format!("parsing {}", path.display()))?;
+            (c, sets_repo)
         } else {
-            Config::default()
+            (Config::default(), false)
         };
-        cfg.repo = expand_tilde_path(&cfg.repo);
+        if file_sets_repo {
+            cfg.repo = normalize(&expand_tilde_path(&cfg.repo));
+            cfg.repo_origin = RepoOrigin::File;
+            cfg.file_repo = Some(cfg.repo.clone());
+        } else {
+            cfg.repo = detect_repo();
+        }
         for r in &mut cfg.roots {
             r.path = expand_tilde_path(&r.path);
             if r.label.is_empty() {
@@ -170,7 +178,7 @@ impl Config {
             }
         }
         if let Ok(v) = std::env::var("MEMSAGA_REPO") {
-            cfg.repo = expand_tilde(&v);
+            cfg.repo = normalize(&expand_tilde(&v));
             cfg.repo_origin = RepoOrigin::Env;
         }
         if let Ok(v) = std::env::var("MEMSAGA_ROOTS") {
@@ -252,9 +260,11 @@ pub const GITATTRIBUTES_LINE: &str = "**/MEMORY.md merge=union";
 /// Whether `p` is a memsaga data repository: a git repository with memsaga's
 /// state directory, or a fresh clone of one, which carries the generated
 /// `paths.json` and the `.gitattributes` line `init` wrote. Someone's
-/// unrelated project that happens to be called `memories` is neither, so it
-/// is never adopted. The file read happens only for a clone memsaga has not
-/// used yet.
+/// unrelated project that happens to be called `memories` is neither. Only
+/// `init` creates the state directory in a repository that is not one yet:
+/// every other command refuses to run there (`main.rs`, before dispatch), so
+/// the mark cannot appear by accident. The file read happens only for a
+/// clone memsaga has not used yet.
 pub fn is_data_repo(p: &Path) -> bool {
     if p.join(".git/memsaga").is_dir() {
         return true;
@@ -268,7 +278,9 @@ pub fn is_data_repo(p: &Path) -> bool {
 /// The data repository when the config file does not set `repo`: an existing
 /// `memories` data repository in one of [`CODE_FOLDERS`] or the home
 /// directory; else `memories` in the first of those folders that exists; else
-/// `~/memories`. Only a few `stat` calls, so hooks can afford it.
+/// `~/memories`. Only a few `stat` calls. The fallback is a proposal for
+/// `init`; no other command writes there until `init` has made it a data
+/// repository.
 pub fn detect_repo() -> PathBuf {
     let Some(home) = dirs::home_dir() else {
         return PathBuf::from("memories");
@@ -314,13 +326,44 @@ pub fn record_repo(repo: &Path) -> Result<()> {
         ),
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    if let Some(dir) = path.parent() {
+    // A config kept in a dotfiles repository is often a symlink: write the file
+    // it points at, so the link (and the dotfiles copy) stays the source.
+    let target = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+    if let Some(dir) = target.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
-    // Write beside it, then rename: an interrupted write never leaves half a config.
-    let tmp = path.with_extension("toml.memsaga-tmp");
+    // Write beside it, then rename: an interrupted write never leaves half a
+    // config. The pid keeps two concurrent runs apart; the mode is kept.
+    let tmp = target.with_extension(format!("toml.memsaga-tmp-{}", std::process::id()));
     std::fs::write(&tmp, text).with_context(|| format!("writing {}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).with_context(|| format!("replacing {}", path.display()))
+    if let Ok(meta) = std::fs::metadata(&target) {
+        std::fs::set_permissions(&tmp, meta.permissions())
+            .with_context(|| format!("setting the mode of {}", tmp.display()))?;
+    }
+    std::fs::rename(&tmp, &target).with_context(|| format!("replacing {}", target.display()))
+}
+
+/// `p` as an absolute path with `.` and `..` resolved lexically (symlinks are
+/// left alone), so two spellings of one folder compare equal.
+pub fn normalize(p: &Path) -> PathBuf {
+    let abs = if p.is_relative() {
+        std::env::current_dir()
+            .map(|d| d.join(p))
+            .unwrap_or_else(|_| p.to_path_buf())
+    } else {
+        p.to_path_buf()
+    };
+    let mut out = PathBuf::new();
+    for c in abs.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 /// `.claude` -> `claude`, `.claude-work` -> `claude-work`, `foo` -> `foo`.

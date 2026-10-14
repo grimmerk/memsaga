@@ -95,8 +95,10 @@ first of `~/git`, `~/code`, `~/src`, `~/Projects` and `~/dev` that exists, or as
 `~/.config/memsaga/config.toml`. `memsaga init --repo <path>` puts it anywhere
 else, and `init --dry-run` shows the choice first. A folder of that name that
 already holds something else is never taken over: `init` stops and asks for
-`--repo`. The examples in this README
-use `~/git/memories`; `memsaga config` prints yours.
+`--repo`. A git repository you name yourself, such as a fresh clone of an empty
+GitHub repository, is used as it is. Until `init` has run, the hooks and every
+other command leave all folders alone. The examples in this README use
+`~/git/memories`; `memsaga config` prints yours.
 
 From then on nothing else is needed. Every turn that changed something in
 scope ends with a commit, and the terminal shows a one-line notice. Once the

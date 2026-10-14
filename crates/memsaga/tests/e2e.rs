@@ -2898,6 +2898,19 @@ impl NewUser {
 
     /// As `output`, with `MEMSAGA_REPO` set when `repo_env` is given.
     fn output_with_repo_env(&self, repo_env: Option<&Path>, args: &[&str]) -> std::process::Output {
+        self.command(repo_env).args(args).output().unwrap()
+    }
+
+    /// Run one hook event, as Claude Code would.
+    fn hook(&self, json: &str) -> std::process::Output {
+        self.command(None)
+            .arg("hook")
+            .write_stdin(json.to_string())
+            .output()
+            .unwrap()
+    }
+
+    fn command(&self, repo_env: Option<&Path>) -> Command {
         let mut c = Command::cargo_bin("memsaga").unwrap();
         c.env("HOME", &self.home)
             .env_remove("MEMSAGA_CONFIG")
@@ -2912,7 +2925,7 @@ impl NewUser {
         if let Some(r) = repo_env {
             c.env("MEMSAGA_REPO", r);
         }
-        c.args(args).output().unwrap()
+        c
     }
 
     fn run(&self, args: &[&str]) -> String {
@@ -3036,7 +3049,10 @@ fn init_never_takes_over_an_unrelated_folder_called_memories() {
     let out = u.output(&["init", "--no-backfill"]);
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("is not a memsaga data repository"), "{err}");
+    assert!(
+        err.contains("memsaga did not create") && err.contains("--repo"),
+        "{err}"
+    );
     assert_eq!(
         git_at(&theirs, &["rev-list", "--count", "HEAD"]).trim(),
         "1"
@@ -3049,4 +3065,87 @@ fn init_never_takes_over_an_unrelated_folder_called_memories() {
         git_at(&theirs, &["rev-list", "--count", "HEAD"]).trim(),
         "1"
     );
+}
+
+#[test]
+fn before_init_hooks_and_commands_never_write_into_a_folder_that_is_not_a_data_repository() {
+    // Hooks installed, init not run yet (or the config file lost), and the
+    // search lands on someone else's project.
+    let u = NewUser::new(&["code"]);
+    let theirs = u.home.join("code/memories");
+    write(&theirs.join("notes.txt"), "theirs\n");
+    git_at(&theirs, &["init", "-q"]);
+    git_at(&theirs, &["add", "notes.txt"]);
+    git_at(&theirs, &["commit", "-q", "-m", "their work"]);
+
+    let claude_md = u.home.join(".claude/CLAUDE.md");
+    write(&claude_md, "# global, edited\n");
+    for json in [post_tool_use(&claude_md, "s1"), stop("s1")] {
+        let out = u.hook(&json);
+        assert!(out.status.success(), "a hook never fails a turn");
+    }
+    let out = u.output(&["diff", "--stat"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no memsaga data repository"));
+
+    assert_eq!(
+        git_at(&theirs, &["rev-list", "--count", "HEAD"]).trim(),
+        "1"
+    );
+    assert_eq!(git_at(&theirs, &["status", "--porcelain"]).trim(), "");
+    assert!(
+        !theirs.join(".git/memsaga").exists(),
+        "no mark that init would later trust"
+    );
+}
+
+#[test]
+fn init_uses_a_git_repository_you_named_but_never_a_folder_of_other_files() {
+    // A clone of a new GitHub repository with a README, named in the config.
+    let u = NewUser::new(&["git"]);
+    let clone = u.home.join("git/memories");
+    write(&clone.join("README.md"), "# memories\n");
+    git_at(&clone, &["init", "-q"]);
+    git_at(&clone, &["add", "README.md"]);
+    git_at(&clone, &["commit", "-q", "-m", "Initial commit"]);
+    write(&u.cfg(), "repo = \"~/git/memories\"\n");
+    let out = u.run(&["init", "--no-backfill"]);
+    assert!(out.contains("using the existing git repository"), "{out}");
+    assert!(git_at(&clone, &["log", "--format=%s", "-1"]).starts_with("import"));
+
+    // A folder of other files is refused even when named.
+    let v = NewUser::new(&[]);
+    write(&v.home.join("Documents/tax.pdf"), "pdf\n");
+    let out = v.output(&["init", "--no-backfill", "--repo", "~/Documents"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not a git repository"));
+    assert!(!v.home.join("Documents/.git").exists());
+}
+
+#[test]
+fn init_records_through_a_symlinked_config_and_keeps_its_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    // The config lives in a dotfiles repository and is linked into place.
+    let u = NewUser::new(&["code"]);
+    let real = u.home.join("dotfiles/memsaga.toml");
+    write(&real, "reporter = false\n");
+    fs::set_permissions(&real, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::create_dir_all(u.cfg().parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&real, u.cfg()).unwrap();
+
+    u.run(&["init", "--no-backfill"]);
+    assert!(fs::symlink_metadata(u.cfg())
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        fs::read_to_string(&real).unwrap(),
+        "repo = \"~/code/memories\"\nreporter = false\n"
+    );
+    assert_eq!(
+        fs::metadata(&real).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    // Another spelling of the recorded path is the same path, not a conflict.
+    u.run(&["init", "--no-backfill", "--repo", "~/code/../code/memories"]);
 }
