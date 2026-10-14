@@ -4,7 +4,9 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use memsaga_core::config::{expand_tilde, Config};
+use memsaga_core::config::{
+    expand_tilde, is_data_repo, normalize, Config, RepoOrigin, GITATTRIBUTES_LINE,
+};
 use memsaga_core::git::Git;
 use memsaga_core::hook::{self, Action, HookInput};
 use memsaga_core::roots::{Entry, Scope};
@@ -48,6 +50,12 @@ enum Cmd {
         /// Seconds within which ops of one session merge into one backfill commit.
         #[arg(long, default_value_t = 120)]
         group_window: i64,
+        /// Where to create the data repository. Without it, the config file's
+        /// `repo`, else `memories` in the first of ~/git, ~/code, ~/src,
+        /// ~/Projects, ~/dev that exists, else ~/memories. The choice is
+        /// recorded in the config file.
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Refresh the mirror and show what the next sweep would commit.
     Diff {
@@ -170,6 +178,26 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<()> {
+    // Every command but these works on an existing data repository. Without
+    // one (before `init`, or a `repo` naming a folder that is not one) they
+    // stop here, so nothing is ever written into a folder `init` has not made
+    // a data repository; hooks stop silently, since a hook never fails a turn.
+    let needs_repo = !matches!(
+        cli.cmd,
+        Cmd::Init { .. } | Cmd::Install { .. } | Cmd::Uninstall { .. } | Cmd::Config | Cmd::Paths
+    );
+    if needs_repo {
+        let quiet = matches!(cli.cmd, Cmd::Hook | Cmd::Report);
+        match Config::load() {
+            Ok(cfg) if is_data_repo(&cfg.repo) => {}
+            Ok(_) | Err(_) if quiet => return Ok(()),
+            Ok(cfg) => anyhow::bail!(
+                "no memsaga data repository at {}: on a new machine, clone the data repository there (README, \"Setting up another machine\"); otherwise run `memsaga init` (`memsaga config` shows the settings)",
+                cfg.repo.display()
+            ),
+            Err(e) => return Err(e),
+        }
+    }
     match cli.cmd {
         Cmd::Hook => {
             // Never fail a hook. Log instead.
@@ -249,7 +277,8 @@ fn run(cli: Cli) -> Result<()> {
             no_backfill,
             dry_run,
             group_window,
-        } => cmd_init(no_backfill, dry_run, group_window),
+            repo,
+        } => cmd_init(no_backfill, dry_run, group_window, repo.as_deref()),
         Cmd::Diff { stat } => {
             let cfg = Config::load()?;
             let (status, diff) = sweep::pending(&cfg, stat)?;
@@ -445,10 +474,80 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
-fn cmd_init(no_backfill: bool, dry_run: bool, group_window: i64) -> Result<()> {
-    let cfg = Config::load()?;
+fn cmd_init(
+    no_backfill: bool,
+    dry_run: bool,
+    group_window: i64,
+    repo_flag: Option<&str>,
+) -> Result<()> {
+    let mut cfg = Config::load()?;
+    let cfg_path = memsaga_core::config::config_path();
+    if let Some(r) = repo_flag {
+        let p = normalize(&expand_tilde(r));
+        // Checked against the file itself, so MEMSAGA_REPO cannot hide a conflict.
+        if let Some(file_repo) = cfg.file_repo.as_ref().filter(|f| **f != p) {
+            anyhow::bail!(
+                "{} already sets repo = {}; change it there instead of passing --repo",
+                cfg_path.display(),
+                file_repo.display()
+            );
+        }
+        cfg.repo = p;
+    }
+    // Never take over someone else's folder. A new path, an empty folder or a
+    // data repository is fine. An existing git repository is fine only when
+    // you named it (the config file, --repo or MEMSAGA_REPO), for example a
+    // clone of an empty GitHub repository; never when the search picked it.
+    // A folder with other files that is not a git repository never is.
+    let named = repo_flag.is_some() || cfg.repo_origin != RepoOrigin::Detected;
+    let is_empty_dir =
+        |p: &std::path::Path| std::fs::read_dir(p).is_ok_and(|mut d| d.next().is_none());
+    let elsewhere = if cfg.file_repo.is_some() {
+        format!("change `repo` in {}", cfg_path.display())
+    } else {
+        "pass --repo <path> to choose another place".to_string()
+    };
+    if cfg.repo.exists() && !is_data_repo(&cfg.repo) && !is_empty_dir(&cfg.repo) {
+        if !cfg.repo.join(".git").exists() {
+            anyhow::bail!(
+                "{} holds other files and is not a git repository, so it cannot become the data repository; {elsewhere}",
+                cfg.repo.display()
+            );
+        }
+        if !named {
+            anyhow::bail!(
+                "{} is a git repository memsaga did not create; pass --repo {} to use it anyway, or --repo <path> to choose another place",
+                cfg.repo.display(),
+                cfg.repo.display()
+            );
+        }
+        println!(
+            "using the existing git repository {} as the data repository",
+            cfg.repo.display()
+        );
+    }
+    // Record a location the config file does not set yet, when --repo or the
+    // search chose it (MEMSAGA_REPO alone is a one-off run and is not recorded).
+    let record =
+        cfg.file_repo.is_none() && (repo_flag.is_some() || cfg.repo_origin == RepoOrigin::Detected);
+    let from = match (repo_flag, cfg.repo_origin) {
+        (Some(_), RepoOrigin::Env) => "from --repo, instead of MEMSAGA_REPO".to_string(),
+        (_, RepoOrigin::File) => "set in the config file".to_string(),
+        (_, RepoOrigin::Env) => "set by MEMSAGA_REPO".to_string(),
+        (Some(_), RepoOrigin::Detected) => "from --repo".to_string(),
+        (None, RepoOrigin::Detected) if is_data_repo(&cfg.repo) => {
+            "an existing memsaga repository; pass --repo to choose another place".to_string()
+        }
+        (None, RepoOrigin::Detected) => {
+            "chosen by default: memories in the first of ~/git, ~/code, ~/src, ~/Projects, ~/dev that exists, else ~/memories; pass --repo to choose another place".to_string()
+        }
+    };
+    println!("repo: {} ({from})", cfg.repo.display());
+    if record {
+        let verb = if dry_run { "would record" } else { "records" };
+        println!("init {verb} it as `repo` in {}", cfg_path.display());
+    }
     let scope = Scope::new(&cfg);
-    println!("repo: {}", cfg.repo.display());
     let mut total_files = 0;
     for root in &cfg.roots {
         println!("root {} ({})", root.label, root.path.display());
@@ -487,10 +586,20 @@ fn cmd_init(no_backfill: bool, dry_run: bool, group_window: i64) -> Result<()> {
         git.init()?;
         println!("initialised {}", cfg.repo.display());
     }
+    // Mark it as memsaga's at once, so an init interrupted from here on can be
+    // run again (the check above accepts a marked repository).
+    std::fs::create_dir_all(cfg.state_dir())?;
+    if record {
+        // The config file is also a two-way-synced live file: write it under
+        // the sweep lock, like every other live write.
+        let _lock = State::new(cfg.state_dir()).lock(std::time::Duration::from_secs(20))?;
+        memsaga_core::config::record_repo(&cfg.repo)?;
+        println!("recorded repo in {}", cfg_path.display());
+    }
     // A .gitattributes so MEMORY.md indexes merge line-by-line across machines.
     let ga = cfg.repo.join(".gitattributes");
     if !ga.exists() {
-        std::fs::write(&ga, "**/MEMORY.md merge=union\n")?;
+        std::fs::write(&ga, format!("{GITATTRIBUTES_LINE}\n"))?;
     }
     if !no_backfill && !git.has_head() {
         let r = backfill::backfill(&cfg, group_window).context("backfill")?;
