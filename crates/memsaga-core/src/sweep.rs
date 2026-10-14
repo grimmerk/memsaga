@@ -213,7 +213,7 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
     // The copies stay in the clone uncommitted; remember them, or a live file
     // that changes again before the next sweep would make its preview copy
     // look like a hand edit.
-    crate::sync::record_preview(cfg, &state, &stats.written)?;
+    crate::sync::record_uncommitted(cfg, &state, &stats.written)?;
     let restat = stats.restat;
     // Stage into a throwaway index so new files show up in the diff without
     // touching whatever the user may have staged in the real one.
@@ -295,6 +295,11 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         .map(|r| memory_renames_pending(cfg, r))
         .sum();
     let stats = refresh_mirror(cfg, &scope)?;
+    // Until the commit below, what the mirror just wrote is memsaga's own
+    // uncommitted copy. Record it first, so a sweep that fails or is stopped
+    // before committing leaves nothing that looks like a hand edit once the
+    // live file changes again. Costs one git call, only when files changed.
+    crate::sync::record_uncommitted(cfg, &state, &stats.written)?;
     if let Some(g) = &scope.guard {
         if crate::sync::record_hand_edits(&mut incoming, g.take_found()) > 0 {
             crate::sync::save_incoming(&state, &incoming)?;
@@ -331,11 +336,11 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         out.files = files;
         out.shortstat = shortstat;
     }
-    // Every preview copy has now been replaced by the live file, or kept as a
-    // hand edit made since, and committed: the record has done its job. Not
-    // earlier: a sweep that fails before this point leaves the copies
-    // uncommitted, and they must still be recognised next time.
-    crate::sync::clear_preview(&state);
+    // Every copy memsaga wrote (a preview's, this sweep's) is now committed, or
+    // replaced and committed, or kept as a hand edit made since: the record
+    // has done its job. Not earlier: a sweep that fails before this point
+    // leaves copies uncommitted, and they must still be recognised next time.
+    crate::sync::clear_uncommitted(&state);
     // Promote the marker only after a successful pass; edits made during the
     // sweep have mtimes after `sweep_start` and are caught next time.
     set_marker(&state, sweep_start)?;

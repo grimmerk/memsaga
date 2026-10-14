@@ -2081,9 +2081,10 @@ fn a_live_file_deleted_after_a_diff_preview_stays_deleted() {
 }
 
 #[test]
-fn a_hand_edit_back_to_a_previews_content_is_still_a_hand_edit() {
-    // Same bytes as the preview copy, but written by hand later: it is an
-    // edit made in the repository and must not be overwritten.
+fn a_copy_memsaga_wrote_stays_its_own_after_a_touch() {
+    // A preview copy rewritten with the same bytes later (`touch`, a
+    // `git stash` and `pop`, a backup tool): content decides, so it is still
+    // memsaga's own copy and the newer live file replaces it.
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
     let live = fx.claude.join("projects/-h-git-a/memory/one.md");
@@ -2095,21 +2096,21 @@ fn a_hand_edit_back_to_a_previews_content_is_still_a_hand_edit() {
     tick();
     fs::write(&live, "fact v3\n").unwrap();
     tick();
-    fs::write(&clone, "something else\n").unwrap();
     fs::write(&clone, "fact v2\n").unwrap();
     hook(&fx, &stop("s1"));
     let incoming = status_json(&fx)["incoming"].clone();
-    assert!(
-        incoming["claude/memory/-h-git-a/one.md"].is_object(),
-        "{incoming}"
+    assert!(incoming.as_object().unwrap().is_empty(), "{incoming}");
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "fact v3\n"
     );
-    assert_eq!(fs::read_to_string(&clone).unwrap(), "fact v2\n");
 }
 
 #[test]
-fn a_sweep_that_fails_keeps_the_preview_record() {
-    // The preview record may only go once a sweep has committed over the
-    // copies; a sweep that fails first must leave it for the next one.
+fn a_sweep_that_fails_after_mirroring_leaves_no_false_hand_edit() {
+    // A preview of v2; the live file moves to v3; a sweep mirrors v3 and then
+    // fails before committing; the live file moves to v4. Both copies left in
+    // the clone were memsaga's own, so nothing may look like a hand edit.
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
     let live = fx.claude.join("projects/-h-git-a/memory/one.md");
@@ -2117,6 +2118,8 @@ fn a_sweep_that_fails_keeps_the_preview_record() {
     tick();
     fs::write(&live, "fact v2\n").unwrap();
     run(&fx, &["diff"]);
+    tick();
+    fs::write(&live, "fact v3\n").unwrap();
     let lock = fx.repo.join(".git/index.lock");
     write(&lock, "");
     let failed = cmd(&fx).args(["sweep"]).output().unwrap();
@@ -2125,11 +2128,21 @@ fn a_sweep_that_fails_keeps_the_preview_record() {
         "the sweep should fail on index.lock"
     );
     fs::remove_file(&lock).unwrap();
+    assert_eq!(
+        fs::read_to_string(fx.repo.join("claude/memory/-h-git-a/one.md")).unwrap(),
+        "fact v3\n",
+        "the failed sweep had mirrored v3"
+    );
     tick();
-    fs::write(&live, "fact v3\n").unwrap();
+    fs::write(&live, "fact v4\n").unwrap();
     hook(&fx, &pre_tool("Edit", &live, "s1"));
     let incoming = status_json(&fx)["incoming"].clone();
     assert!(incoming.as_object().unwrap().is_empty(), "{incoming}");
+    hook(&fx, &stop("s1"));
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "fact v4\n"
+    );
 }
 
 fn pre_tool(tool: &str, path: &Path, session: &str) -> String {
