@@ -110,3 +110,18 @@ Run `cargo test`; CI runs the same on ubuntu-latest and macos-latest with
 | Stop with a change: copy + commit | 0.2–0.5 s |
 | `init` on two roots, 1,222 transcript ops → 503 commits | 78 s |
 | Share of turns that produce a commit | about 11 % |
+
+## Measured again (2026-10-15), and how to repeat it
+
+`demo/bench-hooks.py` runs two release builds interleaved inside the demo
+environment (`demo/setup.sh`; no remote, so no network), 60 to 100 calls each,
+and prints median and p90 wall and CPU time per call. The machine was busy
+(load average 15 to 28), so absolute numbers run high; the comparison between
+the two builds is the point.
+
+| Hook call | Wall (median) | CPU (median) | Change |
+|---|---|---|---|
+| PreToolUse Read, file out of scope | 5–6 ms | 3–4 ms | none measurable from the pre-dispatch data-repository check (±0.2 ms, sign flips between runs) |
+| PostToolUse Write, file out of scope | 4–6 ms | 3–4 ms | none measurable |
+| Stop, nothing changed | 30–46 ms | 14–21 ms | none measurable |
+| Stop, one memory file changed (commits) | 0.39–0.45 s | 155–172 ms | the uncommitted-copy record adds one `git hash-object` call: +33 to +66 ms wall, +12 to +27 ms CPU. The Stop sweep runs in the background, and only on the turns that commit |
