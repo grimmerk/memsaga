@@ -48,13 +48,13 @@ Claude session id), `Cwd:`, `Agent:`, and `Session-Title:` (full title, since 20
 ```bash
 R=$(memsaga config | sed -n 's/^repo = "\(.*\)"$/\1/p')     # the data repository
 memsaga status                                            # last sweep, pending dirty marker, recent events
-git -C $R log --since='7 days ago' --date=short --format='%h %ad %s' -- claude/CLAUDE.md
-git -C $R log -p --follow -- claude/memory/HOME-git-webapp/MEMORY.md
-git -C $R log --diff-filter=D --since='30 days ago' --name-only --format='%h %ad' -- '*/memory/*'   # deleted memories
-git -C $R show <sha>^:claude/memory/<name>/<file>.md        # content before a commit (older commits: the slug as name)
-git -C $R diff <sha1> <sha2> -- claude/CLAUDE.md
-git -C $R log --format='%h %ad %s%n  %(trailers:key=Session,valueonly)' --date=short -n 20   # which session changed what
-git -C $R log --grep='^Session-Title: <name>$' --format='%h %ad %s' --date=short   # every commit of one named session (a regex: escape . [ * in the name)
+git -C "$R" log --since='7 days ago' --date=short --format='%h %ad %s' -- claude/CLAUDE.md
+git -C "$R" log -p --follow -- claude/memory/HOME-git-webapp/MEMORY.md
+git -C "$R" log --diff-filter=D --since='30 days ago' --name-only --format='%h %ad' -- '*/memory/*'   # deleted memories
+git -C "$R" show <sha>^:claude/memory/<name>/<file>.md        # content before a commit (older commits: the slug as name)
+git -C "$R" diff <sha1> <sha2> -- claude/CLAUDE.md
+git -C "$R" log --format='%h %ad %s%n  %(trailers:key=Session,valueonly)' --date=short -n 20   # which session changed what
+git -C "$R" log --grep='^Session-Title: <name>$' --format='%h %ad %s' --date=short   # every commit of one named session (a regex: escape . [ * in the name)
 ```
 
 Repositories started before 2026-09-18 stored memory at `claude/projects/<slug>/memory/`; the

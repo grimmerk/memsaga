@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use memsaga_core::config::{expand_tilde, is_data_repo, Config, RepoOrigin};
+use memsaga_core::config::{expand_tilde, is_data_repo, Config, RepoOrigin, GITATTRIBUTES_LINE};
 use memsaga_core::git::Git;
 use memsaga_core::hook::{self, Action, HookInput};
 use memsaga_core::roots::{Entry, Scope};
@@ -465,11 +465,12 @@ fn cmd_init(
         if p.is_relative() {
             p = std::env::current_dir()?.join(p);
         }
-        if cfg.repo_origin == RepoOrigin::File && p != cfg.repo {
+        // Checked against the file itself, so MEMSAGA_REPO cannot hide a conflict.
+        if let Some(file_repo) = cfg.file_repo.as_ref().filter(|f| **f != p) {
             anyhow::bail!(
                 "{} already sets repo = {}; change it there instead of passing --repo",
                 cfg_path.display(),
-                cfg.repo.display()
+                file_repo.display()
             );
         }
         cfg.repo = p;
@@ -484,8 +485,10 @@ fn cmd_init(
             cfg.repo.display()
         );
     }
-    // Record the location unless the config file or MEMSAGA_REPO already decides it.
-    let record = cfg.repo_origin == RepoOrigin::Detected;
+    // Record a location the config file does not set yet, when --repo or the
+    // search chose it (MEMSAGA_REPO alone is a one-off run and is not recorded).
+    let record =
+        cfg.file_repo.is_none() && (repo_flag.is_some() || cfg.repo_origin == RepoOrigin::Detected);
     let from = match (repo_flag, cfg.repo_origin) {
         (Some(_), RepoOrigin::Env) => "from --repo, instead of MEMSAGA_REPO".to_string(),
         (_, RepoOrigin::File) => "set in the config file".to_string(),
@@ -552,7 +555,7 @@ fn cmd_init(
     // A .gitattributes so MEMORY.md indexes merge line-by-line across machines.
     let ga = cfg.repo.join(".gitattributes");
     if !ga.exists() {
-        std::fs::write(&ga, "**/MEMORY.md merge=union\n")?;
+        std::fs::write(&ga, format!("{GITATTRIBUTES_LINE}\n"))?;
     }
     if !no_backfill && !git.has_head() {
         let r = backfill::backfill(&cfg, group_window).context("backfill")?;

@@ -56,6 +56,10 @@ pub struct Config {
     /// Where `repo` came from; not part of the file.
     #[serde(skip)]
     pub repo_origin: RepoOrigin,
+    /// The config file's own `repo`, even when `MEMSAGA_REPO` overrides it
+    /// for this run; `None` when the file does not set one.
+    #[serde(skip)]
+    pub file_repo: Option<PathBuf>,
     /// Roots to mirror. Empty means "discover".
     pub roots: Vec<Root>,
     /// Top-level files of each root to mirror (relative names).
@@ -94,6 +98,7 @@ impl Default for Config {
         Config {
             repo: detect_repo(),
             repo_origin: RepoOrigin::Detected,
+            file_repo: None,
             roots: Vec::new(),
             // What the user writes in a config directory. Claude Code reads
             // CLAUDE.md, keybindings.json and the directories from skills to
@@ -151,6 +156,7 @@ impl Config {
                 .with_context(|| format!("parsing {}", path.display()))?;
             if toml::from_str::<toml::Table>(&text).is_ok_and(|t| t.contains_key("repo")) {
                 c.repo_origin = RepoOrigin::File;
+                c.file_repo = Some(expand_tilde_path(&c.repo));
             }
             c
         } else {
@@ -240,12 +246,23 @@ pub fn config_path() -> PathBuf {
 /// in the order [`detect_repo`] tries them.
 pub const CODE_FOLDERS: [&str; 5] = ["git", "code", "src", "Projects", "dev"];
 
+/// The `.gitattributes` line `init` writes into every data repository.
+pub const GITATTRIBUTES_LINE: &str = "**/MEMORY.md merge=union";
+
 /// Whether `p` is a memsaga data repository: a git repository with memsaga's
-/// state directory, or a fresh clone of one (it carries the generated
-/// `paths.json`). Someone's unrelated project that happens to be called
-/// `memories` is neither, so it is never adopted.
+/// state directory, or a fresh clone of one, which carries the generated
+/// `paths.json` and the `.gitattributes` line `init` wrote. Someone's
+/// unrelated project that happens to be called `memories` is neither, so it
+/// is never adopted. The file read happens only for a clone memsaga has not
+/// used yet.
 pub fn is_data_repo(p: &Path) -> bool {
-    p.join(".git/memsaga").is_dir() || (p.join(".git").exists() && p.join("paths.json").is_file())
+    if p.join(".git/memsaga").is_dir() {
+        return true;
+    }
+    p.join(".git").exists()
+        && p.join("paths.json").is_file()
+        && std::fs::read_to_string(p.join(".gitattributes"))
+            .is_ok_and(|t| t.lines().any(|l| l.trim() == GITATTRIBUTES_LINE))
 }
 
 /// The data repository when the config file does not set `repo`: an existing

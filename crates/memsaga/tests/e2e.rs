@@ -2893,9 +2893,13 @@ impl NewUser {
     }
 
     fn output(&self, args: &[&str]) -> std::process::Output {
-        Command::cargo_bin("memsaga")
-            .unwrap()
-            .env("HOME", &self.home)
+        self.output_with_repo_env(None, args)
+    }
+
+    /// As `output`, with `MEMSAGA_REPO` set when `repo_env` is given.
+    fn output_with_repo_env(&self, repo_env: Option<&Path>, args: &[&str]) -> std::process::Output {
+        let mut c = Command::cargo_bin("memsaga").unwrap();
+        c.env("HOME", &self.home)
             .env_remove("MEMSAGA_CONFIG")
             .env_remove("MEMSAGA_REPO")
             .env_remove("MEMSAGA_ROOTS")
@@ -2904,10 +2908,11 @@ impl NewUser {
             .env("GIT_AUTHOR_NAME", "t")
             .env("GIT_AUTHOR_EMAIL", "t@t")
             .env("GIT_COMMITTER_NAME", "t")
-            .env("GIT_COMMITTER_EMAIL", "t@t")
-            .args(args)
-            .output()
-            .unwrap()
+            .env("GIT_COMMITTER_EMAIL", "t@t");
+        if let Some(r) = repo_env {
+            c.env("MEMSAGA_REPO", r);
+        }
+        c.args(args).output().unwrap()
     }
 
     fn run(&self, args: &[&str]) -> String {
@@ -2975,6 +2980,15 @@ fn init_records_repo_given_by_flag_and_refuses_one_that_contradicts_the_file() {
     );
     assert_eq!(fs::read_to_string(u.cfg()).unwrap(), cfg);
     assert!(!u.home.join("elsewhere").exists());
+
+    // MEMSAGA_REPO overrides the file for one run, but does not hide the conflict.
+    let out = u.output_with_repo_env(
+        Some(&u.home.join("scratch")),
+        &["init", "--no-backfill", "--repo", "~/elsewhere"],
+    );
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("already sets repo"));
+    assert!(!u.home.join("elsewhere").exists());
 }
 
 #[test]
@@ -2988,6 +3002,19 @@ fn without_a_config_an_existing_repository_wins_and_the_fallback_is_home() {
         .effective_repo()
         .contains(&u.home.join("src/memories").display().to_string()));
 
+    // A fresh clone of a data repository on another machine, never used by
+    // memsaga there: still recognised, by its paths.json and .gitattributes.
+    let other = NewUser::new(&["git", "code"]);
+    std::process::Command::new("git")
+        .args(["clone", "-q"])
+        .arg(u.home.join("src/memories"))
+        .arg(other.home.join("code/memories"))
+        .status()
+        .unwrap();
+    assert!(other
+        .effective_repo()
+        .contains(&other.home.join("code/memories").display().to_string()));
+
     let bare = NewUser::new(&[]);
     assert!(bare
         .effective_repo()
@@ -2996,12 +3023,14 @@ fn without_a_config_an_existing_repository_wins_and_the_fallback_is_home() {
 
 #[test]
 fn init_never_takes_over_an_unrelated_folder_called_memories() {
-    // Someone's own project that happens to have the name.
+    // Someone's own project that happens to have the name, and even a
+    // paths.json of its own (a common file name).
     let u = NewUser::new(&["code"]);
     let theirs = u.home.join("code/memories");
     write(&theirs.join("photos.txt"), "album\n");
+    write(&theirs.join("paths.json"), "{}\n");
     git_at(&theirs, &["init", "-q"]);
-    git_at(&theirs, &["add", "photos.txt"]);
+    git_at(&theirs, &["add", "photos.txt", "paths.json"]);
     git_at(&theirs, &["commit", "-q", "-m", "their work"]);
 
     let out = u.output(&["init", "--no-backfill"]);
