@@ -7,6 +7,8 @@
 # recordings made from it show no real memory.
 #
 # Usage: demo/setup.sh [demo-dir]     (default /tmp/memsaga-demo; replaced if it exists)
+#        DEMO_CLAUDE_DIR=~/.claude-demo demo/setup.sh   (use a real, logged-in Claude Code
+#        config directory for recordings: its login is kept, its demo content replaced)
 # Then:  source <demo-dir>/env.sh     (HOME, MEMSAGA_CONFIG, ... point into the demo)
 set -euo pipefail
 
@@ -17,15 +19,22 @@ mkdir -p "$DEMO/home"
 DEMO=$(cd "$DEMO" && pwd -P)
 
 export HOME="$DEMO/home"
-export CLAUDE_CONFIG_DIR="$HOME/.claude"
+export CLAUDE_CONFIG_DIR="${DEMO_CLAUDE_DIR:-$HOME/.claude}"
 export MEMSAGA_CONFIG="$HOME/.config/memsaga/config.toml"
 export MEMSAGA_NO_GITHUB_API=1
 export GIT_AUTHOR_NAME="Ada Example" GIT_AUTHOR_EMAIL="ada@example.com"
 export GIT_COMMITTER_NAME="Ada Example" GIT_COMMITTER_EMAIL="ada@example.com"
 export GIT_CONFIG_GLOBAL="$DEMO/gitconfig"
-printf '[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n' > "$GIT_CONFIG_GLOBAL"
+# The empty helper drops any inherited one (Xcode's osxkeychain would try to store
+# a token in a keychain the fake home does not have); gh needs GH_TOKEN for a push.
+printf '[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n[credential]\n\thelper =\n\thelper = !gh auth git-credential\n' > "$GIT_CONFIG_GLOBAL"
 
-C="$HOME/.claude"
+C="$CLAUDE_CONFIG_DIR"
+if [ -n "${DEMO_CLAUDE_DIR:-}" ]; then
+  case "$C" in */.claude-demo) ;; *) echo "DEMO_CLAUDE_DIR must end in .claude-demo" >&2; exit 2;; esac
+  # Keep the login (.claude.json, sessions); replace what a previous run wrote.
+  rm -rf "${C:?}/projects" "${C:?}/skills" "${C:?}/agents" "${C:?}/CLAUDE.md"
+fi
 slug() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g'; }
 WEBAPP="$HOME/git/webapp"
 BLOG="$HOME/git/blog"
@@ -40,7 +49,7 @@ extra_files = ["~/notes/plan.md"]
 push_min_interval_secs = 0
 
 [[roots]]
-path = "~/.claude"
+path = "$C"
 label = "claude"
 EOF
 

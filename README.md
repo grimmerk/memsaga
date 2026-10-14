@@ -295,6 +295,12 @@ It brings it to the live file:
   <img src="docs/assets/sync-sequence-light.png" width="100%" alt="Sequence: you edit and commit a memory file in GitHub's web editor. At the next session start or prompt, the memsaga hooks ask GitHub whether origin moved (at most once a minute); it did, so they merge origin into the data repository, write the new version to the live file (merging if both sides changed), and send Claude a notice with the changed lines. Claude reads the file again before using it.">
 </picture>
 
+A real session (example data): just before it started, `deploys.md` was edited
+on GitHub to say production deploys every Friday. Asked how webapp deploys,
+Claude reads the file again and answers from the new text.
+
+<img src="docs/assets/sync-demo.gif" width="100%" alt="Claude Code session on example data: the user asks how webapp deploys to production; Claude reads deploys.md and answers that production deploys every Friday from a git tag, the text edited on GitHub just before the session; the memsaga Stop notice reports the commit.">
+
 1. At session start and at each prompt, a hook asks GitHub whether the
    repository moved. This takes about half a second and happens at most once a
    minute per machine.
