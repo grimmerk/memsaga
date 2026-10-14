@@ -2868,3 +2868,125 @@ fn an_ambiguous_home_prefix_keeps_live_names() {
         "{files}"
     );
 }
+
+/// A new user before `memsaga init`: a home directory with a Claude Code
+/// config directory and no memsaga config file, so memsaga reads the default
+/// path `~/.config/memsaga/config.toml` and discovers `~/.claude` itself.
+struct NewUser {
+    _tmp: TempDir,
+    home: PathBuf,
+}
+
+impl NewUser {
+    fn new(folders: &[&str]) -> NewUser {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().join("home");
+        write(&home.join(".claude/CLAUDE.md"), "# global\n");
+        for f in folders {
+            fs::create_dir_all(home.join(f)).unwrap();
+        }
+        NewUser { _tmp: tmp, home }
+    }
+
+    fn cfg(&self) -> PathBuf {
+        self.home.join(".config/memsaga/config.toml")
+    }
+
+    fn output(&self, args: &[&str]) -> std::process::Output {
+        Command::cargo_bin("memsaga")
+            .unwrap()
+            .env("HOME", &self.home)
+            .env_remove("MEMSAGA_CONFIG")
+            .env_remove("MEMSAGA_REPO")
+            .env_remove("MEMSAGA_ROOTS")
+            .env("CLAUDE_CONFIG_DIR", self.home.join(".claude"))
+            .env("MEMSAGA_NO_GITHUB_API", "1")
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
+    fn run(&self, args: &[&str]) -> String {
+        let out = self.output(args);
+        assert!(
+            out.status.success(),
+            "memsaga {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).to_string()
+    }
+
+    /// The `repo` line `memsaga config` prints: the effective location.
+    fn effective_repo(&self) -> String {
+        self.run(&["config"])
+            .lines()
+            .find(|l| l.starts_with("repo = "))
+            .unwrap_or_default()
+            .to_string()
+    }
+}
+
+#[test]
+fn init_puts_the_repository_in_an_existing_code_folder_and_records_it() {
+    let u = NewUser::new(&["code", "Projects"]);
+    let code = u.home.join("code/memories");
+    let dry = u.run(&["init", "--no-backfill", "--dry-run"]);
+    assert!(
+        dry.contains(&format!("repo: {}", code.display())) && dry.contains("would record"),
+        "{dry}"
+    );
+    assert!(
+        !u.cfg().exists() && !code.exists(),
+        "a dry run writes nothing"
+    );
+
+    u.run(&["init", "--no-backfill"]);
+    assert!(code.join(".git").is_dir());
+    let cfg = fs::read_to_string(u.cfg()).unwrap();
+    assert!(cfg.contains("repo = \"~/code/memories\"\n"), "{cfg}");
+    // A code folder made later, earlier in the search order, moves nothing.
+    fs::create_dir_all(u.home.join("git")).unwrap();
+    assert!(u.effective_repo().contains(&code.display().to_string()));
+}
+
+#[test]
+fn init_records_repo_given_by_flag_and_refuses_one_that_contradicts_the_file() {
+    let u = NewUser::new(&["git"]);
+    write(&u.cfg(), "# mine\nreporter = false\n");
+    u.run(&["init", "--no-backfill", "--repo", "~/notes/history"]);
+    assert!(u.home.join("notes/history/.git").is_dir());
+    let cfg = fs::read_to_string(u.cfg()).unwrap();
+    assert_eq!(
+        cfg,
+        "repo = \"~/notes/history\"\n# mine\nreporter = false\n"
+    );
+
+    let out = u.output(&["init", "--no-backfill", "--repo", "~/elsewhere"]);
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("already sets repo"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(fs::read_to_string(u.cfg()).unwrap(), cfg);
+    assert!(!u.home.join("elsewhere").exists());
+}
+
+#[test]
+fn without_a_config_an_existing_repository_wins_and_the_fallback_is_home() {
+    let u = NewUser::new(&["code", "src"]);
+    git_at(&u.home.join("src"), &["init", "-q", "memories"]);
+    assert!(u
+        .effective_repo()
+        .contains(&u.home.join("src/memories").display().to_string()));
+
+    let bare = NewUser::new(&[]);
+    assert!(bare
+        .effective_repo()
+        .contains(&bare.home.join("memories").display().to_string()));
+}

@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use memsaga_core::config::{expand_tilde, Config};
+use memsaga_core::config::{expand_tilde, Config, RepoOrigin};
 use memsaga_core::git::Git;
 use memsaga_core::hook::{self, Action, HookInput};
 use memsaga_core::roots::{Entry, Scope};
@@ -48,6 +48,12 @@ enum Cmd {
         /// Seconds within which ops of one session merge into one backfill commit.
         #[arg(long, default_value_t = 120)]
         group_window: i64,
+        /// Where to create the data repository. Without it, the config file's
+        /// `repo`, else `memories` in the first of ~/git, ~/code, ~/src,
+        /// ~/Projects, ~/dev that exists, else ~/memories. The choice is
+        /// recorded in the config file.
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Refresh the mirror and show what the next sweep would commit.
     Diff {
@@ -249,7 +255,8 @@ fn run(cli: Cli) -> Result<()> {
             no_backfill,
             dry_run,
             group_window,
-        } => cmd_init(no_backfill, dry_run, group_window),
+            repo,
+        } => cmd_init(no_backfill, dry_run, group_window, repo.as_deref()),
         Cmd::Diff { stat } => {
             let cfg = Config::load()?;
             let (status, diff) = sweep::pending(&cfg, stat)?;
@@ -445,10 +452,44 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
-fn cmd_init(no_backfill: bool, dry_run: bool, group_window: i64) -> Result<()> {
-    let cfg = Config::load()?;
+fn cmd_init(
+    no_backfill: bool,
+    dry_run: bool,
+    group_window: i64,
+    repo_flag: Option<&str>,
+) -> Result<()> {
+    let mut cfg = Config::load()?;
+    let cfg_path = memsaga_core::config::config_path();
+    if let Some(r) = repo_flag {
+        let mut p = expand_tilde(r);
+        if p.is_relative() {
+            p = std::env::current_dir()?.join(p);
+        }
+        if cfg.repo_origin == RepoOrigin::File && p != cfg.repo {
+            anyhow::bail!(
+                "{} already sets repo = {}; change it there instead of passing --repo",
+                cfg_path.display(),
+                cfg.repo.display()
+            );
+        }
+        cfg.repo = p;
+    }
+    // Record the location unless the config file or MEMSAGA_REPO already decides it.
+    let record = cfg.repo_origin == RepoOrigin::Detected;
+    let from = match (repo_flag, cfg.repo_origin) {
+        (_, RepoOrigin::File) => "set in the config file".to_string(),
+        (_, RepoOrigin::Env) => "set by MEMSAGA_REPO".to_string(),
+        (Some(_), RepoOrigin::Detected) => "from --repo".to_string(),
+        (None, RepoOrigin::Detected) => {
+            "chosen by default: memories in the first of ~/git, ~/code, ~/src, ~/Projects, ~/dev that exists, else ~/memories; pass --repo to choose another place".to_string()
+        }
+    };
+    println!("repo: {} ({from})", cfg.repo.display());
+    if record {
+        let verb = if dry_run { "would record" } else { "records" };
+        println!("init {verb} it as `repo` in {}", cfg_path.display());
+    }
     let scope = Scope::new(&cfg);
-    println!("repo: {}", cfg.repo.display());
     let mut total_files = 0;
     for root in &cfg.roots {
         println!("root {} ({})", root.label, root.path.display());
@@ -486,6 +527,10 @@ fn cmd_init(no_backfill: bool, dry_run: bool, group_window: i64) -> Result<()> {
     if !git.is_repo() {
         git.init()?;
         println!("initialised {}", cfg.repo.display());
+    }
+    if record {
+        memsaga_core::config::record_repo(&cfg.repo)?;
+        println!("recorded repo in {}", cfg_path.display());
     }
     // A .gitattributes so MEMORY.md indexes merge line-by-line across machines.
     let ga = cfg.repo.join(".gitattributes");

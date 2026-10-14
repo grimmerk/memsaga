@@ -8,6 +8,10 @@
 //! Roots are discovered when the file names none: codev's account registry
 //! (`~/.config/codev/accounts.json`) if present, else `~/.claude`. codev is an
 //! optional discovery source, never a dependency.
+//!
+//! The data repository is found the same way when the file does not set
+//! `repo` ([`detect_repo`]); `memsaga init` then records it in the file, so a
+//! folder created later never moves it.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -32,11 +36,26 @@ pub enum Granularity {
     Edit,
 }
 
+/// Where the value of [`Config::repo`] came from.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum RepoOrigin {
+    /// The config file sets `repo`.
+    File,
+    /// `MEMSAGA_REPO` overrides it for this run.
+    Env,
+    /// Nothing sets it: [`detect_repo`] chose it.
+    #[default]
+    Detected,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     /// The mirror git repository.
     pub repo: PathBuf,
+    /// Where `repo` came from; not part of the file.
+    #[serde(skip)]
+    pub repo_origin: RepoOrigin,
     /// Roots to mirror. Empty means "discover".
     pub roots: Vec<Root>,
     /// Top-level files of each root to mirror (relative names).
@@ -73,7 +92,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            repo: expand_tilde("~/git/memories"),
+            repo: detect_repo(),
+            repo_origin: RepoOrigin::Detected,
             roots: Vec::new(),
             // What the user writes in a config directory. Claude Code reads
             // CLAUDE.md, keybindings.json and the directories from skills to
@@ -127,8 +147,12 @@ impl Config {
         let mut cfg = if path.exists() {
             let text = std::fs::read_to_string(&path)
                 .with_context(|| format!("reading {}", path.display()))?;
-            toml::from_str::<Config>(&text)
-                .with_context(|| format!("parsing {}", path.display()))?
+            let mut c = toml::from_str::<Config>(&text)
+                .with_context(|| format!("parsing {}", path.display()))?;
+            if toml::from_str::<toml::Table>(&text).is_ok_and(|t| t.contains_key("repo")) {
+                c.repo_origin = RepoOrigin::File;
+            }
+            c
         } else {
             Config::default()
         };
@@ -141,6 +165,7 @@ impl Config {
         }
         if let Ok(v) = std::env::var("MEMSAGA_REPO") {
             cfg.repo = expand_tilde(&v);
+            cfg.repo_origin = RepoOrigin::Env;
         }
         if let Ok(v) = std::env::var("MEMSAGA_ROOTS") {
             cfg.roots = v
@@ -209,6 +234,68 @@ pub fn config_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/"))
         .join(".config/memsaga/config.toml")
+}
+
+/// Folders under the home directory where people commonly keep repositories,
+/// in the order [`detect_repo`] tries them.
+pub const CODE_FOLDERS: [&str; 5] = ["git", "code", "src", "Projects", "dev"];
+
+/// The data repository when the config file does not set `repo`: an existing
+/// `memories` repository in one of [`CODE_FOLDERS`] or the home directory;
+/// else `memories` in the first of those folders that exists; else
+/// `~/memories`. Only a few `stat` calls, so hooks can afford it.
+pub fn detect_repo() -> PathBuf {
+    let Some(home) = dirs::home_dir() else {
+        return PathBuf::from("memories");
+    };
+    let candidates: Vec<PathBuf> = CODE_FOLDERS
+        .iter()
+        .map(|f| home.join(f).join("memories"))
+        .chain(std::iter::once(home.join("memories")))
+        .collect();
+    if let Some(existing) = candidates.iter().find(|p| p.join(".git").exists()) {
+        return existing.clone();
+    }
+    CODE_FOLDERS
+        .iter()
+        .map(|f| home.join(f))
+        .find(|d| d.is_dir())
+        .map(|d| d.join("memories"))
+        .unwrap_or_else(|| home.join("memories"))
+}
+
+/// Write `repo = "<path>"` into the config file, creating it if needed. Used by
+/// `init` when nothing set `repo`, so the choice stays fixed. The line goes at
+/// the top, where a key is always top-level; the rest of the file is kept as
+/// it is. A path under the home directory is written with `~/`, so a config
+/// copied to another machine keeps working.
+pub fn record_repo(repo: &Path) -> Result<()> {
+    let path = config_path();
+    let shown =
+        match dirs::home_dir().and_then(|h| repo.strip_prefix(h).ok().map(Path::to_path_buf)) {
+            Some(rel) => format!("~/{}", rel.display()),
+            None => repo.display().to_string(),
+        };
+    let line = format!("repo = {}\n", toml::Value::String(shown));
+    let text = match std::fs::read_to_string(&path) {
+        Ok(old) => {
+            if toml::from_str::<toml::Table>(&old).is_ok_and(|t| t.contains_key("repo")) {
+                anyhow::bail!("{} already sets repo", path.display());
+            }
+            format!("{line}{old}")
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => format!(
+            "# memsaga configuration. Keys left out keep their defaults; `memsaga config` prints them all.\n{line}"
+        ),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    // Write beside it, then rename: an interrupted write never leaves half a config.
+    let tmp = path.with_extension("toml.memsaga-tmp");
+    std::fs::write(&tmp, text).with_context(|| format!("writing {}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).with_context(|| format!("replacing {}", path.display()))
 }
 
 /// `.claude` -> `claude`, `.claude-work` -> `claude-work`, `foo` -> `foo`.
