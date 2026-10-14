@@ -105,6 +105,12 @@ entirely, for example client work, exclude it by its Claude Code directory
 name. For `~/git/client` and every project below it:
 `exclude_projects = ["*-git-client", "*-git-client-*"]`.
 
+**To try it first on example data**, install memsaga, then run
+`demo/setup.sh` from a clone of this repository. It builds a fake home directory under `/tmp` with a Claude Code
+config, two projects' memory and a week of history (a bug fix, a memory
+tidy-up, a file added by hand, a restore), and never reads or writes your real
+one; `source /tmp/memsaga-demo/env.sh` then points `memsaga` and `git` at it.
+
 ## What you can do with it
 
 Use cases 1 to 4 work right after the quick start (3 also needs
@@ -113,6 +119,8 @@ working in more than one place. 11 is one example of what a full history makes
 safe to try.
 
 ### 1. See what Claude remembered, and when it changed
+
+<img src="docs/assets/demo.gif" width="100%" alt="Terminal recording on example data: git log of a week of memsaga commits, each named after its session; the Session-Title and Session trailers of the commit that added a memory about the OAuth redirect; git log -S finding the session that removed a rule from CLAUDE.md and the restore that brought it back; the live CLAUDE.md with the rule again.">
 
 Every memory file, skill and your global `CLAUDE.md` gets a normal git history:
 
