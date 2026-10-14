@@ -2979,8 +2979,11 @@ fn init_records_repo_given_by_flag_and_refuses_one_that_contradicts_the_file() {
 
 #[test]
 fn without_a_config_an_existing_repository_wins_and_the_fallback_is_home() {
+    // A data repository made earlier, whose config file is gone since: it is
+    // found again, ahead of an empty code folder earlier in the order.
     let u = NewUser::new(&["code", "src"]);
-    git_at(&u.home.join("src"), &["init", "-q", "memories"]);
+    u.run(&["init", "--no-backfill", "--repo", "~/src/memories"]);
+    fs::remove_file(u.cfg()).unwrap();
     assert!(u
         .effective_repo()
         .contains(&u.home.join("src/memories").display().to_string()));
@@ -2989,4 +2992,32 @@ fn without_a_config_an_existing_repository_wins_and_the_fallback_is_home() {
     assert!(bare
         .effective_repo()
         .contains(&bare.home.join("memories").display().to_string()));
+}
+
+#[test]
+fn init_never_takes_over_an_unrelated_folder_called_memories() {
+    // Someone's own project that happens to have the name.
+    let u = NewUser::new(&["code"]);
+    let theirs = u.home.join("code/memories");
+    write(&theirs.join("photos.txt"), "album\n");
+    git_at(&theirs, &["init", "-q"]);
+    git_at(&theirs, &["add", "photos.txt"]);
+    git_at(&theirs, &["commit", "-q", "-m", "their work"]);
+
+    let out = u.output(&["init", "--no-backfill"]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("is not a memsaga data repository"), "{err}");
+    assert_eq!(
+        git_at(&theirs, &["rev-list", "--count", "HEAD"]).trim(),
+        "1"
+    );
+    assert!(!u.cfg().exists());
+
+    u.run(&["init", "--no-backfill", "--repo", "~/data/memories"]);
+    assert!(u.home.join("data/memories/.git").is_dir());
+    assert_eq!(
+        git_at(&theirs, &["rev-list", "--count", "HEAD"]).trim(),
+        "1"
+    );
 }

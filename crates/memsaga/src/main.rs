@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use memsaga_core::config::{expand_tilde, Config, RepoOrigin};
+use memsaga_core::config::{expand_tilde, is_data_repo, Config, RepoOrigin};
 use memsaga_core::git::Git;
 use memsaga_core::hook::{self, Action, HookInput};
 use memsaga_core::roots::{Entry, Scope};
@@ -474,12 +474,26 @@ fn cmd_init(
         }
         cfg.repo = p;
     }
+    // Never take over someone else's folder: the repository must be new, an
+    // empty directory, or already memsaga's (re-running init, or a clone).
+    let is_empty_dir =
+        |p: &std::path::Path| std::fs::read_dir(p).is_ok_and(|mut d| d.next().is_none());
+    if cfg.repo.exists() && !is_data_repo(&cfg.repo) && !is_empty_dir(&cfg.repo) {
+        anyhow::bail!(
+            "{} already exists and is not a memsaga data repository; pass --repo <path> to put the repository somewhere else",
+            cfg.repo.display()
+        );
+    }
     // Record the location unless the config file or MEMSAGA_REPO already decides it.
     let record = cfg.repo_origin == RepoOrigin::Detected;
     let from = match (repo_flag, cfg.repo_origin) {
+        (Some(_), RepoOrigin::Env) => "from --repo, instead of MEMSAGA_REPO".to_string(),
         (_, RepoOrigin::File) => "set in the config file".to_string(),
         (_, RepoOrigin::Env) => "set by MEMSAGA_REPO".to_string(),
         (Some(_), RepoOrigin::Detected) => "from --repo".to_string(),
+        (None, RepoOrigin::Detected) if is_data_repo(&cfg.repo) => {
+            "an existing memsaga repository; pass --repo to choose another place".to_string()
+        }
         (None, RepoOrigin::Detected) => {
             "chosen by default: memories in the first of ~/git, ~/code, ~/src, ~/Projects, ~/dev that exists, else ~/memories; pass --repo to choose another place".to_string()
         }
@@ -528,6 +542,9 @@ fn cmd_init(
         git.init()?;
         println!("initialised {}", cfg.repo.display());
     }
+    // Mark it as memsaga's at once, so an init interrupted from here on can be
+    // run again (the check above accepts a marked repository).
+    std::fs::create_dir_all(cfg.state_dir())?;
     if record {
         memsaga_core::config::record_repo(&cfg.repo)?;
         println!("recorded repo in {}", cfg_path.display());

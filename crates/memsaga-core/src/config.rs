@@ -240,9 +240,17 @@ pub fn config_path() -> PathBuf {
 /// in the order [`detect_repo`] tries them.
 pub const CODE_FOLDERS: [&str; 5] = ["git", "code", "src", "Projects", "dev"];
 
+/// Whether `p` is a memsaga data repository: a git repository with memsaga's
+/// state directory, or a fresh clone of one (it carries the generated
+/// `paths.json`). Someone's unrelated project that happens to be called
+/// `memories` is neither, so it is never adopted.
+pub fn is_data_repo(p: &Path) -> bool {
+    p.join(".git/memsaga").is_dir() || (p.join(".git").exists() && p.join("paths.json").is_file())
+}
+
 /// The data repository when the config file does not set `repo`: an existing
-/// `memories` repository in one of [`CODE_FOLDERS`] or the home directory;
-/// else `memories` in the first of those folders that exists; else
+/// `memories` data repository in one of [`CODE_FOLDERS`] or the home
+/// directory; else `memories` in the first of those folders that exists; else
 /// `~/memories`. Only a few `stat` calls, so hooks can afford it.
 pub fn detect_repo() -> PathBuf {
     let Some(home) = dirs::home_dir() else {
@@ -253,7 +261,7 @@ pub fn detect_repo() -> PathBuf {
         .map(|f| home.join(f).join("memories"))
         .chain(std::iter::once(home.join("memories")))
         .collect();
-    if let Some(existing) = candidates.iter().find(|p| p.join(".git").exists()) {
+    if let Some(existing) = candidates.iter().find(|p| is_data_repo(p)) {
         return existing.clone();
     }
     CODE_FOLDERS
