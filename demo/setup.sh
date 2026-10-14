@@ -2,7 +2,9 @@
 # Build a self-contained demo of memsaga: a fake home directory with a Claude
 # Code config directory, two projects' memory, a note outside the config
 # directory, and a data repository holding a few days of history (a bug fix, a
-# memory tidy-up, a file added by hand, a restore). Everything is example data;
+# memory tidy-up, companion documents, a file added by hand, a restore). The
+# webapp project is a git repository, so a companion can name the source
+# commit it was made from. Everything is example data;
 # nothing outside the demo directory is read or written, so screenshots and
 # recordings made from it show no real memory.
 #
@@ -112,6 +114,29 @@ cat > "$HOME/notes/plan.md" <<'EOF'
 - Ship OAuth login
 EOF
 
+# The project itself: a git repository whose docs get companions later.
+mkdir -p "$WEBAPP/docs"
+printf '# webapp\n\nA small web app, used as example data.\n' > "$WEBAPP/README.md"
+cat > "$WEBAPP/docs/architecture.md" <<'EOF'
+# Architecture
+
+webapp is a Node.js server with a React front end.
+
+- `server/` handles sessions and the OAuth callback.
+- `web/` is the React app; it talks to the server over `/api`.
+- Background jobs run in `worker/` and share the database.
+EOF
+cat > "$WEBAPP/docs/review-process.md" <<'EOF'
+# Review process
+
+- A pull request that changes stored data carries a migration note.
+- Docs need one approval; code needs two.
+EOF
+git -C "$WEBAPP" init -q
+git -C "$WEBAPP" add README.md docs/architecture.md docs/review-process.md
+GIT_AUTHOR_DATE=2026-10-05T09:00:00+01:00 GIT_COMMITTER_DATE=2026-10-05T09:00:00+01:00 \
+  git -C "$WEBAPP" commit -q -m "Initial docs"
+
 at() { export GIT_AUTHOR_DATE="$1" GIT_COMMITTER_DATE="$1"; }
 at "2026-10-05T09:12:00+01:00"
 memsaga init --no-backfill >/dev/null
@@ -158,6 +183,54 @@ cat > "$MEM_WEBAPP/MEMORY.md" <<'EOF'
 EOF
 turn 5f1c9e20-7a4d-4b8e-9c31-2d6e8f0a4b17 "weekly memory tidy-up" "$HOME/git" "2026-10-07T09:40:00+01:00"
 
+# --- Wednesday afternoon: companions, written where the companion-docs skill puts them
+COMP="$HOME/git/memories/companion/webapp"
+mkdir -p "$COMP/docs" "$COMP/_notes"
+arch_rev=$(git -C "$WEBAPP" log -1 --format='%h %cI' -- docs/architecture.md)
+cat > "$COMP/docs/architecture.zh-tw.md" <<EOF
+---
+type: Translation
+title: architecture (zh-TW)
+description: Traditional Chinese translation of webapp docs/architecture.md
+sources:
+  - resource: ~/git/webapp/docs/architecture.md
+    last_modified: ${arch_rev#* }
+    commit: ${arch_rev%% *}
+generated:
+  by: claude-code
+  at: 2026-10-07T15:20:00+01:00
+status: stable
+---
+# 架構
+
+webapp 是一個 Node.js 伺服器，前端用 React。
+
+- \`server/\` 處理 session 與 OAuth callback。
+- \`web/\` 是 React 應用程式，透過 \`/api\` 和伺服器溝通。
+- 背景工作在 \`worker/\` 執行，和伺服器共用同一個資料庫。
+EOF
+turn 3b7d2f8a-6c41-4e9b-a5d0-8f2c1e6b9a43 "translate the architecture doc" "$WEBAPP" "2026-10-07T15:20:00+01:00"
+
+cat > "$COMP/_notes/pr-2107-review.md" <<'EOF'
+---
+type: Note
+title: PR 2107 review notes
+description: What to check in webapp's session-store change
+relates_to:
+  - docs/review-process.md
+  - acme/webapp#2107
+generated:
+  by: claude-code
+  at: 2026-10-07T16:45:00+01:00
+status: stable
+---
+# PR 2107: session store
+
+- The new store drops sessions on restart; ask whether that is intended.
+- docs/review-process.md asks for a migration note; the PR has none yet.
+EOF
+turn 7e4a1c93-2d58-4b6f-9e07-c3a8d5f1b264 "review PR 2107" "$WEBAPP" "2026-10-07T16:45:00+01:00"
+
 # --- Wednesday evening: a file added by hand, straight into the repository ---
 mkdir -p "$HOME/git/memories/manual"
 cat > "$HOME/git/memories/manual/decisions.md" <<'EOF'
@@ -167,6 +240,29 @@ cat > "$HOME/git/memories/manual/decisions.md" <<'EOF'
 EOF
 at "2026-10-07T18:15:00+01:00"
 memsaga sweep --event manual >/dev/null
+
+# --- Thursday morning: a design drafted in Chinese before the English one exists
+cat > "$COMP/docs/new-design.zh-tw.md" <<'EOF'
+---
+type: Translation
+title: search design (zh-TW draft)
+description: Search design for webapp, drafted in Traditional Chinese before the English version exists
+sources: []
+generated:
+  by: claude-code
+  at: 2026-10-08T08:50:00+01:00
+status: draft
+---
+# 搜尋功能設計（草稿）
+
+- 先用資料庫的全文索引，不另外架搜尋服務。
+- 結果依最近更新時間排序，之後再考慮相關度。
+- 英文版完成後放在 `docs/new-design.md`。
+EOF
+cat >> "$MEM_WEBAPP/MEMORY.md" <<'EOF'
+- Search design: drafted in Traditional Chinese at ~/git/memories/companion/webapp/docs/new-design.zh-tw.md, no source yet
+EOF
+turn 1d9f6b2e-8a3c-4e75-b0d4-6c2e9a7f3d18 "draft the search design" "$WEBAPP" "2026-10-08T08:50:00+01:00"
 
 # --- Thursday: a bad edit to CLAUDE.md, then a restore -----------------------
 before=$(git -C "$HOME/git/memories" rev-parse HEAD)

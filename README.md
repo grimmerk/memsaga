@@ -108,8 +108,11 @@ name. For `~/git/client` and every project below it:
 **To try it first on example data**, install memsaga, then run
 `demo/setup.sh` from a clone of this repository. It builds a fake home directory under `/tmp` with a Claude Code
 config, two projects' memory and a week of history (a bug fix, a memory
-tidy-up, a file added by hand, a restore), and never reads or writes your real
+tidy-up, companion documents, a file added by hand, a restore), and never reads or writes your real
 one; `source /tmp/memsaga-demo/env.sh` then points `memsaga` and `git` at it.
+To look without installing anything, browse
+[grimmerk/memsaga-example](https://github.com/grimmerk/memsaga-example): the
+data repository that script builds, with its week of commits on GitHub.
 
 ## What you can do with it
 
@@ -249,10 +252,15 @@ web editor. An edit to a mirrored file made in the repository, say to
 
 Some documents belong with a repository but must not be committed to it: a
 translation of its docs, your annotated copy, a draft written before the source
-exists. The `companion-docs` skill puts them at
-`~/git/memories/companion/<repo>/<path>`, keyed by the source file's path, so
-they are versioned with the rest of your memory. `memsaga companions [repo]`
-lists them, with whether each one is behind its source.
+exists, a note about the repository as a whole. Ask Claude for one in any
+language, and the `companion-docs` skill puts it at
+`<data repository>/companion/<repo>/<path>`, keyed by the source file's path
+(a note goes under `companion/<repo>/_notes/`), so it is versioned and synced
+with the rest of your memory. Before Claude summarises or translates a
+document, the skill has it check for an existing companion. `memsaga companions
+[repo]`, or `/companions` in a session, lists them with the status and source
+recorded in each one's frontmatter. The example repository has
+[three of them](https://github.com/grimmerk/memsaga-example/tree/main/companion/webapp).
 
 ### 8. Two Claude Code accounts
 

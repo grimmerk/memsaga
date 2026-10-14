@@ -19,6 +19,6 @@ shot() { # theme scale output
 shot light 2 hero-light.png
 shot dark 2 hero-dark.png
 shot light 1 social-preview.png
-npx -y @mermaid-js/mermaid-cli -q -i "$dir/sync-sequence.mmd" -o "$dir/sync-sequence-light.png" -t default -c "$dir/mermaid-config.json" -b '#ffffff' -s 2
-npx -y @mermaid-js/mermaid-cli -q -i "$dir/sync-sequence.mmd" -o "$dir/sync-sequence-dark.png" -t dark -c "$dir/mermaid-config.json" -b '#0d1117' -s 2
+npx -y @mermaid-js/mermaid-cli -q -i "$dir/sync-sequence.mmd" -o "$dir/sync-sequence-light.png" -t base -c "$dir/mermaid-light.json" -b '#ffffff' -s 2
+npx -y @mermaid-js/mermaid-cli -q -i "$dir/sync-sequence.mmd" -o "$dir/sync-sequence-dark.png" -t base -c "$dir/mermaid-dark.json" -b '#0d1117' -s 2
 ls -l "$dir"/*.png
