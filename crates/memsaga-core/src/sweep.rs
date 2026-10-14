@@ -298,7 +298,13 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     // Until the commit below, what the mirror just wrote is memsaga's own
     // uncommitted copy. Record it first, so a sweep that fails or is stopped
     // before committing leaves nothing that looks like a hand edit once the
-    // live file changes again. Costs one git call, only when files changed.
+    // live file changes again. Costs one `git hash-object` call, only when
+    // files changed: measured 2026-10-15 at +12 to +27 ms CPU and +33 to +66 ms
+    // wall on a busy machine, on a sweep that runs in the background anyway
+    // (docs/architecture.md, "Measured again"). If that ever matters, hash the
+    // content in-process instead (about 30 lines, no git process); the cost is
+    // a second kind of hash that the record and the check must both use, and
+    // that must stay the same across versions.
     crate::sync::record_uncommitted(cfg, &state, &stats.written)?;
     if let Some(g) = &scope.guard {
         if crate::sync::record_hand_edits(&mut incoming, g.take_found()) > 0 {
