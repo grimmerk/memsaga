@@ -593,7 +593,7 @@ git log --grep 'Session-Title: .*login'</pre>
       <h2>Set it up once</h2>
       <ol class="steps">
         <li><strong>cargo install</strong> builds memsaga. You need git and Rust's <code>cargo</code>, on macOS or Linux.</li>
-        <li><strong>init</strong> creates the data repository and replays the edits your recent conversations recorded, so the history starts weeks back. It lives in <code>~/git/memories</code> unless the <code>repo</code> setting points elsewhere.</li>
+        <li><strong>init</strong> creates the data repository and replays the edits your recent conversations recorded, so the history starts weeks back. It goes in <code>memories</code> inside the folder where you keep code (<code>~/git</code>, <code>~/code</code>, <code>~/src</code>, <code>~/Projects</code> or <code>~/dev</code>), or in <code>~/memories</code>; <code>--repo</code> picks another place, and <code>--dry-run</code> shows the choice first.</li>
         <li><strong>install</strong> connects memsaga to Claude Code. With <code>--skills</code>, Claude can also answer questions about the history.</li>
         <li><strong>gh repo create</strong> is optional. With a private GitHub repository, pushes and two-way sync happen on their own.</li>
       </ol>
@@ -607,7 +607,7 @@ git log --grep 'Session-Title: .*login'</pre>
 <span class="p">$ </span>memsaga init
 <span class="p">$ </span>memsaga install --skills
 <span class="p">$ </span>gh repo create memories --private --push \
-    --source ~/git/memories
+    --source ~/git/memories   <span class="c"># the path init printed</span>
 <span class="p">$ </span>memsaga status</pre>
       <pre style="border-top:1px solid var(--code-line)"><span class="c"># to try it on example data first, run these after cargo install;</span>
 <span class="c"># your real Claude Code config is never read or written</span>
