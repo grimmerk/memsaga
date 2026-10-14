@@ -2080,6 +2080,58 @@ fn a_live_file_deleted_after_a_diff_preview_stays_deleted() {
     );
 }
 
+#[test]
+fn a_hand_edit_back_to_a_previews_content_is_still_a_hand_edit() {
+    // Same bytes as the preview copy, but written by hand later: it is an
+    // edit made in the repository and must not be overwritten.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let live = fx.claude.join("projects/-h-git-a/memory/one.md");
+    let clone = fx.repo.join("claude/memory/-h-git-a/one.md");
+    let tick = || std::thread::sleep(std::time::Duration::from_millis(1100));
+    tick();
+    fs::write(&live, "fact v2\n").unwrap();
+    run(&fx, &["diff"]);
+    tick();
+    fs::write(&live, "fact v3\n").unwrap();
+    tick();
+    fs::write(&clone, "something else\n").unwrap();
+    fs::write(&clone, "fact v2\n").unwrap();
+    hook(&fx, &stop("s1"));
+    let incoming = status_json(&fx)["incoming"].clone();
+    assert!(
+        incoming["claude/memory/-h-git-a/one.md"].is_object(),
+        "{incoming}"
+    );
+    assert_eq!(fs::read_to_string(&clone).unwrap(), "fact v2\n");
+}
+
+#[test]
+fn a_sweep_that_fails_keeps_the_preview_record() {
+    // The preview record may only go once a sweep has committed over the
+    // copies; a sweep that fails first must leave it for the next one.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let live = fx.claude.join("projects/-h-git-a/memory/one.md");
+    let tick = || std::thread::sleep(std::time::Duration::from_millis(1100));
+    tick();
+    fs::write(&live, "fact v2\n").unwrap();
+    run(&fx, &["diff"]);
+    let lock = fx.repo.join(".git/index.lock");
+    write(&lock, "");
+    let failed = cmd(&fx).args(["sweep"]).output().unwrap();
+    assert!(
+        !failed.status.success(),
+        "the sweep should fail on index.lock"
+    );
+    fs::remove_file(&lock).unwrap();
+    tick();
+    fs::write(&live, "fact v3\n").unwrap();
+    hook(&fx, &pre_tool("Edit", &live, "s1"));
+    let incoming = status_json(&fx)["incoming"].clone();
+    assert!(incoming.as_object().unwrap().is_empty(), "{incoming}");
+}
+
 fn pre_tool(tool: &str, path: &Path, session: &str) -> String {
     hook_json(
         "PreToolUse",

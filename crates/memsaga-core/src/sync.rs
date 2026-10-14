@@ -21,7 +21,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Rebuilt by every sweep; in a merge conflict memsaga keeps its own copy.
 pub const GENERATED: [&str; 2] = ["index.md", "paths.json"];
@@ -89,14 +89,23 @@ pub fn rename_incoming(repo: &Path, incoming: &mut Incoming) -> Result<bool> {
     Ok(!renamed.is_empty())
 }
 
-/// The caller holds the sweep lock. An empty list removes the file.
 /// Copies a `diff` preview wrote into the clone and left uncommitted, as
-/// repo-relative path -> blob id. Until the next sweep replaces them, such a
-/// copy is memsaga's own and not a hand edit, even after the live file has
-/// changed again (it then equals neither HEAD nor the live file).
+/// repo-relative path -> [`PreviewCopy`]. Until a sweep commits over them,
+/// such a copy is memsaga's own and not a hand edit, even after the live file
+/// has changed again (it then equals neither HEAD nor the live file).
 const PREVIEW: &str = "preview.json";
 
-pub fn load_preview(state: &State) -> BTreeMap<String, String> {
+/// What a preview wrote at one path: the content, and the modification time
+/// the copy got (the mirror keeps the live file's). A hand edit that puts the
+/// same content back has a new modification time, so it is not taken for the
+/// copy. A record in the older path -> blob form reads as empty.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PreviewCopy {
+    pub blob: String,
+    pub mtime_ns: u64,
+}
+
+pub fn load_preview(state: &State) -> BTreeMap<String, PreviewCopy> {
     std::fs::read_to_string(state.marker(PREVIEW))
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
@@ -105,33 +114,59 @@ pub fn load_preview(state: &State) -> BTreeMap<String, String> {
 
 /// Add the files a preview wrote. The caller holds the sweep lock.
 pub fn record_preview(cfg: &Config, state: &State, written: &[PathBuf]) -> Result<()> {
+    let written: Vec<&PathBuf> = written
+        .iter()
+        .filter(|p| p.starts_with(&cfg.repo))
+        .collect();
     if written.is_empty() {
         return Ok(());
     }
     let git = Git::new(&cfg.repo);
+    let blobs = hash_many(&git, &written);
     let mut preview = load_preview(state);
-    for path in written {
-        let Ok(rel) = path.strip_prefix(&cfg.repo) else {
+    for (path, blob) in written.iter().zip(blobs) {
+        let (Ok(rel), Some(blob)) = (path.strip_prefix(&cfg.repo), blob) else {
             continue;
         };
-        if let Some(blob) = hash_of(&git, path) {
-            preview.insert(rel.to_string_lossy().to_string(), blob);
-        }
+        let Some(mtime_ns) = std::fs::metadata(path).ok().and_then(|m| mtime_ns(&m)) else {
+            continue;
+        };
+        preview.insert(
+            rel.to_string_lossy().to_string(),
+            PreviewCopy { blob, mtime_ns },
+        );
     }
     state.write_marker(PREVIEW, &serde_json::to_string_pretty(&preview)?)
 }
 
-/// A sweep has mirrored over every preview copy (or kept a hand edit made
-/// since): the record has done its job. The caller holds the sweep lock.
+/// A sweep has committed over every preview copy (or kept a hand edit made
+/// since): the record has done its job. Called only after the commit, so a
+/// sweep that fails half-way leaves the record for the next one. The caller
+/// holds the sweep lock.
 pub fn clear_preview(state: &State) {
     state.remove(PREVIEW);
 }
 
-/// Is the clone's `rel` exactly what a `diff` preview wrote there?
-fn is_preview_copy(preview: &BTreeMap<String, String>, rel: &str, blob: Option<&String>) -> bool {
-    blob.is_some() && preview.get(rel) == blob
+/// Is the clone's `rel` exactly what a `diff` preview wrote there: the same
+/// content and the same modification time?
+fn is_preview_copy(
+    preview: &BTreeMap<String, PreviewCopy>,
+    rel: &str,
+    blob: Option<&String>,
+    meta: &std::fs::Metadata,
+) -> bool {
+    match (preview.get(rel), blob) {
+        (Some(copy), Some(blob)) => copy.blob == *blob && mtime_ns(meta) == Some(copy.mtime_ns),
+        _ => false,
+    }
 }
 
+fn mtime_ns(meta: &std::fs::Metadata) -> Option<u64> {
+    let d = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
+    u64::try_from(d.as_nanos()).ok()
+}
+
+/// The caller holds the sweep lock. An empty list removes the file.
 pub fn save_incoming(state: &State, incoming: &Incoming) -> Result<()> {
     if incoming.is_empty() {
         state.remove(INCOMING);
@@ -237,6 +272,32 @@ fn hash_of(git: &Git, abs: &Path) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// `hash_of` for many files in one git process (`--stdin-paths`), in order.
+/// Falls back to one process per file when the batch cannot be used: a path
+/// with a newline, or a file that vanished (git then stops at it).
+fn hash_many(git: &Git, paths: &[&PathBuf]) -> Vec<Option<String>> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut input = Vec::new();
+    for p in paths {
+        let bytes = p.as_os_str().as_bytes();
+        if bytes.contains(&b'\n') {
+            return paths.iter().map(|p| hash_of(git, p)).collect();
+        }
+        input.extend_from_slice(bytes);
+        input.push(b'\n');
+    }
+    if let Ok(out) = git.run_with_input(&["hash-object", "--stdin-paths"], input) {
+        let ids: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect();
+        if out.status.success() && ids.len() == paths.len() {
+            return ids.into_iter().map(Some).collect();
+        }
+    }
+    paths.iter().map(|p| hash_of(git, p)).collect()
+}
+
 /// Handed to the mirror for one sweep (step 1b).
 pub struct Guard {
     repo: PathBuf,
@@ -250,7 +311,7 @@ pub struct Guard {
     /// Keys the mirror drops from `settings.json`, to compare like with like.
     settings_ignore_keys: Vec<String>,
     /// Copies an uncommitted `diff` preview wrote (`load_preview`).
-    preview: BTreeMap<String, String>,
+    preview: BTreeMap<String, PreviewCopy>,
 }
 
 impl Guard {
@@ -296,7 +357,7 @@ impl Guard {
         if base.is_some() && base == now {
             return true; // equal to what memsaga committed
         }
-        if is_preview_copy(&self.preview, &rel, now.as_ref()) {
+        if is_preview_copy(&self.preview, &rel, now.as_ref(), &meta) {
             return true; // memsaga's own copy from a `diff` preview
         }
         if src.is_some_and(|s| self.is_mirror_of(dst, s)) {
@@ -897,16 +958,17 @@ pub fn note_hand_edit(cfg: &Config, repo_rel: &str) -> Result<bool> {
         return Ok(true);
     }
     let path = cfg.repo.join(repo_rel);
-    if !std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
-        return Ok(false);
-    }
+    let meta = match std::fs::symlink_metadata(&path) {
+        Ok(m) if m.is_file() => m,
+        _ => return Ok(false),
+    };
     let base = blob_at(&git, "HEAD", repo_rel);
     let now = hash_of(&git, &path);
     if base.is_some() && base == now {
         return Ok(false);
     }
     // What a `diff` preview wrote: memsaga's own copy, however the live file moved on.
-    if is_preview_copy(&load_preview(&state), repo_rel, now.as_ref()) {
+    if is_preview_copy(&load_preview(&state), repo_rel, now.as_ref(), &meta) {
         return Ok(false);
     }
     // Equal to the live file: a sweep that stopped before committing, not an edit.

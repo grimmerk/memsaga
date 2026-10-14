@@ -71,6 +71,29 @@ impl<'a> Git<'a> {
         self.cmd().args(args).output().context("running git")
     }
 
+    /// `run` with `input` written to git's stdin. The input is written from
+    /// another thread, so a large output cannot fill its pipe and stall both.
+    pub fn run_with_input(&self, args: &[&str], input: Vec<u8>) -> Result<Output> {
+        use std::io::Write;
+        let mut child = self
+            .cmd()
+            .args(args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .with_context(|| format!("running git {}", args.join(" ")))?;
+        let stdin = child.stdin.take();
+        let writer = std::thread::spawn(move || {
+            if let Some(mut s) = stdin {
+                let _ = s.write_all(&input);
+            }
+        });
+        let out = child.wait_with_output().context("waiting for git")?;
+        let _ = writer.join();
+        Ok(out)
+    }
+
     pub fn run_ok(&self, args: &[&str]) -> Result<String> {
         let out = self.run(args)?;
         if !out.status.success() {

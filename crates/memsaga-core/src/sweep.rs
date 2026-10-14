@@ -295,9 +295,6 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         .map(|r| memory_renames_pending(cfg, r))
         .sum();
     let stats = refresh_mirror(cfg, &scope)?;
-    // Every preview copy is now replaced by the live file or kept as a hand
-    // edit made since; it is committed below either way.
-    crate::sync::clear_preview(&state);
     if let Some(g) = &scope.guard {
         if crate::sync::record_hand_edits(&mut incoming, g.take_found()) > 0 {
             crate::sync::save_incoming(&state, &incoming)?;
@@ -334,6 +331,11 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         out.files = files;
         out.shortstat = shortstat;
     }
+    // Every preview copy has now been replaced by the live file, or kept as a
+    // hand edit made since, and committed: the record has done its job. Not
+    // earlier: a sweep that fails before this point leaves the copies
+    // uncommitted, and they must still be recognised next time.
+    crate::sync::clear_preview(&state);
     // Promote the marker only after a successful pass; edits made during the
     // sweep have mtimes after `sweep_start` and are caught next time.
     set_marker(&state, sweep_start)?;
