@@ -3,6 +3,7 @@ name = "memsaga"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "memsaga CLI: hook entry point, sweep, init, status, install."
 
 [[bin]]

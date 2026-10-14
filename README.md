@@ -77,11 +77,14 @@ when a file changed elsewhere).
 
 ## Quick start
 
-You need macOS or Linux, git, Rust (`cargo`) and Claude Code. `gh` (the GitHub
-command-line tool) is optional, for creating the GitHub repository.
+You need macOS or Linux, git and Claude Code. `gh` (the GitHub command-line
+tool) is optional, for creating the GitHub repository. The first line installs a
+prebuilt binary into `~/.cargo/bin` (Apple silicon and Intel Macs, Linux on
+x86_64 and arm64); to build from source instead, with Rust's `cargo`:
+`cargo install --git https://github.com/grimmerk/memsaga memsaga --locked`.
 
 ```sh
-cargo install --git https://github.com/grimmerk/memsaga memsaga --locked
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grimmerk/memsaga/releases/latest/download/memsaga-installer.sh | sh
 memsaga init --dry-run    # what would be imported, and how much history can be replayed
 memsaga init              # create the data repository, replay history, import the current state
 memsaga install           # register the hooks in each Claude Code config directory

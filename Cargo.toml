@@ -25,3 +25,8 @@ libc = "0.2"
 opt-level = 2
 lto = "thin"
 strip = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

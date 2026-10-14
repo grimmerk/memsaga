@@ -592,7 +592,7 @@ git log --grep 'Session-Title: .*login'</pre>
       <span class="eyebrow">Install</span>
       <h2>Set it up once</h2>
       <ol class="steps">
-        <li><strong>cargo install</strong> builds memsaga. You need git and Rust's <code>cargo</code>, on macOS or Linux.</li>
+        <li><strong>The installer</strong> puts a prebuilt memsaga in <code>~/.cargo/bin</code>, for Macs (Apple silicon and Intel) and Linux (x86_64 and arm64). You need git. To build from source instead: <code>cargo install --git https://github.com/grimmerk/memsaga memsaga --locked</code>.</li>
         <li><strong>init</strong> creates the data repository and replays the edits your recent conversations recorded, so the history starts weeks back. It goes in <code>memories</code> inside the folder where you keep code (<code>~/git</code>, <code>~/code</code>, <code>~/src</code>, <code>~/Projects</code> or <code>~/dev</code>), or in <code>~/memories</code>; <code>--repo</code> picks another place, and <code>--dry-run</code> shows the choice first.</li>
         <li><strong>install</strong> connects memsaga to Claude Code. With <code>--skills</code>, Claude can also answer questions about the history.</li>
         <li><strong>gh repo create</strong> is optional. With a private GitHub repository, pushes and two-way sync happen on their own.</li>
@@ -601,15 +601,15 @@ git log --grep 'Session-Title: .*login'</pre>
     </div>
     <div class="term">
       <header><span>terminal</span><button type="button" id="copy-install">Copy</button></header>
-<pre id="install-cmds"><span class="p">$ </span>cargo install --locked memsaga \
-    --git https://github.com/grimmerk/memsaga
+<pre id="install-cmds"><span class="p">$ </span>curl --proto '=https' --tlsv1.2 -LsSf \
+    https://github.com/grimmerk/memsaga/releases/latest/download/memsaga-installer.sh | sh
 <span class="p">$ </span>memsaga init --dry-run   <span class="c"># what would be imported</span>
 <span class="p">$ </span>memsaga init
 <span class="p">$ </span>memsaga install --skills
 <span class="p">$ </span>gh repo create memories --private --push \
     --source ~/git/memories   <span class="c"># the path init printed</span>
 <span class="p">$ </span>memsaga status</pre>
-      <pre style="border-top:1px solid var(--code-line)"><span class="c"># to try it on example data first, run these after cargo install;</span>
+      <pre style="border-top:1px solid var(--code-line)"><span class="c"># to try it on example data first, run these after the install line;</span>
 <span class="c"># your real Claude Code config is never read or written</span>
 <span class="p">$ </span>git clone https://github.com/grimmerk/memsaga
 <span class="p">$ </span>memsaga/demo/setup.sh &amp;&amp; source /tmp/memsaga-demo/env.sh</pre>
