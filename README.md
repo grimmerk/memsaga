@@ -185,8 +185,10 @@ Three more questions that git answers directly:
 
 You also see changes as they happen. After a turn that committed, the terminal
 shows one line such as `memsaga: 2 files committed (a1b2c3d)`, so a memory
-Claude wrote on its own does not go unnoticed. For one commit per edit instead
-of one per turn, set `granularity = "edit"`.
+Claude wrote on its own does not go unnoticed. Claude Code prints it as
+`Stop says: memsaga: …`: the prefix is Claude Code's, naming the hook that runs
+at the end of a turn (`Stop`). `reporter = false` turns the line off. For one
+commit per edit instead of one per turn, set `granularity = "edit"`.
 
 The repository is also easy to read on GitHub: `index.md` lists every project
 with its real directory, and the memory files already use frontmatter and
