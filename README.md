@@ -66,7 +66,7 @@ Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
 - [What memsaga does not cover, and what to use instead](#what-memsaga-does-not-cover-and-what-to-use-instead)
 - [How it works](#how-it-works)
 - [When something looks wrong](#when-something-looks-wrong)
-- [Reference](#reference): [commands](#commands), [what is mirrored](#what-is-mirrored), [memory directory names](#memory-directory-names), [configuration](#configuration), [two-way sync](#two-way-sync), [commit messages](#commit-messages), [setting up another machine](#setting-up-another-machine)
+- [Reference](#reference): [commands](#commands), [what is mirrored](#what-is-mirrored), [memory directory names](#memory-directory-names), [configuration](#configuration), [two-way sync](#two-way-sync), [commit messages](#commit-messages), [updating](#updating), [setting up another machine](#setting-up-another-machine)
 - [Tests](#tests)
 - [Roadmap](#roadmap)
 - [The name](#the-name)
@@ -536,6 +536,20 @@ characters there so the subject stays within 72; the `Session-Title:` line keeps
 the whole title. The other lines: `Event:` (the hook or command), `Account:`
 (from `CLAUDE_CONFIG_DIR`), `Session:` (the session ID), `Cwd:` and `Agent:`.
 The prompt text is never copied into a commit.
+
+### Updating
+
+1. Run the install line from the [quick start](#quick-start) again: it
+   downloads the latest release and replaces `~/.cargo/bin/memsaga`. If you
+   built from source, add `--force` to the `cargo install` line.
+2. `memsaga install`, with `--skills` if you installed the bundled skills.
+   It is safe to run again: it updates memsaga's own hook entries in place and
+   adds any hook the new version needs. `--skills` overwrites the bundled
+   skills; if you edited one, the old text is in the history.
+
+`memsaga --version` shows what is installed. Running sessions need no restart:
+every hook starts a new process, so the next one uses the new binary. If
+several machines share one data repository, update them together.
 
 ### Setting up another machine
 
