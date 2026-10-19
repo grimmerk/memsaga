@@ -275,7 +275,13 @@ language, and the `companion-docs` skill puts it at
 with the rest of your memory. Before Claude summarises or translates a
 document, the skill has it check for an existing companion. `memsaga companions
 [repo]`, or `/companions` in a session, lists them with the status and source
-recorded in each one's frontmatter. The example repository has
+recorded in each one's frontmatter. That frontmatter uses the fields of the
+[Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format)
+(OKF, a Google Cloud specification for markdown knowledge files): `type`,
+`title` and `description`, a translation's source file and commit in
+`sources`, who wrote it in `generated`, and `status` (`draft`, `stable` or
+`deprecated`), so any tool that reads OKF can read a companion. Memory files, skills and `CLAUDE.md` keep their own formats. The
+example repository has
 [three of them](https://github.com/grimmerk/memsaga-example/tree/main/companion/webapp).
 
 ### 8. Two Claude Code accounts
