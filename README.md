@@ -82,6 +82,11 @@ tool) is optional, for creating the GitHub repository. The first line installs a
 prebuilt binary into `~/.cargo/bin` (Apple silicon and Intel Macs, Linux on
 x86_64 and arm64); to build from source instead, with Rust's `cargo`:
 `cargo install --git https://github.com/grimmerk/memsaga memsaga --locked`.
+Rather not pipe a script into `sh`? Download the archive for your platform from
+the [Releases page](https://github.com/grimmerk/memsaga/releases/latest) and
+put `memsaga` on your `PATH`. On macOS a browser marks the download as
+quarantined, and the binary is not notarized, so clear the mark once:
+`xattr -d com.apple.quarantine memsaga`.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grimmerk/memsaga/releases/latest/download/memsaga-installer.sh | sh
