@@ -40,7 +40,7 @@ phone) reaches the live files everywhere else.
 
 Status: early, in daily use by its author on macOS (CI also runs on Linux).
 Claude Code is the only source today; other agents and sources are on the
-roadmap. Contributor notes: [`docs/architecture.md`](docs/architecture.md).
+[roadmap](#roadmap). Contributor notes: [`docs/architecture.md`](docs/architecture.md).
 Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
 [`docs/design.md`](docs/design.md).
 
@@ -646,8 +646,11 @@ plus unit tests for pure logic. CI runs them on Ubuntu and macOS with
 
 Plans, not promises:
 
-- More sources: other coding agents (Codex first), whole folders outside the
-  config directory, data fetched from an API.
+- More sources: other coding agents that keep memory or instruction files on
+  disk (Codex first: its opt-in memories under `~/.codex/memories/`,
+  `AGENTS.md` and skills), whole folders outside the config directory
+  ([#20](https://github.com/grimmerk/memsaga/issues/20)), and remote knowledge
+  bases, such as a server hosting a tree of markdown documents.
 - A Claude Code mod that shows the sync state in the status line, and later
   runs the hook work inside Claude Code instead of a new process per event.
 - Folder aliases for machines whose project folders differ below home
