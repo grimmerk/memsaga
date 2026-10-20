@@ -67,11 +67,20 @@ control to it, without memsaga: git in Claude Code's own folder, and a hook that
 commits after every reply. It is the do-it-yourself setup that the README
 describes for one account on one computer.
 
-What this setup does not handle is listed in
-[Do you need memsaga?](../README.md#do-you-need-memsaga) in the README. The one
-to know before you start: the files Claude is using become the git work tree,
-so a `git checkout`, a `git clean` or a merge conflict in `~/.claude` changes
-them.
+What this setup does not handle, in short (each is explained in
+[Do you need memsaga?](../README.md#do-you-need-memsaga) in the README):
+
+- **The files Claude is using become the git work tree**, so a `git checkout`,
+  a `git clean` or a merge conflict in `~/.claude` changes them. Know this one
+  before you start.
+- **One account, one computer.** A second account needs a second repository,
+  and pulling from another computer writes straight into the files in use.
+- **Files outside `~/.claude`** stay out of this history.
+- **Commits do not say which conversation made them**, unless you extend the
+  hook.
+- **History starts the day you set it up**; nothing earlier is rebuilt.
+- **You keep the allowlist up to date** when Claude Code adds a folder you want
+  kept.
 
 1. Turn the folder into a git repository:
 
