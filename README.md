@@ -65,6 +65,7 @@ Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
   - Going further
     11. [Let Claude reorganise its memory, safely](#11-let-claude-reorganise-its-memory-safely)
 - [What memsaga does not cover, and what to use instead](#what-memsaga-does-not-cover-and-what-to-use-instead)
+- [FAQ](docs/faq.md): other ways to keep this history, compared
 - [How it works](#how-it-works)
 - [When something looks wrong](#when-something-looks-wrong)
 - [Reference](#reference): [commands](#commands), [what is mirrored](#what-is-mirrored), [memory directory names](#memory-directory-names), [configuration](#configuration), [two-way sync](#two-way-sync), [commit messages](#commit-messages), [updating](#updating), [setting up another machine](#setting-up-another-machine)
@@ -123,6 +124,9 @@ It also handles what the do-it-yourself setup cannot easily handle:
   the project and file it is about, so a later conversation finds it again.
   memsaga calls these companion documents
   ([use case 7](#7-keep-notes-beside-a-repository-without-committing-them)).
+
+Other ways to do this, compared, and the do-it-yourself setup step by step:
+[FAQ](docs/faq.md).
 
 ## Quick start
 
