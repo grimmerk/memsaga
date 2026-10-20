@@ -251,7 +251,8 @@ exclude_paths = ["skills/synced", "skills/.trash", "mods/*/.claude-plugin/types"
 ```
 
 Whole folders outside the config directory are not supported yet; until then,
-list their files one by one.
+list their files one by one. A folder listed in `extra_files` is skipped, and
+`memsaga status` and `memsaga config` say so.
 
 ### 6. Add your own files to the repository
 

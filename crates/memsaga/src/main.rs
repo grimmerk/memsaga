@@ -469,6 +469,9 @@ fn run(cli: Cli) -> Result<()> {
                 "# config file: {}",
                 memsaga_core::config::config_path().display()
             );
+            for w in memsaga_core::status::extra_folder_warnings(&cfg) {
+                println!("# {w}");
+            }
             Ok(())
         }
     }
@@ -905,6 +908,9 @@ fn cmd_status(n: usize, json: bool) -> Result<()> {
         if let Some(w) = memsaga_core::status::config_missing_warning(&cfg) {
             println!("{w}");
         }
+    }
+    for w in memsaga_core::status::extra_folder_warnings(&cfg) {
+        println!("{w}");
     }
     println!("repo: {}", st.repo.display());
     if !st.initialised {
