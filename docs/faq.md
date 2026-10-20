@@ -58,7 +58,7 @@ indexes and hand-offs between agents. One example is
 agent's own memory with a shared, git-backed markdown wiki for twenty or more
 coding agents. The two can be used together: such a tool keeps the memory, in
 a repository that already has its own history, and memsaga keeps the history of
-the rest of `~/.claude`.
+everything else in `~/.claude`, such as `CLAUDE.md`, skills and hooks.
 
 ## How do I give the built-in memory a history myself?
 
