@@ -46,6 +46,7 @@ Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
 
 ## Contents
 
+- [Do you need memsaga?](#do-you-need-memsaga)
 - [Quick start](#quick-start)
 - [What you can do with it](#what-you-can-do-with-it)
   - Claude Code's config directory
@@ -74,6 +75,53 @@ Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
 Pictures: the image at the top (where files come from, and where the history
 goes), and a sequence diagram in [use case 10](#10-edit-from-anywhere) (what happens
 when a file changed elsewhere).
+
+## Do you need memsaga?
+
+**Maybe not.** If you use Claude Code with one account on one computer, a
+do-it-yourself setup gets you most of the history:
+
+1. Turn `~/.claude` into a git repository, a folder whose history git keeps
+   (`git init`).
+2. Add a `.gitignore` that lets in only what you want kept (memory,
+   `CLAUDE.md`, skills) and keeps out conversations and credentials.
+3. Add a hook that commits at the end of every reply (a `Stop` hook).
+
+memsaga does this for you, out of the box. There is no list or hook to write
+yourself: it already knows which files Claude Code reads (`CLAUDE.md`, memory,
+skills, agents, commands, rules, hooks), following Claude Code's own directory
+reference, and it leaves out credentials, conversations and caches.
+
+It also handles what the do-it-yourself setup cannot easily handle:
+
+- **A separate repository, away from the files Claude is using.** In the
+  do-it-yourself setup, Claude Code's own folder *is* the repository, so a
+  single git command run there (`git checkout`, `git clean`) or a merge
+  conflict changes the files Claude is reading. memsaga keeps its copies in a
+  normal folder you choose, such as `~/git/memories`, instead of the hidden
+  `~/.claude`, with an `index.md` that lists every project by its real folder,
+  so it is easy to browse in Finder, an editor or Obsidian.
+- **Files outside Claude Code's folder.** A plan in your home directory, or
+  another tool's config file: list it in `extra_files`, and every change to it
+  is committed, whether you made it or Claude did
+  ([use case 5](#5-version-any-file-claude-edits-for-you)).
+- **More than one account or computer.** That setup covers one Claude Code
+  folder, and pulling from another computer writes straight into the files in
+  use. memsaga keeps every account in one repository. When a change arrives
+  from another computer, it keeps the edits made on both sides; if both changed
+  the same line, it stops and tells you. It also tells Claude what changed.
+- **Which conversation made each change.** Every commit names the conversation
+  behind it, and `claude --resume` reopens that conversation.
+- **History from before you installed it.** memsaga rebuilds it from the edits
+  recorded in the conversations Claude Code has saved, which by default go back
+  30 days (`cleanupPeriodDays`).
+- **Your own documents about other projects.** Some documents are about a
+  project but must not go into its repository, for example notes on your
+  employer's code. Ask Claude for one (a note, a translation of its docs, or a
+  draft) and it is kept in memsaga's repository under `companion/`, filed by
+  the project and file it is about, so a later conversation finds it again.
+  memsaga calls these companion documents
+  ([use case 7](#7-keep-notes-beside-a-repository-without-committing-them)).
 
 ## Quick start
 
