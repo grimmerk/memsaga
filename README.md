@@ -111,10 +111,11 @@ It also handles what the do-it-yourself setup cannot easily handle:
   from another computer, it keeps the edits made on both sides; if both changed
   the same line, it stops and tells you. It also tells Claude what changed.
 - **Which conversation made each change.** Every commit names the conversation
-  behind it, and `claude --resume` reopens that conversation.
+  behind it, and `claude --resume` reopens that conversation as long as Claude
+  Code keeps it: 30 days after its last use, unless you raise
+  `cleanupPeriodDays`.
 - **History from before you installed it.** memsaga rebuilds it from the edits
-  recorded in the conversations Claude Code has saved, which by default go back
-  30 days (`cleanupPeriodDays`).
+  recorded in those same saved conversations.
 - **Your own documents about other projects.** Some documents are about a
   project but must not go into its repository, for example notes on your
   employer's code. Ask Claude for one (a note, a translation of its docs, or a
