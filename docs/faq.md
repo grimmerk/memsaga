@@ -5,6 +5,7 @@ it. For what memsaga adds over the simplest setup, see
 [Do you need memsaga?](../README.md#do-you-need-memsaga) in the README.
 
 - [Why not keep my own notes in a repository and skip Claude Code's memory?](#why-not-keep-my-own-notes-in-a-repository-and-skip-claude-codes-memory)
+- [Why not replace the built-in memory with a skill that writes to a repository?](#why-not-replace-the-built-in-memory-with-a-skill-that-writes-to-a-repository)
 - [How do I set up the do-it-yourself version?](#how-do-i-set-up-the-do-it-yourself-version)
 
 ## Why not keep my own notes in a repository and skip Claude Code's memory?
@@ -32,6 +33,52 @@ of your own, such as `~/notes/`, and to commit there.
 
 memsaga takes the other path: it leaves the built-in memory as it is, and gives
 it and the rest of `~/.claude` a history.
+
+## Why not replace the built-in memory with a skill that writes to a repository?
+
+This is the previous question taken further: a skill that tells the agent when
+and how to save a memory, writes it straight into a repository you chose, and
+commits. Skills are an open format that Claude Code, Codex and Cursor all read,
+so one memory could serve all three.
+
+**What you gain**
+
+- One memory shared by several coding agents. memsaga covers Claude Code only
+  today.
+- The repository is the original, not a copy, so there is nothing to mirror
+  and nothing to sync back.
+- You decide the layout and the writing rules.
+
+**What it costs**
+
+- Whether a memory gets saved depends on the model choosing to use the skill.
+  The built-in memory is driven by Claude Code's own instructions, tuned by its
+  makers.
+- A commit that the skill asks for is again an instruction the model may skip.
+  A hook that commits makes it certain, but each agent has its own hook system.
+- Memories are read only when the agent is told to read them. The built-in
+  memory is loaded at the start of every session.
+- You now maintain a memory system of your own, and improvements to the
+  built-in one do not reach you.
+- Several sessions or agents committing to one repository at once need
+  locking, or git refuses some of the commits.
+- `CLAUDE.md`, skills and hooks still have no history.
+
+| | A memory skill | memsaga |
+|---|---|---|
+| Changes how the agent remembers | Yes, it replaces the built-in memory | No, the agent works as before |
+| Is every change recorded | When the model uses the skill | Always: a hook runs after every reply |
+| Edits made by you or by other tools | Missed unless they go through the skill | Recorded too |
+| Several agents | Yes, by design | Claude Code today; Codex is on the [roadmap](../README.md#roadmap) |
+| What has history | Memory | All of `~/.claude` that you write, plus files you list |
+
+Tools that take this path already exist and go much further, with search,
+indexes and hand-offs between agents. One example is
+[ai-memory](https://github.com/akitaonrails/ai-memory), which replaces each
+agent's own memory with a shared, git-backed markdown wiki for twenty or more
+coding agents. The two can be used together: such a tool keeps the memory, in
+a repository that already has its own history, and memsaga keeps the history of
+the rest of `~/.claude`.
 
 ## How do I set up the do-it-yourself version?
 
