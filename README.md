@@ -102,10 +102,16 @@ It also handles what the do-it-yourself setup cannot easily handle:
   normal folder you choose, such as `~/git/memories`, instead of the hidden
   `~/.claude`, with an `index.md` that lists every project by its real folder,
   so it is easy to browse in Finder, an editor or Obsidian.
-- **Files outside Claude Code's folder.** A plan in your home directory, or
-  another tool's config file: list it in `extra_files`, and every change to it
-  is committed, whether you made it or Claude did
-  ([use case 5](#5-version-any-file-claude-edits-for-you)).
+- **Files you choose, even outside Claude Code's folder.** The files Claude
+  Code itself uses in `~/.claude` (memory, `CLAUDE.md`, skills, hooks and the
+  rest) are covered by default, with nothing to list. A folder you create there
+  yourself, which Claude Code does not use, such as `~/.claude/drafts/`, takes
+  one line in `dirs`. Outside `~/.claude`, name each file in `extra_files`,
+  such as a plan in your home directory or another tool's config file, and
+  every change to it is committed, whether you made it or Claude did
+  ([use case 5](#5-version-any-file-claude-edits-for-you)). Whole folders
+  outside `~/.claude` are not supported yet
+  ([#20](https://github.com/grimmerk/memsaga/issues/20)).
 - **More than one account or computer.** That setup covers one Claude Code
   folder, and pulling from another computer writes straight into the files in
   use. memsaga keeps every account in one repository. When a change arrives

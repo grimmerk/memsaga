@@ -8,6 +8,8 @@ it. For what memsaga adds over the simplest setup, see
   Replacing the built-in memory.
 - [How do I give the built-in memory a history myself?](#how-do-i-give-the-built-in-memory-a-history-myself)
   Keeping the built-in memory and versioning it, without memsaga.
+- [Does it slow Claude Code down?](#does-it-slow-claude-code-down)
+  What each hook costs, measured.
 
 ## Why not skip Claude Code's memory and keep my own in a repository?
 
@@ -134,3 +136,23 @@ What this setup does not handle, in short (each is explained in
 
 `git -C ~/.claude log -p` then shows every change. To push to a private GitHub
 repository, add a remote and run `git push` yourself, or add it to the hook.
+
+## Does it slow Claude Code down?
+
+Barely. memsaga is a small compiled program (written in Rust); each hook starts
+it, does one check and exits.
+
+- **Most tool calls:** about 5 ms when the file is not one memsaga keeps.
+- **End of a reply with nothing to commit:** about 30–45 ms.
+- **End of a reply that commits:** runs in the background, so the reply is not
+  held up.
+- **Pushing to GitHub:** in the background, at most once every ten minutes by
+  default (`push_min_interval_secs`).
+- **Checking GitHub for edits made elsewhere (two-way sync):** about half a
+  second, at most once a minute, at the start of a session or a prompt; before
+  Claude writes a file memsaga keeps, at most every ten seconds. Without a
+  GitHub remote, memsaga uses no network at all.
+
+The numbers were measured on a busy machine;
+[`docs/architecture.md`](architecture.md#measured-again-2026-10-15-and-how-to-repeat-it)
+says how to repeat them.
