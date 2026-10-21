@@ -111,7 +111,7 @@ pub fn extra_folder_warnings(cfg: &Config) -> Vec<String> {
         .into_iter()
         .map(|entry| {
             format!(
-                "memsaga: extra_files entry {entry} is a folder, so nothing in it is mirrored; extra_files takes files, so list them one by one"
+                "memsaga: extra_files entry {entry} is a folder, so nothing in it is mirrored; list its files one by one, or keep the folder under the config directory and add it to dirs"
             )
         })
         .collect()

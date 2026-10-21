@@ -1424,6 +1424,11 @@ fn a_folder_in_extra_files_is_reported_instead_of_silently_skipped() {
         out.contains(&format!("extra_files entry {folder_entry} is a folder")),
         "{out}"
     );
+    // It names both ways out: list the files, or move the folder into dirs.
+    assert!(
+        out.contains("one by one") && out.contains("add it to dirs"),
+        "{out}"
+    );
     assert!(!out.contains("todo.md is a folder"), "{out}");
     let v = status_json(&fx);
     assert_eq!(
