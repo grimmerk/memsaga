@@ -26,8 +26,8 @@ from three places, told apart by where a file lives:
    directory, a dotfile: whoever edits it, you or Claude, the change is
    committed.
 3. **Content that lives only in the repository.** It is a normal git
-   repository: add notes, companion documents (translations or annotated
-   copies of other repositories' docs), anything else; edit and push from
+   repository: add notes, companion documents (your notes, translations or
+   drafts about other repositories), anything else; edit and push from
    anywhere. memsaga commits what you add and never deletes it.
 
 At the end of every turn a hook copies what changed and commits it, one commit
@@ -102,11 +102,10 @@ It also handles what the do-it-yourself setup cannot easily handle:
   normal folder you choose, such as `~/git/memories`, instead of the hidden
   `~/.claude`, with an `index.md` that lists every project by its real folder,
   so it is easy to browse in Finder, an editor or Obsidian.
-- **Files you choose, even outside Claude Code's folder.** The files Claude
-  Code itself uses in `~/.claude` (memory, `CLAUDE.md`, skills, hooks and the
-  rest) are covered by default, with nothing to list. A folder you create there
-  yourself, which Claude Code does not use, such as `~/.claude/drafts/`, takes
-  one line in `dirs`. Outside `~/.claude`, name each file in `extra_files`,
+- **Files you choose, even outside Claude Code's folder.** Beyond the files
+  Claude Code uses, which are covered by default (above), a folder you create
+  in `~/.claude` yourself, such as `~/.claude/drafts/`, takes one line in
+  `dirs`. Outside `~/.claude`, name each file in `extra_files`,
   such as a plan in your home directory or another tool's config file, and
   every change to it is committed, whether you made it or Claude did
   ([use case 5](#5-version-any-file-claude-edits-for-you)). Whole folders
