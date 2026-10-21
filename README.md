@@ -112,11 +112,15 @@ It also handles what the do-it-yourself setup cannot easily handle:
   ([use case 5](#5-version-any-file-claude-edits-for-you)). Whole folders
   outside `~/.claude` are not supported yet
   ([#20](https://github.com/grimmerk/memsaga/issues/20)).
-- **More than one account or computer.** That setup covers one Claude Code
-  folder, and pulling from another computer writes straight into the files in
-  use. memsaga keeps every account in one repository. When a change arrives
-  from another computer, it keeps the edits made on both sides; if both changed
-  the same line, it stops and tells you. It also tells Claude what changed.
+- **Edits from anywhere, and more than one account or computer.** You can fix
+  a memory in GitHub's web editor, on a phone, or on another computer. In the
+  do-it-yourself setup, bringing such an edit back is a `git pull` that writes
+  straight into the files in use, and a conflict leaves git's markers in a file
+  Claude reads. memsaga brings the edit to the live file for you: it keeps the
+  edits made on both sides, and if both changed the same line, it stops and
+  tells you. It also tells Claude what changed. Every account lives in one
+  repository, and another computer picks up changes the next time you use
+  Claude there.
 - **Which conversation made each change.** Every commit names the conversation
   behind it, and `claude --resume` reopens that conversation as long as Claude
   Code keeps it: 30 days after its last use, unless you raise

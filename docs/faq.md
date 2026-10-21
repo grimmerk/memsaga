@@ -75,8 +75,10 @@ What this setup does not handle, in short (each is explained in
 - **The files Claude is using become the git work tree**, so a `git checkout`,
   a `git clean` or a merge conflict in `~/.claude` changes them. Know this one
   before you start.
-- **One account, one computer.** A second account needs a second repository,
-  and pulling from another computer writes straight into the files in use.
+- **One account, one computer.** A second account needs a second repository.
+  An edit made on GitHub, on a phone or on another computer comes back only
+  through a `git pull` that writes straight into the files in use, and a
+  conflict leaves git's markers in a file Claude reads.
 - **Files outside `~/.claude`** stay out of this history.
 - **Commits do not say which conversation made them**, unless you extend the
   hook.
