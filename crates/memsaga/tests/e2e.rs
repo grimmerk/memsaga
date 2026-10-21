@@ -1397,6 +1397,48 @@ fn status_json_reports_state_and_a_failing_push_without_sweeping() {
 }
 
 #[test]
+fn a_folder_in_extra_files_is_reported_instead_of_silently_skipped() {
+    let fx = fixture("turn", "");
+    let home = fx.claude.parent().unwrap();
+    let folder = home.join("notes");
+    write(&folder.join("plan.md"), "plan\n");
+    let file = home.join("todo.md");
+    write(&file, "todo\n");
+    let toml = fs::read_to_string(&fx.cfg).unwrap();
+    write(
+        &fx.cfg,
+        &format!(
+            "extra_files = [\"{}\", \"{}\"]\n{toml}",
+            folder.display(),
+            file.display()
+        ),
+    );
+    run(&fx, &["init", "--no-backfill"]);
+    // The file is mirrored; the folder is not, and the commands say why.
+    let files = head_files(&fx);
+    assert!(files.iter().any(|f| f.ends_with("/todo.md")), "{files:?}");
+    assert!(!files.iter().any(|f| f.ends_with("/plan.md")), "{files:?}");
+    let out = run(&fx, &["status"]);
+    let folder_entry = folder.display().to_string();
+    assert!(
+        out.contains(&format!("extra_files entry {folder_entry} is a folder")),
+        "{out}"
+    );
+    // It names both ways out: list the files, or move the folder into dirs.
+    assert!(
+        out.contains("one by one") && out.contains("add it to dirs"),
+        "{out}"
+    );
+    assert!(!out.contains("todo.md is a folder"), "{out}");
+    let v = status_json(&fx);
+    assert_eq!(
+        v["config"]["extra_folders"],
+        serde_json::json!([folder_entry])
+    );
+    assert!(run(&fx, &["config"]).contains("is a folder"));
+}
+
+#[test]
 fn a_missing_config_file_is_reported_until_it_is_back() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);

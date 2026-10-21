@@ -43,6 +43,9 @@ pub struct ConfigStatus {
     /// The file is gone but the repo holds `memsaga/config.toml`, so a config
     /// existed before: memsaga is running on its defaults by accident.
     pub missing: bool,
+    /// `extra_files` entries, as written, that are folders. The mirror takes
+    /// files only, so nothing under them is mirrored.
+    pub extra_folders: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -89,6 +92,31 @@ pub fn config_missing_warning(cfg: &Config) -> Option<String> {
     ))
 }
 
+/// `extra_files` entries, as written, that name a folder. The mirror skips
+/// anything that is not a file, so without this a folder listed there would
+/// look watched while nothing in it is ever committed.
+pub fn extra_folders(cfg: &Config) -> Vec<String> {
+    cfg.extra_files
+        .iter()
+        .zip(cfg.extra_files())
+        .filter(|(_, path)| path.is_dir())
+        .map(|(entry, _)| entry.clone())
+        .collect()
+}
+
+/// One warning line per folder in `extra_files`, shared by `status` and
+/// `config`.
+pub fn extra_folder_warnings(cfg: &Config) -> Vec<String> {
+    extra_folders(cfg)
+        .into_iter()
+        .map(|entry| {
+            format!(
+                "memsaga: extra_files entry {entry} is a folder, so nothing in it is mirrored; list its files one by one, or keep the folder under the config directory and add it to dirs"
+            )
+        })
+        .collect()
+}
+
 /// `s` as one shell word: unchanged when it is plainly safe, else in single
 /// quotes (with any `'` written as `'\''`).
 fn shell_quote(s: &str) -> String {
@@ -110,6 +138,7 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
     let config = ConfigStatus {
         present: path.exists(),
         missing: config_missing_warning(cfg).is_some(),
+        extra_folders: extra_folders(cfg),
         path,
     };
     let scope = Scope::new(cfg);

@@ -250,8 +250,11 @@ dirs = ["skills", "commands", "agents", "agent-memory", "rules", "output-styles"
 exclude_paths = ["skills/synced", "skills/.trash", "mods/*/.claude-plugin/types"]
 ```
 
-Whole folders outside the config directory are not supported yet; until then,
-list their files one by one.
+Whole folders outside the config directory are not supported yet
+([#20](https://github.com/grimmerk/memsaga/issues/20)); until then, list their
+files one by one, or keep the folder under the config directory and add it to
+`dirs`, as above. A folder listed in `extra_files` is skipped, and
+`memsaga status` and `memsaga config` say so.
 
 ### 6. Add your own files to the repository
 
