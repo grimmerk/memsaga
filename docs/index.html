@@ -311,7 +311,7 @@ footer .wrap { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 
     </div>
 
     <div class="log" role="img" aria-label="Example history: Tuesday, a session fixing a login redirect updated memory; Wednesday, a memory tidy-up merged duplicates and you added a notes file by hand; Thursday, CLAUDE.md was restored to Monday's version.">
-      <header><span>history · ~/git/memories</span><span class="dots"><span></span><span></span><span></span></span></header>
+      <header><span>history · memories</span><span class="dots"><span></span><span></span><span></span></span></header>
       <ol class="commits">
         <li><span class="when">Tue 14:02</span> <span class="what">Fixed login redirect · memory updated</span><br>
           <span class="meta">Session: fix login redirect after OAuth <i>a1b2c3d</i></span></li>
@@ -607,7 +607,7 @@ git log --grep 'Session-Title: .*login'</pre>
 <span class="p">$ </span>memsaga init
 <span class="p">$ </span>memsaga install --skills
 <span class="p">$ </span>gh repo create memories --private --push \
-    --source ~/git/memories   <span class="c"># the path init printed</span>
+    --source "$(memsaga repo)"   <span class="c"># optional: a private remote</span>
 <span class="p">$ </span>memsaga status</pre>
       <pre style="border-top:1px solid var(--code-line)"><span class="c"># to try it on example data first, run these after the install line;</span>
 <span class="c"># your real Claude Code config is never read or written</span>

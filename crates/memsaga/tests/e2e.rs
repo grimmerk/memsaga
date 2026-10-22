@@ -1439,6 +1439,22 @@ fn a_folder_in_extra_files_is_reported_instead_of_silently_skipped() {
 }
 
 #[test]
+fn repo_prints_only_the_data_repository_path_and_fails_before_init() {
+    let fx = fixture("turn", "");
+    // Before init there is no data repository: an error, and nothing on stdout
+    // that `cd "$(memsaga repo)"` could act on.
+    let out = cmd(&fx).arg("repo").output().unwrap();
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("no memsaga data repository"),
+        "{out:?}"
+    );
+    run(&fx, &["init", "--no-backfill"]);
+    assert_eq!(run(&fx, &["repo"]), format!("{}\n", fx.repo.display()));
+}
+
+#[test]
 fn a_missing_config_file_is_reported_until_it_is_back() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);

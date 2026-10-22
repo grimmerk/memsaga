@@ -23,7 +23,7 @@ end of the turn.
 <memsaga repo>/companion/<repo name>/<path inside that repo>.<lang>.md
 ```
 
-- `<memsaga repo>` is the `repo` value of `memsaga config` (`~/git/memories` in
+- `<memsaga repo>` is the data repository, the path `memsaga repo` prints (`~/git/memories` in
   the examples here).
 - `<repo name>` is the last component of the source repository's path
   (`webapp` for `~/git/webapp` or `~/code/webapp`), not the GitHub full name.
