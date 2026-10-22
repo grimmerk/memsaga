@@ -98,6 +98,79 @@ pub fn rename_incoming(repo: &Path, incoming: &mut Incoming) -> Result<bool> {
 /// when only a preview wrote it, so a record from an older binary still reads.
 const UNCOMMITTED: &str = "preview.json";
 
+/// Repository paths whose live file this machine has had: the mirror found it,
+/// or `restore` or a pull wrote it. Per machine, never pushed. A file that is
+/// in scope but missing live counts as deleted only when this record has it;
+/// otherwise it was simply never here (a fresh clone, a folder another
+/// machine added to the config, a link to a tool this machine lacks), and
+/// deleting it would delete it on every machine (grimmerk/memsaga#22).
+const SEEN: &str = "seen.json";
+
+/// The record, or, when there is none yet: everything under a root at HEAD if
+/// this machine has swept before (it has been mirroring all along, so an
+/// upgrade keeps propagating deletions), else nothing (a fresh clone).
+pub fn load_seen(cfg: &Config, state: &State) -> BTreeSet<String> {
+    if let Some(set) = std::fs::read_to_string(state.marker(SEEN))
+        .ok()
+        .and_then(|t| serde_json::from_str::<BTreeSet<String>>(&t).ok())
+    {
+        return set;
+    }
+    if !state.exists("last-sweep") {
+        return BTreeSet::new();
+    }
+    let labels: Vec<&str> = cfg.roots.iter().map(|r| r.label.as_str()).collect();
+    let mut args = vec!["ls-files", "-z", "--"];
+    args.extend(labels.iter().copied());
+    Git::new(&cfg.repo)
+        .run_ok(&args)
+        .map(|out| {
+            out.split('\0')
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Add repository paths (absolute or repo-relative) to the record. The caller
+/// holds the sweep lock.
+pub fn mark_seen<P: AsRef<Path>>(cfg: &Config, state: &State, paths: &[P]) -> Result<()> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let mut seen = load_seen(cfg, state);
+    let before = seen.len();
+    for p in paths {
+        let p = p.as_ref();
+        let rel = p.strip_prefix(&cfg.repo).unwrap_or(p);
+        seen.insert(rel.to_string_lossy().to_string());
+    }
+    if seen.len() == before && state.marker(SEEN).exists() {
+        return Ok(());
+    }
+    state.write_marker(SEEN, &serde_json::to_string(&seen)?)
+}
+
+/// Repository files in scope kept because this machine never had them, as
+/// the last sweep found them; `memsaga status` lists them.
+const ABSENT: &str = "absent.json";
+
+pub fn load_absent(state: &State) -> Vec<String> {
+    std::fs::read_to_string(state.marker(ABSENT))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_absent(state: &State, absent: &[String]) -> Result<()> {
+    if absent.is_empty() {
+        state.remove(ABSENT);
+        return Ok(());
+    }
+    state.write_marker(ABSENT, &serde_json::to_string(absent)?)
+}
+
 pub fn load_uncommitted(state: &State) -> BTreeMap<String, String> {
     std::fs::read_to_string(state.marker(UNCOMMITTED))
         .ok()
@@ -178,6 +251,33 @@ impl Target {
             Target::Exact(p) => p,
         }
     }
+}
+
+/// `cfg` with the scope of the mirrored config file as this merge left it.
+/// When a merge brings both a config that widens the scope and a file only
+/// the new scope covers, choosing the incoming files with the old scope would
+/// leave that file out for good: never written live, and, with the new config
+/// loaded, missing here (grimmerk/memsaga#22). Repository location and roots
+/// stay this machine's own.
+fn scope_after_merge(cfg: &Config, changed: &[String]) -> Config {
+    let mut next = cfg.clone();
+    if !changed.iter().any(|f| f == "memsaga/config.toml") {
+        return next;
+    }
+    let Ok(text) = std::fs::read_to_string(cfg.repo.join("memsaga/config.toml")) else {
+        return next;
+    };
+    let Ok(merged) = toml::from_str::<Config>(&text) else {
+        return next;
+    };
+    next.files = merged.files;
+    next.dirs = merged.dirs;
+    next.extra_files = merged.extra_files;
+    next.memory = merged.memory;
+    next.exclude = merged.exclude;
+    next.exclude_projects = merged.exclude_projects;
+    next.exclude_paths = merged.exclude_paths;
+    next
 }
 
 /// The live location of `repo_rel`, or None for a file that has no live side
@@ -301,6 +401,10 @@ pub struct Guard {
     settings_ignore_keys: Vec<String>,
     /// Copies memsaga wrote and has not committed (`load_uncommitted`).
     uncommitted: BTreeMap<String, String>,
+    /// Repository paths whose live file this machine has had (`load_seen`).
+    seen: BTreeSet<String>,
+    /// Paths a removal was refused for because this machine never had them.
+    absent: RefCell<BTreeSet<String>>,
 }
 
 impl Guard {
@@ -312,6 +416,8 @@ impl Guard {
             found: RefCell::new(BTreeMap::new()),
             settings_ignore_keys: cfg.settings_ignore_keys.clone(),
             uncommitted: load_uncommitted(&State::new(cfg.state_dir())),
+            seen: load_seen(cfg, &State::new(cfg.state_dir())),
+            absent: RefCell::new(BTreeSet::new()),
         }
     }
 
@@ -374,6 +480,17 @@ impl Guard {
     /// May the mirror delete `path` (a file, or a directory and everything
     /// under it)? Refused when any file under it is protected or hand-edited.
     pub fn allows_remove(&self, path: &Path) -> bool {
+        self.allows_remove_checked(path, true)
+    }
+
+    /// `allows_remove` for a copy that moved within the repository: its live
+    /// file is still there under the new path, so whether this machine had
+    /// the old path does not matter.
+    pub fn allows_remove_moved(&self, path: &Path) -> bool {
+        self.allows_remove_checked(path, false)
+    }
+
+    fn allows_remove_checked(&self, path: &Path, need_seen: bool) -> bool {
         if self.protected.iter().any(|p| p.starts_with(path)) {
             return false;
         }
@@ -382,14 +499,30 @@ impl Guard {
             .follow_links(false)
             .into_iter()
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
+            .filter(|e| e.file_type().is_file() || e.file_type().is_symlink())
         {
-            // Check every file, so each hand edit is recorded.
-            if !self.allows_write(e.path(), None) {
+            // Check every file, so each hand edit is recorded (and later
+            // brought live, not counted as absent).
+            if e.file_type().is_file() && !self.allows_write(e.path(), None) {
+                ok = false;
+                continue;
+            }
+            // A path this machine never had live is not a deletion here.
+            let rel = e.path().strip_prefix(&self.repo).unwrap_or(e.path());
+            let rel = rel.to_string_lossy().to_string();
+            if need_seen && !self.seen.contains(&rel) {
+                self.absent.borrow_mut().insert(rel);
                 ok = false;
             }
         }
         ok
+    }
+
+    /// Paths kept because this machine never had them.
+    pub fn take_absent(&self) -> Vec<String> {
+        std::mem::take(&mut *self.absent.borrow_mut())
+            .into_iter()
+            .collect()
     }
 
     /// Hand edits found, as incoming entries.
@@ -537,8 +670,9 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
         .collect();
     let mut incoming = load_incoming(&state);
     let mut files = Vec::new();
+    let next = scope_after_merge(cfg, &changed);
     for f in changed {
-        if live_target(cfg, &f).is_none() {
+        if live_target(cfg, &f).is_none() && live_target(&next, &f).is_none() {
             continue;
         }
         if !incoming.contains_key(&f) {
@@ -787,7 +921,7 @@ fn settle_one(
 /// Make the live file equal the repository file (or delete it).
 fn apply(
     cfg: &Config,
-    _state: &State,
+    state: &State,
     target: &Target,
     repo_path: &Path,
     r: Option<&[u8]>,
@@ -795,6 +929,7 @@ fn apply(
     match r {
         Some(bytes) => {
             write_live(cfg, target, bytes, executable(repo_path))?;
+            mark_seen(cfg, state, &[repo_path])?;
             Ok(Outcome::Done(Done::Written))
         }
         None => {

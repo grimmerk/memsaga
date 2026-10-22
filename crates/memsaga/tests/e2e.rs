@@ -1964,6 +1964,134 @@ fn sync_keeps_a_hand_added_file_settings_keys_and_executable_scripts() {
     );
 }
 
+#[test]
+fn a_file_this_machine_never_had_is_kept_not_deleted_and_a_deletion_still_counts_once_seen() {
+    // grimmerk/memsaga#22: a committed file in scope whose live copy was never
+    // on this machine (here: committed straight into the clone, as a merge
+    // from another machine would leave it) must not be recorded as deleted.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    write(
+        &fx.repo.join("claude/hooks/elsewhere.sh"),
+        "echo other machine\n",
+    );
+    git(&fx, &["add", "claude/hooks/elsewhere.sh"]);
+    git(&fx, &["commit", "-q", "-m", "from another machine"]);
+    write(&fx.claude.join("CLAUDE.md"), "# edited here\n");
+    hook(&fx, &post_tool_use(&fx.claude.join("CLAUDE.md"), "s1"));
+    hook(&fx, &stop("s1"));
+    assert!(
+        head_files(&fx)
+            .iter()
+            .any(|f| f == "claude/hooks/elsewhere.sh"),
+        "the sweep deleted a file this machine never had"
+    );
+    let v = status_json(&fx);
+    assert_eq!(
+        v["absent"],
+        serde_json::json!(["claude/hooks/elsewhere.sh"]),
+        "{v}"
+    );
+    assert!(run(&fx, &["status"]).contains("not on this machine"));
+
+    // Once it has been here, its absence is a deletion again.
+    run(&fx, &["restore", "claude/hooks/elsewhere.sh", "-y"]);
+    let live = fx.claude.join("hooks/elsewhere.sh");
+    assert!(live.exists());
+    hook(&fx, &stop("s2"));
+    fs::remove_file(&live).unwrap();
+    hook(&fx, &post_tool_use(&live, "s3"));
+    hook(&fx, &stop("s3"));
+    assert!(
+        !head_files(&fx)
+            .iter()
+            .any(|f| f == "claude/hooks/elsewhere.sh"),
+        "a deletion on a machine that had the file must still be committed"
+    );
+    assert_eq!(status_json(&fx)["absent"], serde_json::json!([]));
+}
+
+#[test]
+fn restore_recreates_a_link_to_another_tools_folder_even_when_its_target_is_missing() {
+    // grimmerk/memsaga#22: skipped, the missing link would be committed as a
+    // deletion by the next sweep and removed on every machine.
+    let fx = fixture("turn", "");
+    let target = fx.claude.parent().unwrap().join(".agents/skills/tool");
+    fs::create_dir_all(&target).unwrap();
+    write(&target.join("SKILL.md"), "tool\n");
+    let link = fx.claude.join("skills/tool");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink("../../.agents/skills/tool", &link).unwrap();
+    run(&fx, &["init", "--no-backfill"]);
+    assert!(head_files(&fx).iter().any(|f| f == "claude/skills/tool"));
+    // A second machine: no link, and the tool's folder is not there either.
+    fs::remove_file(&link).unwrap();
+    fs::remove_dir_all(&target).unwrap();
+    run(&fx, &["restore", "--all", "--at", "HEAD", "--yes"]);
+    assert_eq!(
+        fs::read_link(&link).unwrap(),
+        target,
+        "recreated with its stored target"
+    );
+    let before = commits(&fx);
+    hook(&fx, &stop("s1"));
+    assert_eq!(
+        commits(&fx),
+        before,
+        "a restored link changes nothing in the repository"
+    );
+    assert!(head_files(&fx).iter().any(|f| f == "claude/skills/tool"));
+}
+
+#[test]
+fn a_config_that_widens_the_scope_and_a_new_file_in_one_pull_reach_the_live_side() {
+    // grimmerk/memsaga#22: another machine adds a folder to `dirs` and a file in
+    // it. The merge must queue the file even though this machine's config
+    // (until the pull writes the new one) does not cover it yet.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    let cfg = fs::read_to_string(other.join("memsaga/config.toml")).unwrap();
+    let dirs = "dirs = [\"skills\", \"commands\", \"agents\", \"agent-memory\", \"rules\", \"output-styles\", \"themes\", \"workflows\", \"hooks\", \"scripts\", \"notes\"]\n";
+    write(&other.join("memsaga/config.toml"), &format!("{dirs}{cfg}"));
+    write(&other.join("claude/notes/n.md"), "a note\n");
+    git_at(&other, &["add", "-A"]);
+    git_at(&other, &["commit", "-q", "-m", "notes folder"]);
+    git_at(&other, &["push", "-q"]);
+    run(&fx, &["sync"]);
+    // The next turn runs with the new config; the file must not be taken for
+    // deleted, and the next sync brings it live.
+    hook(&fx, &stop("s1"));
+    assert!(head_files(&fx).iter().any(|f| f == "claude/notes/n.md"));
+    run(&fx, &["sync"]);
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("notes/n.md")).unwrap(),
+        "a note\n"
+    );
+}
+
+#[test]
+fn output_into_a_closed_pipe_ends_quietly_instead_of_panicking() {
+    // grimmerk/memsaga#26: `memsaga log | head` used to panic with exit 101.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("memsaga"))
+        .arg("log")
+        .env("MEMSAGA_CONFIG", &fx.cfg)
+        .env("CLAUDE_CONFIG_DIR", &fx.claude)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take()); // the reader is gone before memsaga writes
+    let out = child.wait_with_output().unwrap();
+    assert_ne!(out.status.code(), Some(101), "panicked: {out:?}");
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("panicked"),
+        "{out:?}"
+    );
+}
+
 fn hook_json(event: &str, session: &str, extra: &str) -> String {
     format!(
         "{{\"hook_event_name\":\"{event}\",\"session_id\":\"{session}\",\"cwd\":\"/h/git/a\"{extra}}}"

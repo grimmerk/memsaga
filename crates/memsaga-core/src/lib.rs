@@ -44,3 +44,14 @@ pub mod sweep;
 pub mod sync;
 
 pub use config::Config;
+
+/// Restore the default action for `SIGPIPE`, so output into a pipe the reader
+/// closed early (`memsaga log | head`) ends the process quietly, as for any
+/// Unix tool, instead of a Rust panic with exit 101 (grimmerk/memsaga#26).
+pub fn default_sigpipe() {
+    // SAFETY: called once at start-up, before any thread exists; it only
+    // resets one signal disposition.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}

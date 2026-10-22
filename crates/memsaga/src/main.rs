@@ -170,6 +170,12 @@ enum Cmd {
 
 fn main() {
     let cli = Cli::parse();
+    // A command typed in a terminal may be piped into `head`. Hooks keep Rust's
+    // default (an error on a broken pipe, not a kill), so a sweep never dies
+    // silently half-way because a git child closed its stdin early.
+    if !matches!(cli.cmd, Cmd::Hook | Cmd::Report) {
+        memsaga_core::default_sigpipe();
+    }
     let code = match run(cli) {
         Ok(()) => 0,
         Err(e) => {
@@ -972,6 +978,18 @@ fn cmd_status(n: usize, json: bool) -> Result<()> {
         );
         for (f, e) in &st.incoming {
             println!("  {f}  ({})", e.from);
+        }
+    }
+    if !st.absent.is_empty() {
+        println!(
+            "not on this machine, kept in the repository ({} file(s); `memsaga restore <path>` brings one here):",
+            st.absent.len()
+        );
+        for f in st.absent.iter().take(10) {
+            println!("  {f}");
+        }
+        if st.absent.len() > 10 {
+            println!("  … and {} more", st.absent.len() - 10);
         }
     }
     println!("recent events:");
