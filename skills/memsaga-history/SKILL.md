@@ -7,7 +7,7 @@ description: Look up the version history of Claude Code's own memory and config 
 
 Live files stay where Claude Code keeps them (`~/.claude/...`, and one directory per further
 account, such as `~/.claude-work/...`). memsaga copies an allowlist into its data repository
-(the `repo` line of `memsaga config`; `~/git/memories` in the examples below) and commits once
+(`memsaga repo` prints its path; `~/git/memories` in the examples below) and commits once
 per turn; the repo is a mirror plus whatever earlier history `memsaga init` could replay from
 transcripts. An edit made in the mirror (or on
 GitHub) is kept and waits until `memsaga sync` (or the session-start / prompt hooks) brings it
@@ -45,7 +45,7 @@ Claude session id), `Cwd:`, `Agent:`, and `Session-Title:` (full title, since 20
 
 ## Recipes (all read-only)
 
-`<repo>` below is the data repository: read it once from the `repo` line of `memsaga config`,
+`<repo>` below is the data repository: read it once with `memsaga repo`,
 then write the path itself into each command (a shell variable does not survive from one tool
 call to the next).
 

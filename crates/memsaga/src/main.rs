@@ -161,6 +161,9 @@ enum Cmd {
     },
     /// Print the slug -> real path map.
     Paths,
+    /// Print the data repository's path and nothing else, for scripts:
+    /// `cd "$(memsaga repo)"`.
+    Repo,
     /// Print the effective configuration.
     Config,
 }
@@ -446,6 +449,13 @@ fn run(cli: Cli) -> Result<()> {
                 };
                 println!("{:<7} {:<width$}  {}", c.status, c.rel, source);
             }
+            Ok(())
+        }
+        Cmd::Repo => {
+            // The pre-dispatch check has already refused a folder that is not
+            // a data repository, so this never prints a path nothing is at.
+            let cfg = Config::load()?;
+            println!("{}", cfg.repo.display());
             Ok(())
         }
         Cmd::Paths => {
