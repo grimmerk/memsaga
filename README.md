@@ -3,6 +3,10 @@
 Version control and two-way sync for the files your AI coding agent works
 with: what it remembers, how you configure it, and anything else you choose.
 
+**Website:** [memsaga.grimmer.io](https://memsaga.grimmer.io) ·
+[Install](#quick-start) · [Do you need it?](#do-you-need-memsaga) ·
+[FAQ](docs/faq.md)
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.png">
   <img src="docs/assets/hero-light.png" width="100%" alt="memsaga: three sources (Claude Code's config directory in every account, files elsewhere you choose, and content kept only in the repository) become a readable history in a git repository you own, each change named after its session, from fixing a login redirect to restoring CLAUDE.md to Monday's version. The repository syncs both ways between this machine, a private GitHub repository and another machine, and edits made on the web or a phone come back.">
