@@ -26,8 +26,8 @@ from three places, told apart by where a file lives:
    directory, a dotfile: whoever edits it, you or Claude, the change is
    committed.
 3. **Content that lives only in the repository.** It is a normal git
-   repository: add notes, companion documents (translations or annotated
-   copies of other repositories' docs), anything else; edit and push from
+   repository: add notes, companion documents (your notes, translations or
+   drafts about other repositories), anything else; edit and push from
    anywhere. memsaga commits what you add and never deletes it.
 
 At the end of every turn a hook copies what changed and commits it, one commit
@@ -40,12 +40,13 @@ phone) reaches the live files everywhere else.
 
 Status: early, in daily use by its author on macOS (CI also runs on Linux).
 Claude Code is the only source today; other agents and sources are on the
-roadmap. Contributor notes: [`docs/architecture.md`](docs/architecture.md).
+[roadmap](#roadmap). Contributor notes: [`docs/architecture.md`](docs/architecture.md).
 Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
 [`docs/design.md`](docs/design.md).
 
 ## Contents
 
+- [Do you need memsaga?](#do-you-need-memsaga)
 - [Quick start](#quick-start)
 - [What you can do with it](#what-you-can-do-with-it)
   - Claude Code's config directory
@@ -64,9 +65,10 @@ Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
   - Going further
     11. [Let Claude reorganise its memory, safely](#11-let-claude-reorganise-its-memory-safely)
 - [What memsaga does not cover, and what to use instead](#what-memsaga-does-not-cover-and-what-to-use-instead)
+- [FAQ](docs/faq.md): other ways to keep this history, compared
 - [How it works](#how-it-works)
 - [When something looks wrong](#when-something-looks-wrong)
-- [Reference](#reference): [commands](#commands), [what is mirrored](#what-is-mirrored), [memory directory names](#memory-directory-names), [configuration](#configuration), [two-way sync](#two-way-sync), [commit messages](#commit-messages), [setting up another machine](#setting-up-another-machine)
+- [Reference](#reference): [commands](#commands), [what is mirrored](#what-is-mirrored), [memory directory names](#memory-directory-names), [configuration](#configuration), [two-way sync](#two-way-sync), [commit messages](#commit-messages), [updating](#updating), [setting up another machine](#setting-up-another-machine)
 - [Tests](#tests)
 - [Roadmap](#roadmap)
 - [The name](#the-name)
@@ -75,6 +77,66 @@ Pictures: the image at the top (where files come from, and where the history
 goes), and a sequence diagram in [use case 10](#10-edit-from-anywhere) (what happens
 when a file changed elsewhere).
 
+## Do you need memsaga?
+
+**Maybe not.** If you use Claude Code with one account on one computer, a
+do-it-yourself setup gets you most of the history:
+
+1. Turn `~/.claude` into a git repository, a folder whose history git keeps
+   (`git init`).
+2. Add a `.gitignore` that lets in only what you want kept (memory,
+   `CLAUDE.md`, skills) and keeps out conversations and credentials.
+3. Add a hook that commits at the end of every reply (a `Stop` hook).
+
+memsaga does this for you, out of the box. There is no list or hook to write
+yourself: it already knows which files Claude Code reads (`CLAUDE.md`, memory,
+skills, agents, commands, rules, hooks), following Claude Code's own directory
+reference, and it leaves out credentials, conversations and caches.
+
+It also handles what the do-it-yourself setup cannot easily handle:
+
+- **A separate repository, away from the files Claude is using.** In the
+  do-it-yourself setup, Claude Code's own folder *is* the repository, so a
+  single git command run there (`git checkout`, `git clean`) or a merge
+  conflict changes the files Claude is reading. memsaga keeps its copies in a
+  normal folder you choose, such as `~/git/memories`, instead of the hidden
+  `~/.claude`, with an `index.md` that lists every project by its real folder,
+  so it is easy to browse in Finder, an editor or Obsidian.
+- **Files you choose, even outside Claude Code's folder.** Beyond the files
+  Claude Code uses, which are covered by default (above), a folder you create
+  in `~/.claude` yourself, such as `~/.claude/drafts/`, takes one line in
+  `dirs`. Outside `~/.claude`, name each file in `extra_files`,
+  such as a plan in your home directory or another tool's config file, and
+  every change to it is committed, whether you made it or Claude did
+  ([use case 5](#5-version-any-file-claude-edits-for-you)). Whole folders
+  outside `~/.claude` are not supported yet
+  ([#20](https://github.com/grimmerk/memsaga/issues/20)).
+- **Edits from anywhere, and more than one account or computer.** You can fix
+  a memory in GitHub's web editor, on a phone, or on another computer. In the
+  do-it-yourself setup, bringing such an edit back is a `git pull` that writes
+  straight into the files in use, and a conflict leaves git's markers in a file
+  Claude reads. memsaga brings the edit to the live file for you: it keeps the
+  edits made on both sides, and if both changed the same line, it stops and
+  tells you. It also tells Claude what changed. Every account lives in one
+  repository, and another computer picks up changes the next time you use
+  Claude there.
+- **Which conversation made each change.** Every commit names the conversation
+  behind it, and `claude --resume` reopens that conversation as long as Claude
+  Code keeps it: 30 days after its last use, unless you raise
+  `cleanupPeriodDays`.
+- **History from before you installed it.** memsaga rebuilds it from the edits
+  recorded in those same saved conversations.
+- **Your own documents about other projects.** Some documents are about a
+  project but must not go into its repository, for example notes on your
+  employer's code. Ask Claude for one (a note, a translation of its docs, or a
+  draft) and it is kept in memsaga's repository under `companion/`, filed by
+  the project and file it is about, so a later conversation finds it again.
+  memsaga calls these companion documents
+  ([use case 7](#7-keep-notes-beside-a-repository-without-committing-them)).
+
+Other ways to do this, compared, and the do-it-yourself setup step by step:
+[FAQ](docs/faq.md).
+
 ## Quick start
 
 You need macOS or Linux, git and Claude Code. `gh` (the GitHub command-line
@@ -82,6 +144,11 @@ tool) is optional, for creating the GitHub repository. The first line installs a
 prebuilt binary into `~/.cargo/bin` (Apple silicon and Intel Macs, Linux on
 x86_64 and arm64); to build from source instead, with Rust's `cargo`:
 `cargo install --git https://github.com/grimmerk/memsaga memsaga --locked`.
+Rather not pipe a script into `sh`? Download the archive for your platform from
+the [Releases page](https://github.com/grimmerk/memsaga/releases/latest) and
+put `memsaga` on your `PATH`. On macOS a browser marks the download as
+quarantined, and the binary is not notarized, so clear the mark once:
+`xattr -d com.apple.quarantine memsaga`.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grimmerk/memsaga/releases/latest/download/memsaga-installer.sh | sh
@@ -278,7 +345,13 @@ language, and the `companion-docs` skill puts it at
 with the rest of your memory. Before Claude summarises or translates a
 document, the skill has it check for an existing companion. `memsaga companions
 [repo]`, or `/companions` in a session, lists them with the status and source
-recorded in each one's frontmatter. The example repository has
+recorded in each one's frontmatter. That frontmatter uses the fields of the
+[Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format)
+(OKF, a Google Cloud specification for markdown knowledge files): `type`,
+`title` and `description`, a translation's source file and commit in
+`sources`, who wrote it in `generated`, and `status` (`draft`, `stable` or
+`deprecated`), so any tool that reads OKF can read a companion. Memory files, skills and `CLAUDE.md` keep their own formats. The
+example repository has
 [three of them](https://github.com/grimmerk/memsaga-example/tree/main/companion/webapp).
 
 ### 8. Two Claude Code accounts
@@ -371,7 +444,7 @@ a new hook. Try it, read the diff, keep it or roll it back.
 
 | What | Why memsaga leaves it | What to use instead |
 |---|---|---|
-| Session transcripts | Large, and mostly the content of your work rather than configuration | Raise `cleanupPeriodDays` in `settings.json` so Claude Code keeps them longer |
+| Session transcripts | Large, and mostly the content of your work rather than configuration | Raise `cleanupPeriodDays` in `settings.json` so Claude Code keeps them longer. To search or archive them, use a transcript indexer such as [funes](https://github.com/huggingface/funes) or [fable](https://github.com/grooverLab/fable) |
 | Plugins installed from a marketplace | They are packages you can install again, not files you wrote | Install them again; with `settings.json` mirrored (opt-in, `files`), its `enabledPlugins` list records which ones |
 | Hand-written Claude Code mods | Not in the default scope | Add `"mods"` to `dirs` (use case 5) to version and sync them; give a mod you share or develop seriously its own git repository too, since one commit per turn is a backup, not a development history |
 | Credentials, OAuth tokens, `~/.claude.json` | Secrets and account state must never enter a repository | Your system keychain or a password manager |
@@ -540,6 +613,20 @@ the whole title. The other lines: `Event:` (the hook or command), `Account:`
 (from `CLAUDE_CONFIG_DIR`), `Session:` (the session ID), `Cwd:` and `Agent:`.
 The prompt text is never copied into a commit.
 
+### Updating
+
+1. Run the install line from the [quick start](#quick-start) again: it
+   downloads the latest release and replaces `~/.cargo/bin/memsaga`. If you
+   built from source, add `--force` to the `cargo install` line.
+2. `memsaga install`, with `--skills` if you installed the bundled skills.
+   It is safe to run again: it updates memsaga's own hook entries in place and
+   adds any hook the new version needs. `--skills` overwrites the bundled
+   skills; if you edited one, the old text is in the history.
+
+`memsaga --version` shows what is installed. Running sessions need no restart:
+every hook starts a new process, so the next one uses the new binary. If
+several machines share one data repository, update them together.
+
 ### Setting up another machine
 
 Tested with the same user name and the same `~/git` layout:
@@ -576,8 +663,11 @@ plus unit tests for pure logic. CI runs them on Ubuntu and macOS with
 
 Plans, not promises:
 
-- More sources: other coding agents (Codex first), whole folders outside the
-  config directory, data fetched from an API.
+- More sources: other coding agents that keep memory or instruction files on
+  disk (Codex first: its opt-in memories under `~/.codex/memories/`,
+  `AGENTS.md` and skills), whole folders outside the config directory
+  ([#20](https://github.com/grimmerk/memsaga/issues/20)), and remote knowledge
+  bases, such as a server hosting a tree of markdown documents.
 - A Claude Code mod that shows the sync state in the status line, and later
   runs the hook work inside Claude Code instead of a new process per event.
 - Folder aliases for machines whose project folders differ below home

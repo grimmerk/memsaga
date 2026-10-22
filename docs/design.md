@@ -122,6 +122,20 @@ Projects that can, in principle, do "CLAUDE.md + memory + git + hook":
 
 There are also a dozen or more personal scripts with 0 to 1 stars (Appendix B). What they have in common: one author, active for a few weeks to a few months. None of them does all of "commit at once on every edit + scan every turn to catch misses + two config dirs + a browsable layout". Before trusting any of them on every edit, I would have to read all of its code. That is about as much work as writing 142 lines myself. **Decision: build our own.**
 
+**Re-checked 2026-10-23, in the code of each project:** seven newer projects that come up next to memsaga. None versions `~/.claude` itself (memory, `CLAUDE.md`, skills, hooks) or restores it; they keep a store of their own or index transcripts. Overlap with memsaga is low in every case.
+
+| Repo | Language / stars / last push | What it is | The only point near memsaga |
+|---|---|---|---|
+| huggingface/funes | Rust / 574 / 2026-10-21 | Transcript index and search (vector plus BM25), publishable as a Hugging Face Hub dataset | Reads `~/.claude/projects/` and honours `CLAUDE_CONFIG_DIR`, but only `*.jsonl` transcripts |
+| plur-ai/plur | TypeScript / 307 / 2026-10-21 | A memory store of its own ("engrams" in YAML) for several agents, injected by hooks | Git sync and snapshots, of its own YAML only; `plur audit` reads auto-memory read-only |
+| roampal-ai/roampal-core | Python / 54 / 2026-09-26 | Memory server (ChromaDB) with outcome scoring | Hooks on every turn |
+| masondelan/selvedge | Python / 25 / 2026-10-18 | Per-project log of code decisions (what changed, why, what was rejected) | Hooks on every turn; writes only project-level files |
+| lukaszraczylo/claude-mnemonic | Go / 20 / 2026-10-21 | Memory server: haiku turns tool calls into observations, SQLite with vector search | Hooks on every turn |
+| grooverLab/fable | Python / 18 / 2026-08-10 | Transcript index and permanent archive, plus a fact store | "File time-travel" replays Edit and Write calls to show past versions of a file, view only, no git |
+| sara-star-quant/presence | Python / 8 / 2026-10-18 | Per-repository notes plus a check on unverified "done" claims | Hooks on every turn; a manual tar.gz snapshot of its own state |
+
+Two of them complement memsaga directly: funes and fable do what it leaves out on purpose (searching and keeping transcripts). Several write into `~/.claude` when installed (`settings.json`, `skills/`, `CLAUDE.md`), which memsaga records like any other change.
+
 ### 3.2 Route B: `autoMemoryDirectory`
 
 Claude Code has an `autoMemoryDirectory` setting (v2.1.74+, at any settings level). It moves memory to a chosen directory. If each project's own `.claude/settings.local.json` points it at `~/git/claude-memory/<project>/`, Claude writes straight into the git repo. The hook then only needs `git commit`: no copying and no slugs.
