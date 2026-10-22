@@ -168,8 +168,9 @@ config, or a link to a tool this machine lacks would look deleted here, and
 the deletion would reach every other machine. Such files stay and are listed in
 `.git/memsaga/absent.json` (shown by `memsaga status` and refreshed by
 `memsaga diff`). A live file that exists now counts as had without being
-listed, so a copy removed while its live file is still there (an `exclude`
-added later) leaves as before. The record starts empty on every machine,
+listed, so a repository copy whose live file is still there but which left
+the scope (an `exclude` added later) is still deleted from the repository,
+as before. The record starts empty on every machine,
 an upgraded one too: the repository does not say which of its files a
 machine ever had, and assuming all of `HEAD` would delete the files it never
 had, the bug the record is there to stop. The cost is one limit: a file

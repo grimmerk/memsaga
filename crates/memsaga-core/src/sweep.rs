@@ -212,10 +212,11 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
     // is returned: what it wrote before failing is just as uncommitted.
     crate::sync::record_uncommitted(cfg, &state, &stats.written)?;
     crate::sync::mark_seen(cfg, &state, &stats.present)?;
+    refreshed?;
+    // Only after a complete mirror: a partial list would drop real entries.
     if let Some(g) = &scope.guard {
         crate::sync::save_absent(&state, &g.take_absent())?;
     }
-    refreshed?;
     let restat = stats.restat;
     // Stage into a throwaway index so new files show up in the diff without
     // touching whatever the user may have staged in the real one.
