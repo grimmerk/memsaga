@@ -216,8 +216,8 @@ safe to try.
 
 <img src="docs/assets/demo.gif" width="100%" alt="Terminal recording on example data: git log of a week of memsaga commits, each named after its session; the Session-Title and Session trailers of the commit that added a memory about the OAuth redirect; git log -S finding the session that removed a rule from CLAUDE.md and the restore that brought it back; the live CLAUDE.md with the rule again.">
 
-Every memory file, skill and your global `CLAUDE.md` gets a normal git history.
-The `git` commands in this section run inside the data repository:
+Every memory file, skill and your global `CLAUDE.md` gets a normal git history,
+in the data repository:
 
 ```sh
 cd "$(memsaga repo)"
@@ -244,9 +244,9 @@ The title and ID work in both directions:
   Its transcript is `~/.claude/projects/<slug>/<session>.jsonl`, and
   `claude --resume <session>`, run in the `Cwd:` directory, reopens it.
 - **From a conversation to its changes.** Everything one session changed:
-  `git log -p --grep 'Session: <session>'`. By title, when
+  `git -C "$(memsaga repo)" log -p --grep 'Session: <session>'`. By title, when
   you remember the topic but not the session:
-  `git log --grep 'Session-Title: .*login'`.
+  `git -C "$(memsaga repo)" log --grep 'Session-Title: .*login'`.
 
 Claude Code deletes transcripts after 30 days by default; raise
 `cleanupPeriodDays` in `settings.json` to keep them longer. The commits stay
@@ -255,12 +255,12 @@ either way.
 Three more questions that git answers directly:
 
 - **Why is this line in `CLAUDE.md`?**
-  `git blame claude/CLAUDE.md` gives the commit of each
+  `git -C "$(memsaga repo)" blame claude/CLAUDE.md` gives the commit of each
   line, and that commit's `Session:` line gives the conversation.
 - **When was a sentence added, or removed?**
-  `git log -S 'run the tests first' --oneline`
+  `git -C "$(memsaga repo)" log -S 'run the tests first' --oneline`
 - **What changed this week?**
-  `git log --since=1.week --stat`
+  `git -C "$(memsaga repo)" log --since=1.week --stat`
 
 You also see changes as they happen. After a turn that committed, the terminal
 shows one line such as `memsaga: 2 files committed (a1b2c3d)`, so a memory
@@ -648,14 +648,17 @@ Tested with the same user name and the same folder layout on both machines:
 1. Install Claude Code and sign in once, so `~/.claude` exists. Create the
    directory of every other account in your config (for example
    `~/.claude-work`); a root that does not exist is skipped, with a count.
-2. Clone the data repository to the same place as on the first machine (its
-   `repo` setting), for example
-   `git clone git@github.com:<you>/memories.git ~/git/memories` (or
-   `gh repo clone <you>/memories ~/git/memories`).
-   Do **not** run `memsaga init` there: it would commit the new machine's
-   empty state on top of your history.
-3. Install memsaga and copy the config:
-   `cp ~/git/memories/memsaga/config.toml ~/.config/memsaga/config.toml`.
+2. Clone the data repository to the same path as on the first machine
+   (`memsaga repo` prints it there), and copy its config. Do **not** run
+   `memsaga init` on the new machine: it would commit its empty state on top
+   of your history.
+
+   ```sh
+   D=~/git/memories        # the path memsaga repo prints on the first machine
+   git clone git@github.com:<you>/memories.git "$D"   # or: gh repo clone <you>/memories "$D"
+   mkdir -p ~/.config/memsaga && cp "$D/memsaga/config.toml" ~/.config/memsaga/config.toml
+   ```
+3. Install memsaga (the install line in the [quick start](#quick-start)).
 4. `memsaga restore --all --at HEAD`: read the list and the diffs, answer
    `n`; then run it again with `--yes`. Files get their content, executable
    bits and commit time back; links that share files between accounts are
@@ -663,10 +666,13 @@ Tested with the same user name and the same folder layout on both machines:
    and skipped: recreate each by hand (the same `ln -s` as on the first
    machine), or the next sweep removes it from the repository
    ([#22](https://github.com/grimmerk/memsaga/issues/22)). Nothing is deleted.
-5. Verify: `memsaga sweep --event verify` should report `no changes`, and
-   `memsaga diff --stat` should print `no changes since the last commit`.
-   `index.md` may still differ, since it is generated from this machine's
-   state ([#24](https://github.com/grimmerk/memsaga/issues/24)).
+5. Verify: `memsaga sweep --event verify` should report `no changes`, or
+   commit `index.md` alone, which is generated from this machine's state
+   ([#24](https://github.com/grimmerk/memsaga/issues/24)); then
+   `memsaga diff --stat` should print `no changes since the last commit`. If
+   the verify commit touches anything else, look at it with
+   `git -C "$(memsaga repo)" show --stat` before you start Claude Code there,
+   whose hooks push, and see the next paragraph.
 
 **A machine that ran memsaga before** (an older data repository or config):
 move the old data repository aside rather than deleting it, then do steps 2
