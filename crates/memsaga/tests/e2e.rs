@@ -2012,6 +2012,35 @@ fn a_file_this_machine_never_had_is_kept_not_deleted_and_a_deletion_still_counts
 }
 
 #[test]
+fn a_machine_without_a_record_keeps_what_it_lacks_and_still_drops_what_it_excludes() {
+    // A fresh clone, or a machine upgraded from a version without the record:
+    // nothing says which files it ever had, so a file missing live is kept
+    // (seeding the record from HEAD deleted it, grimmerk/memsaga#22), while
+    // a copy whose live file is still there leaves on a new `exclude`.
+    let old_excludes = "exclude_paths = [\"skills/synced\"]\n";
+    let fx = fixture("turn", old_excludes);
+    write(&fx.claude.join("skills/.trash/1/docx/SKILL.md"), "vendor\n");
+    run(&fx, &["init", "--no-backfill"]);
+    fs::remove_file(fx.repo.join(".git/memsaga/seen.json")).unwrap();
+    fs::remove_file(fx.claude.join("hooks/x.sh")).unwrap();
+    let cfg = fs::read_to_string(&fx.cfg).unwrap();
+    fs::write(&fx.cfg, cfg.replace(old_excludes, "")).unwrap();
+    // A preview reports the kept file too.
+    run(&fx, &["diff"]);
+    assert_eq!(
+        status_json(&fx)["absent"],
+        serde_json::json!(["claude/hooks/x.sh"])
+    );
+    run(&fx, &["sweep"]);
+    let files = head_files(&fx);
+    assert!(files.iter().any(|f| f == "claude/hooks/x.sh"), "{files:?}");
+    assert!(
+        !files.iter().any(|f| f.contains("skills/.trash")),
+        "{files:?}"
+    );
+}
+
+#[test]
 fn restore_recreates_a_link_to_another_tools_folder_even_when_its_target_is_missing() {
     // grimmerk/memsaga#22: skipped, the missing link would be committed as a
     // deletion by the next sweep and removed on every machine.
@@ -2085,11 +2114,8 @@ fn output_into_a_closed_pipe_ends_quietly_instead_of_panicking() {
         .unwrap();
     drop(child.stdout.take()); // the reader is gone before memsaga writes
     let out = child.wait_with_output().unwrap();
-    assert_ne!(out.status.code(), Some(101), "panicked: {out:?}");
-    assert!(
-        !String::from_utf8_lossy(&out.stderr).contains("panicked"),
-        "{out:?}"
-    );
+    assert_eq!(out.status.code(), Some(141), "{out:?}");
+    assert!(out.stderr.is_empty(), "{out:?}");
 }
 
 fn hook_json(event: &str, session: &str, extra: &str) -> String {

@@ -75,7 +75,7 @@ enum Cmd {
         #[arg(long, short = 'y')]
         yes: bool,
         /// Restore every file of every root as it was at --at. Overwrites
-        /// differing files, never deletes, skips symlinks.
+        /// differing files, never deletes, recreates links as they are.
         #[arg(long)]
         all: bool,
     },
@@ -170,12 +170,7 @@ enum Cmd {
 
 fn main() {
     let cli = Cli::parse();
-    // A command typed in a terminal may be piped into `head`. Hooks keep Rust's
-    // default (an error on a broken pipe, not a kill), so a sweep never dies
-    // silently half-way because a git child closed its stdin early.
-    if !matches!(cli.cmd, Cmd::Hook | Cmd::Report) {
-        memsaga_core::default_sigpipe();
-    }
+    memsaga_core::quiet_broken_pipe();
     let code = match run(cli) {
         Ok(()) => 0,
         Err(e) => {

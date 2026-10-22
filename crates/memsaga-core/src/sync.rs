@@ -10,10 +10,11 @@
 //! - `settle`: the three-way decision per incoming file (step 2).
 //! - `check_remote`: the throttled "did origin move?" question the mod asks (3).
 
-use crate::config::{config_path, Config};
+use crate::config::{config_path, Config, Root};
 use crate::git::Git;
 use crate::mirror::{extra_repo_rel, strip_settings};
 use crate::restore::{self, Located};
+use crate::roots;
 use crate::state::{self, Event, State};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -104,32 +105,17 @@ const UNCOMMITTED: &str = "preview.json";
 /// otherwise it was simply never here (a fresh clone, a folder another
 /// machine added to the config, a link to a tool this machine lacks), and
 /// deleting it would delete it on every machine (grimmerk/memsaga#22).
+/// A live file that exists now counts as had without being listed (see
+/// `Guard::had_live`), so the record starts empty on every machine, an
+/// upgraded one included: nothing in the repository says which of its files
+/// a machine ever had, and guessing (all of `HEAD`) is the #22 bug again.
 const SEEN: &str = "seen.json";
 
-/// The record, or, when there is none yet: everything under a root at HEAD if
-/// this machine has swept before (it has been mirroring all along, so an
-/// upgrade keeps propagating deletions), else nothing (a fresh clone).
-pub fn load_seen(cfg: &Config, state: &State) -> BTreeSet<String> {
-    if let Some(set) = std::fs::read_to_string(state.marker(SEEN))
+/// The record; empty when there is none yet.
+pub fn load_seen(state: &State) -> BTreeSet<String> {
+    std::fs::read_to_string(state.marker(SEEN))
         .ok()
-        .and_then(|t| serde_json::from_str::<BTreeSet<String>>(&t).ok())
-    {
-        return set;
-    }
-    if !state.exists("last-sweep") {
-        return BTreeSet::new();
-    }
-    let labels: Vec<&str> = cfg.roots.iter().map(|r| r.label.as_str()).collect();
-    let mut args = vec!["ls-files", "-z", "--"];
-    args.extend(labels.iter().copied());
-    Git::new(&cfg.repo)
-        .run_ok(&args)
-        .map(|out| {
-            out.split('\0')
-                .filter(|s| !s.is_empty())
-                .map(String::from)
-                .collect()
-        })
+        .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()
 }
 
@@ -139,7 +125,7 @@ pub fn mark_seen<P: AsRef<Path>>(cfg: &Config, state: &State, paths: &[P]) -> Re
     if paths.is_empty() {
         return Ok(());
     }
-    let mut seen = load_seen(cfg, state);
+    let mut seen = load_seen(state);
     let before = seen.len();
     for p in paths {
         let p = p.as_ref();
@@ -403,6 +389,8 @@ pub struct Guard {
     uncommitted: BTreeMap<String, String>,
     /// Repository paths whose live file this machine has had (`load_seen`).
     seen: BTreeSet<String>,
+    /// The roots, to find a repository path's live file (`had_live`).
+    roots: Vec<Root>,
     /// Paths a removal was refused for because this machine never had them.
     absent: RefCell<BTreeSet<String>>,
 }
@@ -416,9 +404,31 @@ impl Guard {
             found: RefCell::new(BTreeMap::new()),
             settings_ignore_keys: cfg.settings_ignore_keys.clone(),
             uncommitted: load_uncommitted(&State::new(cfg.state_dir())),
-            seen: load_seen(cfg, &State::new(cfg.state_dir())),
+            seen: load_seen(&State::new(cfg.state_dir())),
+            roots: cfg.roots.clone(),
             absent: RefCell::new(BTreeSet::new()),
         }
+    }
+
+    /// Has this machine had the live file of repository path `rel`? Listed in
+    /// the record, or there now: a copy removed while its live file exists
+    /// (an `exclude` added later) is no file this machine lacks.
+    fn had_live(&self, rel: &str) -> bool {
+        if self.seen.contains(rel) {
+            return true;
+        }
+        let rel = Path::new(rel);
+        let mut comps = rel.components();
+        let Some(label) = comps.next() else {
+            return false;
+        };
+        self.roots
+            .iter()
+            .find(|r| Path::new(&r.label) == Path::new(label.as_os_str()))
+            .is_some_and(|r| {
+                let live = r.path.join(roots::live_rel_of_repo(comps.as_path()));
+                live.symlink_metadata().is_ok()
+            })
     }
 
     /// May the mirror replace the repository file `dst` with the content of
@@ -510,7 +520,7 @@ impl Guard {
             // A path this machine never had live is not a deletion here.
             let rel = e.path().strip_prefix(&self.repo).unwrap_or(e.path());
             let rel = rel.to_string_lossy().to_string();
-            if need_seen && !self.seen.contains(&rel) {
+            if need_seen && !self.had_live(&rel) {
                 self.absent.borrow_mut().insert(rel);
                 ok = false;
             }
