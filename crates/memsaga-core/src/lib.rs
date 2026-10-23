@@ -17,6 +17,7 @@
 //! - `git`      thin wrapper around the system `git` binary
 //! - `state`    small files under `.git/memsaga/`: lock, markers, events log
 //! - `status`   the read-only state report behind `status` and `status --json`
+//! - `differences` where this machine differs from the repository (status, restore)
 //! - `sweep`    the orchestration: lock, mirror, index, commit, events
 //! - `sync`     repository-side edits back to the live files (two-way sync)
 //! - `hook`     parsing a hook event and deciding what to do
@@ -29,6 +30,7 @@
 pub mod backfill;
 pub mod companion;
 pub mod config;
+pub mod differences;
 pub mod git;
 pub mod hook;
 pub mod index;

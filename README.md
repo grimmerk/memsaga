@@ -484,7 +484,11 @@ More: [`docs/architecture.md`](docs/architecture.md).
 
 - `memsaga status` shows the last sweep, the push state (a failed or deferred
   push, and why), files waiting to come in from elsewhere, and a missing config
-  file.
+  file. It also lists where this machine differs from the repository: files
+  it never had (kept, not deleted), a folder where the repository has a link
+  (nothing under it is mirrored, so nothing is written through the link),
+  folders the repository has that this machine's config does not mirror, and
+  scripts that `settings.json` runs but this machine lacks.
 - A hook never stops a turn. Its errors go to
   `<data repository>/.git/memsaga/memsaga.log`,
   and every sweep, push and merge to `events.jsonl` next to it.
@@ -502,11 +506,11 @@ More: [`docs/architecture.md`](docs/architecture.md).
 
 | Command | What it does |
 |---|---|
-| `memsaga status [--json]` | Last sweep, pending dirty marker, push state (including a failing or deferred push), a missing config file, files the repository has that this machine never had (kept, not deleted), recent events; `--json` prints the same as one object for scripts and tools. Read-only |
+| `memsaga status [--json]` | Last sweep, pending dirty marker, push state (including a failing or deferred push), a missing config file, where this machine differs from the repository (files it never had, a folder where the repository has a link, folders its config does not mirror, missing hook scripts), recent events; `--json` prints the same as one object for scripts and tools. Read-only |
 | `memsaga log` | Recent commits |
 | `memsaga diff [--stat]` | What the next sweep would commit (refreshes the mirror, commits nothing) |
 | `memsaga restore <path> [--at <rev>] [-y]` | Copy one file from history back to its live location, diff first |
-| `memsaga restore --all --at <rev>` | Every mirrored (in-scope) file of every root as it was at `<rev>`: overwrites what differs, never deletes, recreates links as they are (never writes through one), keeps the live `settings_ignore_keys`; shows the diffs, one confirmation |
+| `memsaga restore --all --at <rev> [--prune]` | Every mirrored (in-scope) file of every root as it was at `<rev>`: overwrites what differs, never deletes, recreates links as they are (never writes through one), keeps the live `settings_ignore_keys`; shows the diffs, one confirmation. Lists live files in scope that `<rev>` does not have; `--prune` moves them to `<data repository>/.git/memsaga/stale/<time>/` instead of leaving them. Ends with the same differences `status` lists |
 | `memsaga sweep` | Mirror and commit now |
 | `memsaga push` | Push to `origin` now (pushes also happen on `Stop`, throttled, and on `SessionEnd`); a push rejected because origin moved merges origin first |
 | `memsaga sync [--take live\|repo <path>]` | Both directions: commit live changes, merge origin, bring repository-side edits to the live files, commit, push |
@@ -667,27 +671,35 @@ Tested with the same user name and the same folder layout on both machines:
    `n`; then run it again with `--yes`. Files get their content, executable
    bits and commit time back; links that share files between accounts are
    recreated, and so are links to another tool's folder, as they are, even
-   when that folder is not on this machine yet. Nothing is deleted.
-5. Verify: `memsaga sweep --event verify` should report `no changes`, or
-   commit `index.md` alone, which is generated from this machine's state
-   ([#24](https://github.com/grimmerk/memsaga/issues/24)); then
+   when that folder is not on this machine yet. Nothing is deleted. The
+   restore ends with what still differs: folders the repository has that
+   your config does not mirror (copy the config, step 2), and scripts that
+   `settings.json` runs but this machine lacks.
+5. Verify: `memsaga sweep --event verify` should report `no changes`; then
    `memsaga diff --stat` should print `no changes since the last commit`. If
-   the verify commit touches anything else, look at it with
+   the verify sweep commits anything, look at it with
    `git -C "$(memsaga repo)" show --stat` before you start Claude Code there,
    whose hooks push, and see the next paragraph.
 
 **A machine that ran memsaga before** (an older data repository or config):
 move the old data repository aside rather than deleting it, then do steps 2
-to 5. `restore --all` never deletes, so a live file that the other machine
-has removed since stays here, and the verify sweep commits it back. Look at
-that commit (`git -C "$(memsaga repo)" show --stat`) before you start Claude Code
-there, since its hooks push. Move such files aside, then drop the commit with
-`git -C "$(memsaga repo)" reset --hard @{u}` and verify again
-([#23](https://github.com/grimmerk/memsaga/issues/23)).
+to 5. Live files from before may still be there after the other machine
+removed or moved them: a memory file moved to another project, a folder
+that became a link. `restore --all` lists them as not in the repository and
+leaves them, since on any other machine such a file may simply be new; add
+`--prune` to move them to `<data repository>/.git/memsaga/stale/<time>/`
+(nothing is deleted), which also lets a link come back where an old folder
+stood. Until then a folder where the repository has a link is left alone by
+every sweep, and `memsaga status` lists it.
 
 If `settings.json` is in your `files` (it is not by default), restoring it
 also registers the hooks, so new sessions on that machine start committing at
-once; otherwise run `memsaga install` after the restore.
+once; otherwise run `memsaga install` after the restore. The hooks may run
+scripts from outside memsaga's scope (another tool's status hook, for
+example); `restore` and `memsaga status` name any that this machine lacks.
+Add such a script to `files` on the machine that has it, or install the tool
+that writes it. Do not remove the hook on the machine that lacks it: two-way
+sync would remove it on every machine.
 
 ## Tests
 

@@ -180,7 +180,7 @@ pub fn refresh_mirror(cfg: &Config, scope: &Scope, stats: &mut mirror::Stats) ->
             .with_context(|| format!("mirroring {}", root.path.display()))?;
     }
     mirror::sync_self_and_extras(scope, stats)?;
-    index::write_index(cfg, scope)?;
+    index::write_index(cfg)?;
     Ok(())
 }
 
@@ -217,6 +217,7 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
     if let Some(g) = &scope.guard {
         crate::sync::save_absent(&state, &g.take_absent())?;
     }
+    crate::sync::save_link_over_folder(&state, &scope.take_link_over_folder())?;
     let restat = stats.restat;
     // Stage into a throwaway index so new files show up in the diff without
     // touching whatever the user may have staged in the real one.
@@ -315,12 +316,15 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     // is a deletion (grimmerk/memsaga#22).
     crate::sync::mark_seen(cfg, &state, &stats.present)?;
     refreshed?;
+    // The index in the clone now has those dates; later indexes carry them.
+    crate::index::clear_merged(&state);
     if let Some(g) = &scope.guard {
         if crate::sync::record_hand_edits(&mut incoming, g.take_found()) > 0 {
             crate::sync::save_incoming(&state, &incoming)?;
         }
         crate::sync::save_absent(&state, &g.take_absent())?;
     }
+    crate::sync::save_link_over_folder(&state, &scope.take_link_over_folder())?;
     git.add_renormalize(&stats.restat)?;
     let changed = git.add_all_and_check()?;
     let mut out = Outcome {

@@ -8,7 +8,26 @@
 
 use crate::config::{Config, Root};
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+/// The outermost symlink strictly between `repo` and `p` (a path inside the
+/// repository), if any: a write or read of `p` would go wherever it points.
+pub fn link_above(repo: &Path, p: &Path) -> Option<PathBuf> {
+    let mut found = None;
+    for a in p.ancestors().skip(1) {
+        if a == repo || !a.starts_with(repo) {
+            break;
+        }
+        if a.symlink_metadata()
+            .is_ok_and(|m| m.file_type().is_symlink())
+        {
+            found = Some(a.to_path_buf());
+        }
+    }
+    found
+}
 
 /// One thing to mirror from a root: a top-level file, a top-level directory,
 /// or a project's memory directory.
@@ -219,6 +238,9 @@ pub struct Scope<'a> {
     /// During a sweep: which repository files the mirror must leave alone
     /// (`sync::Guard`). None everywhere else.
     pub guard: Option<crate::sync::Guard>,
+    /// Repository links (repo-relative) the mirror did not write under,
+    /// because the live side has a folder there (grimmerk/memsaga#29).
+    link_over_folder: RefCell<BTreeSet<String>>,
 }
 
 impl<'a> Scope<'a> {
@@ -229,6 +251,7 @@ impl<'a> Scope<'a> {
             exclude_projects: build_globset(&cfg.exclude_projects),
             exclude_paths: build_globset(&cfg.exclude_paths),
             guard: None,
+            link_over_folder: RefCell::new(BTreeSet::new()),
         }
     }
 
@@ -240,21 +263,52 @@ impl<'a> Scope<'a> {
     /// May the mirror overwrite `dst` (a repository path) with what it makes of
     /// `src` (None for a symlink)? Always, without a guard.
     pub fn may_write(&self, dst: &Path, src: Option<&Path>) -> bool {
-        self.guard.as_ref().is_none_or(|g| g.allows_write(dst, src))
+        !self.through_link(dst) && self.guard.as_ref().is_none_or(|g| g.allows_write(dst, src))
     }
 
     /// May the mirror delete `path` and everything under it?
     pub fn may_remove(&self, path: &Path) -> bool {
-        self.guard.as_ref().is_none_or(|g| g.allows_remove(path))
+        !self.through_link(path) && self.guard.as_ref().is_none_or(|g| g.allows_remove(path))
     }
 
     /// May the mirror delete `path`, a repository copy that moved (an older
     /// layout, a memory directory under its older name) rather than a live
     /// file that vanished? The same checks without "has this machine had it".
     pub fn may_remove_moved(&self, path: &Path) -> bool {
-        self.guard
-            .as_ref()
-            .is_none_or(|g| g.allows_remove_moved(path))
+        !self.through_link(path)
+            && self
+                .guard
+                .as_ref()
+                .is_none_or(|g| g.allows_remove_moved(path))
+    }
+
+    /// Does repository path `p` lie under a symlink inside the repository?
+    /// Then a write or a deletion there would land wherever the link points,
+    /// which for a link to another folder of a root is a live folder
+    /// (grimmerk/memsaga#29). The link found is recorded.
+    pub fn through_link(&self, p: &Path) -> bool {
+        match link_above(&self.cfg.repo, p) {
+            Some(link) => {
+                self.note_link_over_folder(&link);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Record a repository link whose live side is a folder.
+    pub fn note_link_over_folder(&self, link: &Path) {
+        let rel = link.strip_prefix(&self.cfg.repo).unwrap_or(link);
+        self.link_over_folder
+            .borrow_mut()
+            .insert(rel.to_string_lossy().to_string());
+    }
+
+    /// The links recorded so far.
+    pub fn take_link_over_folder(&self) -> Vec<String> {
+        std::mem::take(&mut *self.link_over_folder.borrow_mut())
+            .into_iter()
+            .collect()
     }
 
     /// Is a file name excluded (matched against the basename only)?

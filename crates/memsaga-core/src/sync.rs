@@ -142,19 +142,41 @@ pub fn mark_seen<P: AsRef<Path>>(cfg: &Config, state: &State, paths: &[P]) -> Re
 /// the last sweep found them; `memsaga status` lists them.
 const ABSENT: &str = "absent.json";
 
+/// Repository links under which the last sweep mirrored nothing, because the
+/// live side has a folder there (grimmerk/memsaga#29); `memsaga status` lists
+/// them.
+const LINK_OVER_FOLDER: &str = "link-over-folder.json";
+
 pub fn load_absent(state: &State) -> Vec<String> {
-    std::fs::read_to_string(state.marker(ABSENT))
+    load_list(state, ABSENT)
+}
+
+pub fn save_absent(state: &State, absent: &[String]) -> Result<()> {
+    save_list(state, ABSENT, absent)
+}
+
+pub fn load_link_over_folder(state: &State) -> Vec<String> {
+    load_list(state, LINK_OVER_FOLDER)
+}
+
+pub fn save_link_over_folder(state: &State, links: &[String]) -> Result<()> {
+    save_list(state, LINK_OVER_FOLDER, links)
+}
+
+fn load_list(state: &State, name: &str) -> Vec<String> {
+    std::fs::read_to_string(state.marker(name))
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()
 }
 
-pub fn save_absent(state: &State, absent: &[String]) -> Result<()> {
-    if absent.is_empty() {
-        state.remove(ABSENT);
+/// Written as the last complete mirror found it; removed when empty.
+fn save_list(state: &State, name: &str, list: &[String]) -> Result<()> {
+    if list.is_empty() {
+        state.remove(name);
         return Ok(());
     }
-    state.write_marker(ABSENT, &serde_json::to_string(absent)?)
+    state.write_marker(name, &serde_json::to_string(list)?)
 }
 
 pub fn load_uncommitted(state: &State) -> BTreeMap<String, String> {
@@ -678,6 +700,7 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .collect();
+    crate::index::note_merged(&state, &changed)?;
     let mut incoming = load_incoming(&state);
     let mut files = Vec::new();
     let next = scope_after_merge(cfg, &changed);
@@ -869,6 +892,11 @@ fn settle_one(
         }
     }
     let repo_path = cfg.repo.join(rel);
+    // Under a link in the repository the "repository file" is whatever the
+    // link points at, often a live file (grimmerk/memsaga#29).
+    if roots::link_above(&cfg.repo, &repo_path).is_some() {
+        return Ok(Outcome::Skip("inside a link in the repository".into()));
+    }
     let repo_meta = std::fs::symlink_metadata(&repo_path).ok();
     if repo_meta.as_ref().is_some_and(|m| !m.is_file()) {
         return Ok(Outcome::Skip("not a regular file in the repository".into()));

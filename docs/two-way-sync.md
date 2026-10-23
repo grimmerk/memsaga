@@ -345,12 +345,17 @@ so they can be called from a mod unchanged.
 
 ## 8. Edge cases
 
-- **Generated files.** `index.md` and `paths.json` are rebuilt by every sweep.
-  In a merge conflict memsaga keeps its own version, and the next sweep
-  rebuilds them from both sides' files; they never go on the incoming list.
+- **Generated files.** `index.md` and `paths.json` are rebuilt by every sweep,
+  from the repository rather than from live files, so two machines write the
+  same `index.md` for the same repository state. In a merge conflict memsaga
+  keeps its own version, and the next sweep rebuilds them from both sides'
+  files, looking up the date of every memory folder the merge changed; they
+  never go on the incoming list.
 - **Symlinks in the repository** (a second account sharing a file with the
-  first) are skipped by pull, as `restore --all` already does for external
-  links.
+  first) are skipped by pull; `restore --all` recreates them as they are. A
+  sweep never writes through one: where the live side has a folder instead,
+  nothing under it is mirrored and `memsaga status` lists it
+  (grimmerk/memsaga#29).
 - **Deletions.** A file deleted on the repository side has R missing. With
   L == B the live file is deleted and the deletion is listed in the output;
   with L != B it is a conflict.
