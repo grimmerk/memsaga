@@ -86,18 +86,21 @@ pub struct PlannedFile {
 pub struct PlannedLink {
     pub live: PathBuf,
     pub target: PathBuf,
+    /// Where the link is stored in the repository.
+    pub repo_rel: PathBuf,
 }
 
 /// What `restore --all` would do at `rev`: every blob under a root's subtree
 /// whose content differs from the live file (or which is missing live).
-/// Symlinks and paths outside the allowlist are counted and skipped; nothing
-/// is ever deleted.
+/// Links are recreated where nothing is in the way; paths outside the
+/// allowlist are counted and skipped; nothing is ever deleted.
 #[derive(Debug, Default)]
 pub struct Plan {
     pub changed: Vec<PlannedFile>,
     pub identical: usize,
-    /// Symlinks not restored: pointing outside every root, or the live path
-    /// already holds something else (never overwritten).
+    /// Symlinks not restored: a relative link that resolves outside every
+    /// root, or the live path already holds something else (never
+    /// overwritten).
     pub symlinks: usize,
     pub skipped: usize,
     /// Cross-root symlinks to create.
@@ -186,15 +189,36 @@ enum LinkPlan {
     Skip,
 }
 
-/// Decide what to do with a symlink stored at `path` in the tree. Only a
-/// relative link that lands inside another root's subtree is restorable;
-/// an absolute link points outside the mirror (another tool's directory)
-/// and is left to the user.
+/// Decide what to do with a symlink stored at `path` in the tree: a relative
+/// link that lands inside another root's subtree, or an absolute link to
+/// another tool's directory (recreated as it is), unless the live path already
+/// holds something else.
 fn plan_link(cfg: &Config, git: &Git, rev: &str, path: &str) -> Result<LinkPlan> {
     let raw = git.run_ok(&["cat-file", "blob", &format!("{rev}:{path}")])?;
     let target = Path::new(raw.trim_end_matches('\n'));
     if target.is_absolute() {
-        return Ok(LinkPlan::Skip);
+        // A link to another tool's folder (the mirror stores such a link with
+        // its absolute target). Recreate it as it is, even when the target is
+        // not on this machine: left out, the next sweep would record its
+        // absence as a deletion (grimmerk/memsaga#22).
+        let Ok(link) = locate(cfg, path) else {
+            return Ok(LinkPlan::Skip);
+        };
+        return Ok(match std::fs::symlink_metadata(&link.live) {
+            Ok(m) if m.file_type().is_symlink() => {
+                if std::fs::read_link(&link.live)? == target {
+                    LinkPlan::Identical
+                } else {
+                    LinkPlan::Skip
+                }
+            }
+            Ok(_) => LinkPlan::Skip, // a real file or directory: never replaced
+            Err(_) => LinkPlan::Create(PlannedLink {
+                live: link.live,
+                target: target.to_path_buf(),
+                repo_rel: PathBuf::from(path),
+            }),
+        });
     }
     let repo_target = crate::mirror::normalize(
         &Path::new(path)
@@ -221,6 +245,7 @@ fn plan_link(cfg: &Config, git: &Git, rev: &str, path: &str) -> Result<LinkPlan>
         Err(_) => Ok(LinkPlan::Create(PlannedLink {
             live: link.live,
             target: dest.live,
+            repo_rel: PathBuf::from(path),
         })),
     }
 }
@@ -498,6 +523,7 @@ pub fn write_live_batch(
         }
         std::os::unix::fs::symlink(&l.target, &l.live)
             .with_context(|| format!("linking {} -> {}", l.live.display(), l.target.display()))?;
+        crate::sync::mark_seen(cfg, &state, &[&l.repo_rel])?;
     }
     if !links.is_empty() {
         state.write_dirty(&format!("{} restore {} links", state::now_rfc3339(), rev))?;
@@ -532,6 +558,7 @@ fn write_one(
         std::fs::set_permissions(&tmp, perm)?;
     }
     std::fs::rename(&tmp, &dest).with_context(|| format!("writing {}", dest.display()))?;
+    crate::sync::mark_seen(cfg, state, &[&loc.repo_rel])?;
     if let Some(t) = committed_at(cfg, &loc.repo_rel, rev) {
         if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&dest) {
             let _ = f.set_modified(t);

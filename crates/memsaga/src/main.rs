@@ -75,7 +75,7 @@ enum Cmd {
         #[arg(long, short = 'y')]
         yes: bool,
         /// Restore every file of every root as it was at --at. Overwrites
-        /// differing files, never deletes, skips symlinks.
+        /// differing files, never deletes, recreates links as they are.
         #[arg(long)]
         all: bool,
     },
@@ -170,6 +170,7 @@ enum Cmd {
 
 fn main() {
     let cli = Cli::parse();
+    memsaga_core::quiet_broken_pipe();
     let code = match run(cli) {
         Ok(()) => 0,
         Err(e) => {
@@ -972,6 +973,18 @@ fn cmd_status(n: usize, json: bool) -> Result<()> {
         );
         for (f, e) in &st.incoming {
             println!("  {f}  ({})", e.from);
+        }
+    }
+    if !st.absent.is_empty() {
+        println!(
+            "not on this machine, kept in the repository ({} file(s); `memsaga restore <path>` brings one here):",
+            st.absent.len()
+        );
+        for f in st.absent.iter().take(10) {
+            println!("  {f}");
+        }
+        if st.absent.len() > 10 {
+            println!("  … and {} more", st.absent.len() - 10);
         }
     }
     println!("recent events:");

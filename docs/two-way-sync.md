@@ -159,6 +159,30 @@ hand edit made since the last sweep reaches the live file before it is used.
 A deletion made by hand in the clone is not detected: the next sweep copies
 the live file back. Delete on the live side, or on GitHub.
 
+The guard also refuses to delete a repository file whose live copy this
+machine never had (grimmerk/memsaga#22). Each machine keeps
+`.git/memsaga/seen.json`, the repository paths whose live file it has had: the
+mirror adds every file it finds live, and `restore` and a pull add what they
+write. Without the record a fresh clone, a folder another machine added to the
+config, or a link to a tool this machine lacks would look deleted here, and
+the deletion would reach every other machine. Such files stay and are listed in
+`.git/memsaga/absent.json` (shown by `memsaga status` and refreshed by
+`memsaga diff`). A live file that exists now counts as had without being
+listed, so a repository copy whose live file is still there but which left
+the scope (an `exclude` added later) is still deleted from the repository,
+as before. The record starts empty on every machine,
+an upgraded one too: the repository does not say which of its files a
+machine ever had, and assuming all of `HEAD` would delete the files it never
+had, the bug the record is there to stop. The cost is one limit: a file
+deleted live after the last sweep of an older version and before the first
+sweep of this one is kept and listed as absent; restore it and delete it
+again, or delete it on GitHub, to delete it everywhere. A copy that moved within the
+repository (an older layout, a memory directory under its older name) is
+removed without this check. When a merge changes `memsaga/config.toml`, the
+files it brings are chosen with the merged config's scope as well, so a file
+only the new scope covers is queued and written live once the new config is
+in place.
+
 ## 5. The incoming list
 
 `.git/memsaga/incoming.json`, written only while the sweep lock is held:

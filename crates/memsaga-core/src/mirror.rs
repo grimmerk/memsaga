@@ -28,6 +28,9 @@ pub struct Stats {
     /// Every repository file a copy created or replaced (not links or
     /// deletions): what a `diff` preview leaves uncommitted in the clone.
     pub written: Vec<PathBuf>,
+    /// Every repository file or link whose live source exists now, changed or
+    /// not: what this machine has had (`sync::mark_seen`).
+    pub present: Vec<PathBuf>,
 }
 
 impl Stats {
@@ -37,6 +40,7 @@ impl Stats {
         self.linked += o.linked;
         self.restat.extend(o.restat);
         self.written.extend(o.written);
+        self.present.extend(o.present);
     }
 
     fn count(&mut self, c: Copied, dst: &Path) {
@@ -169,12 +173,14 @@ fn sync_entry(
         Err(_) => return Ok(()),
     };
     if meta.file_type().is_symlink() {
+        stats.present.push(dst.clone());
         if scope.may_write(&dst, None) {
             stats.linked += mirror_symlink(scope, &src, &dst, repo)?;
         }
         return Ok(());
     }
     if meta.is_file() {
+        stats.present.push(dst.clone());
         if let Some(p) = dst.parent() {
             fs::create_dir_all(p)?;
         }
@@ -244,6 +250,9 @@ pub fn sync_dir(
         let target = dst.join(rel);
         keep.insert(target.clone());
         let ft = item.file_type();
+        if !ft.is_dir() {
+            stats.present.push(target.clone());
+        }
         if ft.is_dir() {
             fs::create_dir_all(&target)?;
         } else if ft.is_symlink() {
@@ -469,7 +478,7 @@ fn replace_symlink(dst: &Path, link: &Path) -> Result<bool> {
 fn prune_memory(scope: &Scope, root: &Root, repo: &Path, entries: &[Entry]) -> Result<Stats> {
     let mut stats = Stats::default();
     let legacy = repo.join(&root.label).join("projects");
-    if legacy.symlink_metadata().is_ok() && scope.may_remove(&legacy) {
+    if legacy.symlink_metadata().is_ok() && scope.may_remove_moved(&legacy) {
         remove_any(&legacy)?;
         stats.deleted += 1;
     }
@@ -487,7 +496,18 @@ fn prune_memory(scope: &Scope, root: &Root, repo: &Path, entries: &[Entry]) -> R
     if let Ok(rd) = fs::read_dir(&projects) {
         for e in rd.filter_map(|e| e.ok()) {
             let name = e.file_name().to_string_lossy().to_string();
-            if !live.contains(name.as_str()) && scope.may_remove(&e.path()) {
+            if live.contains(name.as_str()) {
+                continue;
+            }
+            // Under an older name of a directory that is live under its new
+            // one: a move. Otherwise the memory is gone, or excluded.
+            let moved = live.contains(crate::roots::repo_name_of_slug(&name).as_str());
+            let allowed = if moved {
+                scope.may_remove_moved(&e.path())
+            } else {
+                scope.may_remove(&e.path())
+            };
+            if allowed {
                 remove_any(&e.path())?;
                 stats.deleted += 1;
             }

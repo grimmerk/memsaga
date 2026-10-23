@@ -44,3 +44,25 @@ pub mod sweep;
 pub mod sync;
 
 pub use config::Config;
+
+/// Output into a pipe the reader closed early (`memsaga log | head`) ends the
+/// process quietly with 141, the status a Unix tool killed by `SIGPIPE`
+/// reports, instead of a Rust panic with exit 101 (grimmerk/memsaga#26).
+/// Only `print!` into stdout is caught: `SIGPIPE` itself stays ignored, so a
+/// git child that closes its stdin early is an error memsaga handles, not a
+/// signal that kills a sweep half-way.
+pub fn quiet_broken_pipe() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = info
+            .payload()
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| info.payload().downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        if msg.starts_with("failed printing to stdout") && msg.contains("Broken pipe") {
+            std::process::exit(141);
+        }
+        default(info);
+    }));
+}

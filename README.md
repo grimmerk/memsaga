@@ -502,11 +502,11 @@ More: [`docs/architecture.md`](docs/architecture.md).
 
 | Command | What it does |
 |---|---|
-| `memsaga status [--json]` | Last sweep, pending dirty marker, push state (including a failing or deferred push), a missing config file, recent events; `--json` prints the same as one object for scripts and tools. Read-only |
+| `memsaga status [--json]` | Last sweep, pending dirty marker, push state (including a failing or deferred push), a missing config file, files the repository has that this machine never had (kept, not deleted), recent events; `--json` prints the same as one object for scripts and tools. Read-only |
 | `memsaga log` | Recent commits |
 | `memsaga diff [--stat]` | What the next sweep would commit (refreshes the mirror, commits nothing) |
 | `memsaga restore <path> [--at <rev>] [-y]` | Copy one file from history back to its live location, diff first |
-| `memsaga restore --all --at <rev>` | Every mirrored (in-scope) file of every root as it was at `<rev>`: overwrites what differs, never deletes, skips symlinks, keeps the live `settings_ignore_keys`; shows the diffs, one confirmation |
+| `memsaga restore --all --at <rev>` | Every mirrored (in-scope) file of every root as it was at `<rev>`: overwrites what differs, never deletes, recreates links as they are (never writes through one), keeps the live `settings_ignore_keys`; shows the diffs, one confirmation |
 | `memsaga sweep` | Mirror and commit now |
 | `memsaga push` | Push to `origin` now (pushes also happen on `Stop`, throttled, and on `SessionEnd`); a push rejected because origin moved merges origin first |
 | `memsaga sync [--take live\|repo <path>]` | Both directions: commit live changes, merge origin, bring repository-side edits to the live files, commit, push |
@@ -613,6 +613,10 @@ sides changed different lines (or made the same change), the texts are merged;
 conflicting edits to the same lines are left alone and reported, and
 `memsaga sync --take live|repo <path>` settles one by picking a side. A file
 deleted in the repository is deleted live when the live file was unchanged.
+The other way round, a live file counts as deleted only on a machine that has
+had it: a file the repository has but this machine never had (a fresh clone, a
+folder another machine added to the config) is kept, and `memsaga status`
+lists it.
 
 The three synchronous hooks of use case 10 ask origin at most once a minute per
 machine, and before a Write or Edit at most every ten seconds. Design and
@@ -662,10 +666,8 @@ Tested with the same user name and the same folder layout on both machines:
 4. `memsaga restore --all --at HEAD`: read the list and the diffs, answer
    `n`; then run it again with `--yes`. Files get their content, executable
    bits and commit time back; links that share files between accounts are
-   recreated; links that point outside the mirrored directories are listed
-   and skipped: recreate each by hand (the same `ln -s` as on the first
-   machine), or the next sweep removes it from the repository
-   ([#22](https://github.com/grimmerk/memsaga/issues/22)). Nothing is deleted.
+   recreated, and so are links to another tool's folder, as they are, even
+   when that folder is not on this machine yet. Nothing is deleted.
 5. Verify: `memsaga sweep --event verify` should report `no changes`, or
    commit `index.md` alone, which is generated from this machine's state
    ([#24](https://github.com/grimmerk/memsaga/issues/24)); then

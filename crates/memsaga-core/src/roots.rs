@@ -248,6 +248,15 @@ impl<'a> Scope<'a> {
         self.guard.as_ref().is_none_or(|g| g.allows_remove(path))
     }
 
+    /// May the mirror delete `path`, a repository copy that moved (an older
+    /// layout, a memory directory under its older name) rather than a live
+    /// file that vanished? The same checks without "has this machine had it".
+    pub fn may_remove_moved(&self, path: &Path) -> bool {
+        self.guard
+            .as_ref()
+            .is_none_or(|g| g.allows_remove_moved(path))
+    }
+
     /// Is a file name excluded (matched against the basename only)?
     pub fn excluded_name(&self, name: &str) -> bool {
         self.exclude_names.is_match(name)

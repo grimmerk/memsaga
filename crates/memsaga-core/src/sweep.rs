@@ -211,7 +211,12 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
     // look like a hand edit. Recorded before the mirror's own error, if any,
     // is returned: what it wrote before failing is just as uncommitted.
     crate::sync::record_uncommitted(cfg, &state, &stats.written)?;
+    crate::sync::mark_seen(cfg, &state, &stats.present)?;
     refreshed?;
+    // Only after a complete mirror: a partial list would drop real entries.
+    if let Some(g) = &scope.guard {
+        crate::sync::save_absent(&state, &g.take_absent())?;
+    }
     let restat = stats.restat;
     // Stage into a throwaway index so new files show up in the diff without
     // touching whatever the user may have staged in the real one.
@@ -306,11 +311,15 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     // a second kind of hash that the record and the check must both use, and
     // that must stay the same across versions.
     crate::sync::record_uncommitted(cfg, &state, &stats.written)?;
+    // What exists live now, this machine has had: from here on its absence
+    // is a deletion (grimmerk/memsaga#22).
+    crate::sync::mark_seen(cfg, &state, &stats.present)?;
     refreshed?;
     if let Some(g) = &scope.guard {
         if crate::sync::record_hand_edits(&mut incoming, g.take_found()) > 0 {
             crate::sync::save_incoming(&state, &incoming)?;
         }
+        crate::sync::save_absent(&state, &g.take_absent())?;
     }
     git.add_renormalize(&stats.restat)?;
     let changed = git.add_all_and_check()?;

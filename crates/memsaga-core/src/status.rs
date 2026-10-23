@@ -31,6 +31,9 @@ pub struct Status {
     /// Repository files newer than their live file, waiting for
     /// `memsaga sync` (docs/two-way-sync.md): repo-relative path -> entry.
     pub incoming: crate::sync::Incoming,
+    /// Repository files in scope that this machine never had live, kept by
+    /// the last sweep instead of being deleted (grimmerk/memsaga#22).
+    pub absent: Vec<String>,
     /// Most recent first, from the current `events.jsonl` (rotated files are
     /// not read).
     pub events: Vec<Event>,
@@ -168,6 +171,7 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
             origin: None,
             roots,
             incoming: Default::default(),
+            absent: Vec::new(),
             events: Vec::new(),
         };
     }
@@ -203,6 +207,7 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
         origin,
         roots,
         incoming: crate::sync::load_incoming(&state),
+        absent: crate::sync::load_absent(&state),
         events,
     }
 }
