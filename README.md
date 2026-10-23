@@ -510,7 +510,7 @@ More: [`docs/architecture.md`](docs/architecture.md).
 | `memsaga log` | Recent commits |
 | `memsaga diff [--stat]` | What the next sweep would commit (refreshes the mirror, commits nothing) |
 | `memsaga restore <path> [--at <rev>] [-y]` | Copy one file from history back to its live location, diff first |
-| `memsaga restore --all --at <rev> [--prune]` | Every mirrored (in-scope) file of every root as it was at `<rev>`: overwrites what differs, never deletes, recreates links as they are (never writes through one), keeps the live `settings_ignore_keys`; shows the diffs, one confirmation. Lists live files in scope that `<rev>` does not have; `--prune` moves them to `<data repository>/.git/memsaga/stale/<time>/` instead of leaving them. Ends with the same differences `status` lists |
+| `memsaga restore --all --at <rev> [--prune]` | Every mirrored (in-scope) file of every root as it was at `<rev>`: overwrites what differs, never deletes, recreates links as they are (never writes through one), keeps the live `settings_ignore_keys`; shows the diffs, one confirmation. Lists live files in scope that `<rev>` does not have; `--prune` moves them to `<data repository>/.git/memsaga/stale/<time>/` instead of leaving them. Before asking, also names folders the repository has that this machine's config does not mirror, and scripts `settings.json` runs that this machine lacks |
 | `memsaga sweep` | Mirror and commit now |
 | `memsaga push` | Push to `origin` now (pushes also happen on `Stop`, throttled, and on `SessionEnd`); a push rejected because origin moved merges origin first |
 | `memsaga sync [--take live\|repo <path>]` | Both directions: commit live changes, merge origin, bring repository-side edits to the live files, commit, push |
@@ -671,9 +671,9 @@ Tested with the same user name and the same folder layout on both machines:
    `n`; then run it again with `--yes`. Files get their content, executable
    bits and commit time back; links that share files between accounts are
    recreated, and so are links to another tool's folder, as they are, even
-   when that folder is not on this machine yet. Nothing is deleted. The
-   restore ends with what still differs: folders the repository has that
-   your config does not mirror (copy the config, step 2), and scripts that
+   when that folder is not on this machine yet. Nothing is deleted. Before
+   it asks, the restore also names folders the repository has that your
+   config does not mirror (copy the config, step 2), and scripts that
    `settings.json` runs but this machine lacks.
 5. Verify: `memsaga sweep --event verify` should report `no changes`; then
    `memsaga diff --stat` should print `no changes since the last commit`. If
@@ -697,8 +697,9 @@ also registers the hooks, so new sessions on that machine start committing at
 once; otherwise run `memsaga install` after the restore. The hooks may run
 scripts from outside memsaga's scope (another tool's status hook, for
 example); `restore` and `memsaga status` name any that this machine lacks.
-Add such a script to `files` on the machine that has it, or install the tool
-that writes it. Do not remove the hook on the machine that lacks it: two-way
+Mirror such a script from the machine that has it (`files` or `dirs` for a
+path in a config directory, `extra_files` for one elsewhere), or install the
+tool that writes it. Do not remove the hook on the machine that lacks it: two-way
 sync would remove it on every machine.
 
 ## Tests

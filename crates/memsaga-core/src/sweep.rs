@@ -316,8 +316,6 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     // is a deletion (grimmerk/memsaga#22).
     crate::sync::mark_seen(cfg, &state, &stats.present)?;
     refreshed?;
-    // The index in the clone now has those dates; later indexes carry them.
-    crate::index::clear_merged(&state);
     if let Some(g) = &scope.guard {
         if crate::sync::record_hand_edits(&mut incoming, g.take_found()) > 0 {
             crate::sync::save_incoming(&state, &incoming)?;

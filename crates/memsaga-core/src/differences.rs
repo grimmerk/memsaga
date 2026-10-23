@@ -51,7 +51,7 @@ pub struct MissingScript {
 }
 
 /// Hook and status-line commands in each root's `settings.json` that name a
-/// file under the home directory which does not exist. A restored
+/// file under the home directory or the root which does not exist. A restored
 /// `settings.json` carries its registrations, not the scripts they run
 /// (grimmerk/memsaga#25). A warning only: memsaga cannot tell whether a
 /// script is meant to exist on every machine.
@@ -96,8 +96,10 @@ pub fn missing_scripts(cfg: &Config) -> Vec<MissingScript> {
             let Some(path) = expand(token, &home, root) else {
                 continue;
             };
-            if path.starts_with(&home)
-                && path.symlink_metadata().is_err()
+            // Under the home or the root (which may live elsewhere); a link
+            // whose target is gone cannot run either, so follow it.
+            if (path.starts_with(&home) || path.starts_with(&root.path))
+                && !path.exists()
                 && seen.insert(token.to_string())
             {
                 out.push(MissingScript {
@@ -179,13 +181,48 @@ pub fn stale(cfg: &Config, rev: &str) -> Result<Vec<Stale>> {
             }
             for live_rel in found {
                 let repo_rel = Path::new(&root.label).join(roots::repo_rel_of_live(&live_rel));
-                if !tree.contains(&repo_rel.to_string_lossy().to_string()) {
+                // An older revision may hold it under an older layout, which
+                // restore reads as the same file.
+                let held = std::iter::once(repo_rel.clone())
+                    .chain(roots::legacy_repo_paths(&repo_rel))
+                    .any(|p| tree.contains(&p.to_string_lossy().to_string()));
+                if !held {
                     out.push(Stale {
                         repo_rel,
                         live: root.path.join(&live_rel),
                     });
                 }
             }
+        }
+    }
+    Ok(out)
+}
+
+/// Live paths where `rev` has a link and this machine a folder holding only
+/// files in `stale`: after `prune` the folder is empty, and `restore --all`
+/// puts the link back there.
+pub fn links_freed(cfg: &Config, rev: &str, stale: &[Stale]) -> Result<Vec<PathBuf>> {
+    let moved: BTreeSet<&Path> = stale.iter().map(|s| s.live.as_path()).collect();
+    let mut out = Vec::new();
+    for (mode, _, path) in Git::new(&cfg.repo).ls_tree(rev)? {
+        if mode != "120000" {
+            continue;
+        }
+        let Ok(loc) = crate::restore::locate(cfg, &path) else {
+            continue;
+        };
+        let is_dir = loc.live.symlink_metadata().is_ok_and(|m| m.is_dir());
+        if !is_dir || crate::restore::is_empty_dir(&loc.live) {
+            continue; // not a folder, or already planned as a link
+        }
+        let only_stale = WalkDir::new(&loc.live)
+            .min_depth(1)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| !e.file_type().is_dir())
+            .all(|e| moved.contains(e.path()));
+        if only_stale {
+            out.push(loc.live);
         }
     }
     Ok(out)

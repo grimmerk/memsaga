@@ -349,8 +349,8 @@ so they can be called from a mod unchanged.
   from the repository rather than from live files, so two machines write the
   same `index.md` for the same repository state. In a merge conflict memsaga
   keeps its own version, and the next sweep rebuilds them from both sides'
-  files, looking up the date of every memory folder the merge changed; they
-  never go on the incoming list.
+  files, looking up the date of every memory folder changed since the last
+  commit that changed `index.md`; they never go on the incoming list.
 - **Symlinks in the repository** (a second account sharing a file with the
   first) are skipped by pull; `restore --all` recreates them as they are. A
   sweep never writes through one: where the live side has a folder instead,

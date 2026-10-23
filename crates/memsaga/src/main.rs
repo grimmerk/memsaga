@@ -692,12 +692,21 @@ fn cmd_restore_all(at: &str, yes: bool, prune: bool) -> Result<()> {
         }
     }
     let prune = prune && !stale.is_empty();
+    let freed = if prune {
+        memsaga_core::differences::links_freed(&cfg, at, &stale)?
+    } else {
+        Vec::new()
+    };
+    for l in &freed {
+        println!("  link  {}  (once the folder is empty)", l.display());
+    }
+    // Before any prompt, so answering `n` still shows them.
+    print_differences(
+        &memsaga_core::differences::uncovered(&cfg, at),
+        &memsaga_core::differences::missing_scripts(&cfg),
+    );
     if plan.changed.is_empty() && plan.links.is_empty() && !prune {
         println!("nothing to restore");
-        print_differences(
-            &memsaga_core::differences::uncovered(&cfg, at),
-            &memsaga_core::differences::missing_scripts(&cfg),
-        );
         return Ok(());
     }
     if !yes {
@@ -711,7 +720,7 @@ fn cmd_restore_all(at: &str, yes: bool, prune: bool) -> Result<()> {
         eprint!(
             "Overwrite these {} live file(s), create {} link(s){}? [y/N] ",
             plan.changed.len(),
-            plan.links.len(),
+            plan.links.len() + freed.len(),
             if prune {
                 format!(" and move {} file(s) aside", stale.len())
             } else {
@@ -737,10 +746,14 @@ fn cmd_restore_all(at: &str, yes: bool, prune: bool) -> Result<()> {
     }
     let written = restore::write_live_batch(&cfg, &plan.changed, &plan.links, at)?;
     println!("restored {written} file(s) from {at}; the next Stop commits the live state");
-    print_differences(
-        &memsaga_core::differences::uncovered(&cfg, at),
-        &memsaga_core::differences::missing_scripts(&cfg),
-    );
+    // A restored settings.json may run scripts this machine lacks.
+    if plan
+        .changed
+        .iter()
+        .any(|f| f.loc.live.file_name() == Some(std::ffi::OsStr::new("settings.json")))
+    {
+        print_differences(&[], &memsaga_core::differences::missing_scripts(&cfg));
+    }
     Ok(())
 }
 
@@ -752,8 +765,12 @@ fn cmd_restore(path: &str, at: &str, yes: bool) -> Result<()> {
         .with_context(|| format!("{} does not exist at {at}", loc.repo_rel.display()))?;
     let candidate = restore::with_live_ignored_keys(&cfg, &loc, candidate);
     let current = std::fs::read(&loc.live).ok();
+    let is_settings = loc.live.file_name() == Some(std::ffi::OsStr::new("settings.json"));
     if current.as_deref() == Some(candidate.as_slice()) {
         println!("{} already matches {at}; nothing to do", loc.live.display());
+        if is_settings {
+            print_differences(&[], &memsaga_core::differences::missing_scripts(&cfg));
+        }
         return Ok(());
     }
     let diff = restore::diff_against_live(&cfg, &loc.live, &candidate)?;
@@ -777,7 +794,7 @@ fn cmd_restore(path: &str, at: &str, yes: bool) -> Result<()> {
         loc.live.display(),
         candidate.len()
     );
-    if loc.live.file_name() == Some(std::ffi::OsStr::new("settings.json")) {
+    if is_settings {
         print_differences(&[], &memsaga_core::differences::missing_scripts(&cfg));
     }
     Ok(())
@@ -798,7 +815,7 @@ fn print_differences(uncovered: &[String], missing: &[memsaga_core::differences:
     }
     for m in missing {
         println!(
-            "{} runs {}, which is not on this machine; add it to `files` where it is, or install the tool that writes it",
+            "{} runs {}, which is not on this machine; mirror it from the machine that has it (`files` or `dirs` for a path in a config directory, `extra_files` for one elsewhere), or install the tool that writes it",
             m.settings.display(),
             m.script
         );

@@ -197,14 +197,10 @@ fn sync_entry(
         return Ok(());
     }
     if meta.is_dir() {
-        // A destination that used to be a symlink must be replaced by a real dir.
-        if dst
-            .symlink_metadata()
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false)
-        {
-            fs::remove_file(&dst)?;
-        }
+        // A folder where the repository has a link: `sync_dir` records it and
+        // mirrors nothing under it. Replacing the link here would commit the
+        // folder over it, and on a machine with a stale folder that spreads
+        // the stale copy (grimmerk/memsaga#29).
         // Relative to the root (the live side): `exclude_paths` are root-relative.
         let prefix = match entry {
             Entry::Dir { rel } => PathBuf::from(rel),

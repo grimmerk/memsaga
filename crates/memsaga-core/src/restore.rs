@@ -92,8 +92,9 @@ pub struct PlannedLink {
 
 /// What `restore --all` would do at `rev`: every blob under a root's subtree
 /// whose content differs from the live file (or which is missing live).
-/// Links are recreated where nothing is in the way; paths outside the
-/// allowlist are counted and skipped; nothing is ever deleted.
+/// Links are recreated where nothing, or only an empty folder, is in the
+/// way; paths outside the allowlist are counted and skipped; no file is ever
+/// deleted.
 #[derive(Debug, Default)]
 pub struct Plan {
     pub changed: Vec<PlannedFile>,
@@ -212,8 +213,9 @@ fn plan_link(cfg: &Config, git: &Git, rev: &str, path: &str) -> Result<LinkPlan>
                     LinkPlan::Skip
                 }
             }
-            Ok(_) => LinkPlan::Skip, // a real file or directory: never replaced
-            Err(_) => LinkPlan::Create(PlannedLink {
+            // An empty folder holds nothing to lose; anything else is never replaced.
+            Ok(_) if !is_empty_dir(&link.live) => LinkPlan::Skip,
+            _ => LinkPlan::Create(PlannedLink {
                 live: link.live,
                 target: target.to_path_buf(),
                 repo_rel: PathBuf::from(path),
@@ -241,13 +243,20 @@ fn plan_link(cfg: &Config, git: &Git, rev: &str, path: &str) -> Result<LinkPlan>
                 LinkPlan::Skip
             })
         }
-        Ok(_) => Ok(LinkPlan::Skip), // a real file or directory: never replaced
-        Err(_) => Ok(LinkPlan::Create(PlannedLink {
+        // An empty folder holds nothing to lose; anything else is never replaced.
+        Ok(_) if !is_empty_dir(&link.live) => Ok(LinkPlan::Skip),
+        _ => Ok(LinkPlan::Create(PlannedLink {
             live: link.live,
             target: dest.live,
             repo_rel: PathBuf::from(path),
         })),
     }
+}
+
+/// A real (not linked) directory with nothing in it.
+pub fn is_empty_dir(p: &Path) -> bool {
+    std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir())
+        && std::fs::read_dir(p).is_ok_and(|mut rd| rd.next().is_none())
 }
 
 fn live_executable(p: &Path) -> bool {
@@ -520,6 +529,10 @@ pub fn write_live_batch(
         verify_destination(cfg, &l.live)?;
         if let Some(parent) = l.live.parent() {
             std::fs::create_dir_all(parent)?;
+        }
+        if is_empty_dir(&l.live) {
+            // Planned only because it is empty (`plan_link`); fails if not.
+            std::fs::remove_dir(&l.live)?;
         }
         std::os::unix::fs::symlink(&l.target, &l.live)
             .with_context(|| format!("linking {} -> {}", l.live.display(), l.target.display()))?;

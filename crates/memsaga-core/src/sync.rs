@@ -700,7 +700,6 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .collect();
-    crate::index::note_merged(&state, &changed)?;
     let mut incoming = load_incoming(&state);
     let mut files = Vec::new();
     let next = scope_after_merge(cfg, &changed);
@@ -895,6 +894,13 @@ fn settle_one(
     // Under a link in the repository the "repository file" is whatever the
     // link points at, often a live file (grimmerk/memsaga#29).
     if roots::link_above(&cfg.repo, &repo_path).is_some() {
+        // `--take live` writes nothing and only drops the entry, so it is
+        // the way out of one left by an older version.
+        if let Some((Take::Live, which)) = take {
+            if which == rel {
+                return Ok(Outcome::Done(Done::InStep));
+            }
+        }
         return Ok(Outcome::Skip("inside a link in the repository".into()));
     }
     let repo_meta = std::fs::symlink_metadata(&repo_path).ok();

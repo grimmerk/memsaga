@@ -2085,6 +2085,13 @@ fn a_folder_where_the_repository_has_a_link_is_never_written_through_and_prune_r
     assert!(out.contains("inside a link in the repository"), "{out}");
     assert_eq!(fs::read_to_string(link.join("a.cjs")).unwrap(), "stale\n");
     assert_eq!(fs::read_to_string(&skill).unwrap(), "new\n");
+    // `--take live` drops it without writing anything.
+    run(
+        &fx,
+        &["sync", "--take", "live", "claude/scripts/tool/a.cjs"],
+    );
+    assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
+    assert_eq!(fs::read_to_string(&skill).unwrap(), "new\n");
 
     // restore --all lists the folder's files as not in the repository;
     // --prune moves them aside and the link comes back.
@@ -2093,6 +2100,10 @@ fn a_folder_where_the_repository_has_a_link_is_never_written_through_and_prune_r
     assert!(link.join("a.cjs").exists(), "listed only, without --prune");
     let out = run(&fx, &["restore", "--all", "--prune", "--yes"]);
     assert!(out.contains("moved 2 file(s)"), "{out}");
+    assert!(
+        out.contains("(once the folder is empty)"),
+        "announced: {out}"
+    );
     assert_eq!(
         fs::read_link(&link).unwrap(),
         fx.claude.join("skills/tool/scripts")
@@ -2114,6 +2125,48 @@ fn a_folder_where_the_repository_has_a_link_is_never_written_through_and_prune_r
     assert!(fx.claude.join("skills/foo/SKILL.md").exists());
     run(&fx, &["sweep"]);
     assert_eq!(status_json(&fx)["link_over_folder"], serde_json::json!([]));
+    // An empty folder in the way holds nothing: the link comes back without
+    // --prune.
+    fs::remove_file(&link).unwrap();
+    fs::create_dir(&link).unwrap();
+    run(&fx, &["restore", "--all", "--yes"]);
+    assert!(
+        fs::read_link(&link).is_ok(),
+        "an empty folder blocked the link"
+    );
+}
+
+#[test]
+fn a_configured_folder_where_the_repository_has_a_link_keeps_the_link() {
+    // grimmerk/memsaga#29 for a top-level entry: the second account's
+    // `skills` is a link in the repository. A folder found there now is
+    // reported, not committed over the link, and `--prune` brings the link
+    // back even though the entry's own folder stays (emptied).
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let link = fx.work.join("skills");
+    let target = fs::read_link(&link).unwrap();
+    fs::remove_file(&link).unwrap();
+    write(&link.join("foo/SKILL.md"), "stale\n");
+    run(&fx, &["sweep"]);
+    assert_eq!(
+        git(&fx, &["ls-tree", "HEAD", "claude-work/skills"])
+            .split_whitespace()
+            .next(),
+        Some("120000"),
+        "the link was replaced"
+    );
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("skills/foo/SKILL.md")).unwrap(),
+        "skill\n"
+    );
+    assert_eq!(
+        status_json(&fx)["link_over_folder"],
+        serde_json::json!(["claude-work/skills"])
+    );
+    let out = run(&fx, &["restore", "--all", "--prune", "--yes"]);
+    assert!(out.contains("moved 1 file(s)"), "{out}");
+    assert_eq!(fs::read_link(&link).unwrap(), target);
 }
 
 #[test]
@@ -2132,6 +2185,23 @@ fn index_md_is_the_same_on_two_machines_and_restore_reports_a_narrower_config() 
         ),
     );
     write(&a.claude.join("only-a/x.md"), "x\n");
+    // Each machine's prompt history names a different folder for the same
+    // memory name (git/webapp and git-webapp encode alike): the repository's
+    // paths.json decides.
+    write(
+        &a.claude.join("history.jsonl"),
+        &format!(
+            "{{\"display\":\"hi\",\"project\":\"{}\"}}\n",
+            a.home.join("git/webapp").display()
+        ),
+    );
+    write(
+        &b.claude.join("history.jsonl"),
+        &format!(
+            "{{\"display\":\"hi\",\"project\":\"{}\"}}\n",
+            b.home.join("git-webapp").display()
+        ),
+    );
     write(&a.claude.join("skills/s/SKILL.md"), "s\n");
     let fact = a.memory_dir("git/webapp").join("fact.md");
     write(&fact, "fact\n");
@@ -2146,7 +2216,7 @@ fn index_md_is_the_same_on_two_machines_and_restore_reports_a_narrower_config() 
     let index = fs::read_to_string(a.repo.join("index.md")).unwrap();
     let today = String::from_utf8(
         std::process::Command::new("date")
-            .arg("+%Y-%m-%d")
+            .args(["-u", "+%Y-%m-%d"])
             .output()
             .unwrap()
             .stdout,
@@ -2157,6 +2227,7 @@ fn index_md_is_the_same_on_two_machines_and_restore_reports_a_narrower_config() 
         "{index}"
     );
     assert!(index.contains("[only-a](claude/only-a)"), "{index}");
+    assert!(index.contains("[~/git/webapp]"), "{index}");
 
     let origin = tmp.path().join("origin.git");
     plain_git(
@@ -2258,9 +2329,12 @@ fn status_names_the_scripts_settings_json_runs_that_are_missing() {
         &fx.claude.join("settings.json"),
         r#"{"hooks":{"Stop":[{"hooks":[
             {"type":"command","command":"$HOME/.claude/hooks/x.sh"},
-            {"type":"command","command":"bash ~/.claude/hooks/gone.sh --flag"}]}]},
+            {"type":"command","command":"bash ~/.claude/hooks/gone.sh --flag"},
+            {"type":"command","command":"~/.claude/hooks/dangling.sh;"}]}]},
           "statusLine":{"type":"command","command":"\"${CLAUDE_CONFIG_DIR}/status.sh\""}}"#,
     );
+    // A link whose target is gone cannot run either.
+    std::os::unix::fs::symlink("nowhere.sh", fx.claude.join("hooks/dangling.sh")).unwrap();
     run(&fx, &["init", "--no-backfill"]);
     let home = fx.claude.parent().unwrap();
     let out = cmd(&fx)
@@ -2277,12 +2351,78 @@ fn status_names_the_scripts_settings_json_runs_that_are_missing() {
         .collect();
     assert_eq!(
         scripts,
-        ["~/.claude/hooks/gone.sh", "${CLAUDE_CONFIG_DIR}/status.sh"],
+        [
+            "~/.claude/hooks/gone.sh",
+            "~/.claude/hooks/dangling.sh",
+            "${CLAUDE_CONFIG_DIR}/status.sh"
+        ],
         "{v}"
     );
     let out = cmd(&fx).env("HOME", home).arg("status").output().unwrap();
     assert!(String::from_utf8_lossy(&out.stdout)
         .contains("runs ~/.claude/hooks/gone.sh, which is not on this machine"));
+    // A config directory outside the home still has its own scripts checked.
+    let elsewhere = TempDir::new().unwrap();
+    let out = cmd(&fx)
+        .env("HOME", elsewhere.path())
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(
+        v["missing_scripts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["script"] == "${CLAUDE_CONFIG_DIR}/status.sh"),
+        "{v}"
+    );
+}
+
+#[test]
+fn restore_from_a_revision_in_the_old_layout_lists_no_memory_as_stale() {
+    // Before 2026-09-18 memory lived at <label>/projects/<slug>/memory/;
+    // restore reads that layout, so the stale list must too.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let name = git(&fx, &["ls-files", "claude/memory"])
+        .lines()
+        .next()
+        .unwrap()
+        .split('/')
+        .nth(2)
+        .unwrap()
+        .to_string();
+    git(
+        &fx,
+        &[
+            "mv",
+            &format!("claude/memory/{name}"),
+            "claude/projects-old",
+        ],
+    );
+    fs::create_dir_all(fx.repo.join("claude/projects/-h-git-a")).unwrap();
+    git(
+        &fx,
+        &[
+            "mv",
+            "claude/projects-old",
+            "claude/projects/-h-git-a/memory",
+        ],
+    );
+    git(
+        &fx,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            "old layout",
+        ],
+    );
+    let out = run(&fx, &["restore", "--all", "--at", "HEAD", "--yes"]);
+    assert!(!out.contains("not in HEAD"), "{out}");
 }
 
 #[test]
