@@ -530,29 +530,20 @@ pub fn write_live_batch(
         if let Some(parent) = l.live.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        if is_empty_dir(&l.live) {
-            // Planned only because it is empty (`plan_link`). Make the link
-            // beside it first, so a failure leaves the folder where it was.
-            let name = l.live.file_name().unwrap_or_default().to_string_lossy();
-            let staged = l
-                .live
-                .with_file_name(format!(".{name}.memsaga-link-{}", std::process::id()));
-            std::os::unix::fs::symlink(&l.target, &staged).with_context(|| {
-                format!("linking {} -> {}", staged.display(), l.target.display())
-            })?;
-            let swapped = std::fs::remove_dir(&l.live).and_then(|()| {
-                std::fs::rename(&staged, &l.live).inspect_err(|_| {
-                    let _ = std::fs::create_dir(&l.live);
-                })
-            });
-            if let Err(e) = swapped {
-                let _ = std::fs::remove_file(&staged);
-                return Err(e).with_context(|| format!("linking {}", l.live.display()));
+        let emptied = is_empty_dir(&l.live);
+        if emptied {
+            // Planned only because it is empty (`plan_link`); fails if not.
+            std::fs::remove_dir(&l.live)?;
+        }
+        // `symlink` never replaces what is there, so nothing written in the
+        // meantime is lost; on failure the empty folder comes back.
+        if let Err(e) = std::os::unix::fs::symlink(&l.target, &l.live) {
+            if emptied {
+                let _ = std::fs::create_dir(&l.live);
             }
-        } else {
-            std::os::unix::fs::symlink(&l.target, &l.live).with_context(|| {
+            return Err(e).with_context(|| {
                 format!("linking {} -> {}", l.live.display(), l.target.display())
-            })?;
+            });
         }
         crate::sync::mark_seen(cfg, &state, &[&l.repo_rel])?;
     }
