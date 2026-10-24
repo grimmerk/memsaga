@@ -2255,6 +2255,10 @@ fn index_md_is_the_same_on_two_machines_and_restore_reports_a_narrower_config() 
         out.contains("in the repository, not in this machine's config (1): claude/only-a"),
         "{out}"
     );
+    // Folders git does not track differ between clones: an empty one left
+    // after a deletion, one holding only an empty project folder.
+    fs::create_dir_all(b.repo.join("claude/leftover/sub")).unwrap();
+    fs::create_dir_all(b.repo.join("claude/memory/HOME-git-ghost")).unwrap();
     // beta's own config differs (its paths, no only-a), so it commits
     // memsaga/config.toml; the index must not be in that commit.
     b.run(&["sweep"]);
