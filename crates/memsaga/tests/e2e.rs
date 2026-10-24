@@ -2334,7 +2334,8 @@ fn status_names_the_scripts_settings_json_runs_that_are_missing() {
         r#"{"hooks":{"Stop":[{"hooks":[
             {"type":"command","command":"$HOME/.claude/hooks/x.sh"},
             {"type":"command","command":"bash ~/.claude/hooks/gone.sh --flag"},
-            {"type":"command","command":"~/.claude/hooks/dangling.sh;"}]}]},
+            {"type":"command","command":"~/.claude/hooks/dangling.sh;"},
+            {"type":"command","command":"/bin/sh -c '[ -x \"$HOME/.tool/bridge\" ] && \"$HOME/.tool/bridge\"; exit 0'"}]}]},
           "statusLine":{"type":"command","command":"\"${CLAUDE_CONFIG_DIR}/status.sh\""}}"#,
     );
     // A link whose target is gone cannot run either.

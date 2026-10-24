@@ -91,11 +91,19 @@ pub fn missing_scripts(cfg: &Config) -> Vec<MissingScript> {
             commands.push(c);
         }
         let mut seen = BTreeSet::new();
-        for token in commands.iter().flat_map(|c| c.split_whitespace()) {
+        for (command, token) in commands
+            .iter()
+            .flat_map(|c| c.split_whitespace().map(move |t| (*c, t)))
+        {
             let token = token.trim_matches(|c: char| "\"'();&|".contains(c));
             let Some(path) = expand(token, &home, root) else {
                 continue;
             };
+            // `[ -x "$HOME/x" ] && "$HOME/x"`: written to run only where the
+            // script exists, so its absence is not a problem.
+            if is_tested(command, token) {
+                continue;
+            }
             // Under the home or the root (which may live elsewhere); a link
             // whose target is gone cannot run either, so follow it.
             if (path.starts_with(&home) || path.starts_with(&root.path))
@@ -110,6 +118,16 @@ pub fn missing_scripts(cfg: &Config) -> Vec<MissingScript> {
         }
     }
     out
+}
+
+/// Does `command` test `path` for existence (`-x`, `-f`, `-e` or `-s`, the
+/// path bare or quoted) before using it?
+fn is_tested(command: &str, path: &str) -> bool {
+    ["-x", "-f", "-e", "-s"].iter().any(|flag| {
+        ["", "\"", "'"]
+            .iter()
+            .any(|q| command.contains(&format!("{flag} {q}{path}{q}")))
+    })
 }
 
 /// A command word as a path, when it is one: absolute, or starting with `~/`,
