@@ -5,7 +5,8 @@ with: what it remembers, how you configure it, and anything else you choose.
 
 **Website:** [memsaga.grimmer.io](https://memsaga.grimmer.io) ·
 [Install](#quick-start) · [Do you need it?](#do-you-need-memsaga) ·
-[FAQ](docs/faq.md)
+[FAQ](docs/faq.md) ·
+[Discussions](https://github.com/grimmerk/memsaga/discussions)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.png">
@@ -515,6 +516,9 @@ More: [`docs/architecture.md`](docs/architecture.md).
   `--take repo <path>`, or edit the live file and run `memsaga sync` again.
 - To stop, `memsaga uninstall` removes the hooks. The repository and its
   history stay.
+- Questions and ideas go to
+  [GitHub Discussions](https://github.com/grimmerk/memsaga/discussions); a bug
+  goes to [Issues](https://github.com/grimmerk/memsaga/issues).
 
 ## Reference
 
