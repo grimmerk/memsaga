@@ -158,3 +158,8 @@ it, does one check and exits.
 The numbers were measured on a busy machine;
 [`docs/architecture.md`](architecture.md#measured-again-2026-10-15-and-how-to-repeat-it)
 says how to repeat them.
+
+## Questions and bugs
+
+Questions and ideas: [GitHub Discussions](https://github.com/grimmerk/memsaga/discussions).
+Bugs: [Issues](https://github.com/grimmerk/memsaga/issues).
