@@ -744,8 +744,12 @@ fn cmd_restore_all(at: &str, yes: bool, prune: bool) -> Result<()> {
     for f in &plan.changed {
         restore::verify_destination(&cfg, &f.loc.live)?;
     }
-    let written = restore::write_live_batch(&cfg, &plan.changed, &plan.links, at)?;
-    println!("restored {written} file(s) from {at}; the next Stop commits the live state");
+    restore::write_live_batch(&cfg, &plan.changed, &plan.links, at)?;
+    println!(
+        "restored {} file(s) and {} link(s) from {at}; the next Stop commits the live state",
+        plan.changed.len(),
+        plan.links.len()
+    );
     // A restored settings.json may run scripts this machine lacks.
     if plan
         .changed

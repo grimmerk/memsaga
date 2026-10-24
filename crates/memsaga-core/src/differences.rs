@@ -95,7 +95,7 @@ pub fn missing_scripts(cfg: &Config) -> Vec<MissingScript> {
             .iter()
             .flat_map(|c| c.split_whitespace().map(move |t| (*c, t)))
         {
-            let token = token.trim_matches(|c: char| "\"'();&|".contains(c));
+            let token = command_word(token);
             let Some(path) = expand(token, &home, root) else {
                 continue;
             };
@@ -120,14 +120,20 @@ pub fn missing_scripts(cfg: &Config) -> Vec<MissingScript> {
     out
 }
 
-/// Does `command` test `path` for existence (`-x`, `-f`, `-e` or `-s`, the
-/// path bare or quoted) before using it?
+/// Does `command` test `path` for existence (`-x`, `-f`, `-e` or `-s`
+/// followed by exactly that word, not negated with `!`)? Compared word by
+/// word, as `missing_scripts` reads them. A heuristic for a warning: it
+/// does not parse the shell, so a test placed after the call still counts.
 fn is_tested(command: &str, path: &str) -> bool {
-    ["-x", "-f", "-e", "-s"].iter().any(|flag| {
-        ["", "\"", "'"]
-            .iter()
-            .any(|q| command.contains(&format!("{flag} {q}{path}{q}")))
+    let words: Vec<&str> = command.split_whitespace().map(command_word).collect();
+    words.windows(2).enumerate().any(|(i, w)| {
+        ["-x", "-f", "-e", "-s"].contains(&w[0]) && w[1] == path && (i == 0 || words[i - 1] != "!")
     })
+}
+
+/// A command word without the quotes and shell punctuation around it.
+fn command_word(word: &str) -> &str {
+    word.trim_matches(|c: char| "\"'();&|".contains(c))
 }
 
 /// A command word as a path, when it is one: absolute, or starting with `~/`,
