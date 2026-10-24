@@ -2325,6 +2325,33 @@ fn after_a_merge_that_keeps_this_index_the_other_sides_projects_get_their_commit
 }
 
 #[test]
+fn a_root_with_nothing_left_in_the_repository_leaves_the_index() {
+    // grimmerk/memsaga#24: the index describes the repository; a root whose
+    // last file was deleted keeps no rows from an older index.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let index = fs::read_to_string(fx.repo.join("index.md")).unwrap();
+    assert!(index.contains("## claude-work"), "{index}");
+    for p in ["CLAUDE.md", "skills", "settings.json"] {
+        let p = fx.work.join(p);
+        if fs::symlink_metadata(&p).is_ok_and(|m| m.is_dir()) {
+            fs::remove_dir_all(&p).unwrap();
+        } else {
+            fs::remove_file(&p).unwrap();
+        }
+    }
+    fs::remove_dir_all(fx.work.join("projects")).unwrap();
+    run(&fx, &["sweep"]);
+    // Including the skills link: deleting it is checked as one entry, not
+    // as the files of the folder it points at.
+    let left = git(&fx, &["ls-files", "claude-work"]);
+    assert!(left.is_empty(), "{left}");
+    assert_eq!(status_json(&fx)["absent"], serde_json::json!([]));
+    let index = fs::read_to_string(fx.repo.join("index.md")).unwrap();
+    assert!(!index.contains("claude-work"), "{index}");
+}
+
+#[test]
 fn status_names_the_scripts_settings_json_runs_that_are_missing() {
     // grimmerk/memsaga#25: a restored settings.json carries hook
     // registrations, not the scripts they run.

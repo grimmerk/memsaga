@@ -49,13 +49,10 @@ pub fn write_index(cfg: &Config) -> Result<()> {
             .iter()
             .filter_map(|f| f.strip_prefix(&prefix))
             .collect();
+        // Nothing of this root in the repository: no section, on every
+        // machine alike (keeping the previous one would keep rows for files
+        // the repository no longer has).
         if under.is_empty() {
-            if let Some(sec) = previous_sections.get(&root.label) {
-                md.push_str(sec);
-            }
-            if let Some(prev) = previous.get(&root.label) {
-                paths.insert(root.label.clone(), prev.clone());
-            }
             continue;
         }
         let map = if root.path.is_dir() {

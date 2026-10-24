@@ -304,6 +304,7 @@ pub fn sync_dir(
     // Delete what is no longer in the source. Deepest first so dirs empty out.
     let mut extra: Vec<PathBuf> = WalkDir::new(dst)
         .follow_links(false)
+        .follow_root_links(false)
         .min_depth(1)
         .into_iter()
         .filter_map(|e| e.ok())

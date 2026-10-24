@@ -527,8 +527,11 @@ impl Guard {
             return false;
         }
         let mut ok = true;
+        // A link (the second account's `skills`) is one entry: walkdir would
+        // otherwise follow it and check the files of the folder it points at.
         for e in walkdir::WalkDir::new(path)
             .follow_links(false)
+            .follow_root_links(false)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file() || e.file_type().is_symlink())
