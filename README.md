@@ -429,8 +429,21 @@ Claude reads the file again and answers from the new text.
    made elsewhere within the last minute may reach a read only at the next
    prompt.
 
-To do this by hand: `memsaga sync` (both directions) or `memsaga pull` (only
-inbound). Details: [two-way sync](#two-way-sync).
+All of this happens inside Claude Code sessions: each turn ends with a commit
+and a push (throttled by `push_min_interval_secs`), and a session's end pushes.
+Run it by hand when no session runs that would do it for you:
+
+- **Before you use a machine that has been idle**, or before editing its live
+  files outside Claude Code: `memsaga sync` (both directions) or
+  `memsaga pull` (only inbound).
+- **To push right away** instead of waiting for the throttle: `memsaga push`.
+- **When a sync reports a conflict** (both sides changed the same lines):
+  `memsaga sync --take live <path>` or `--take repo <path>`, or edit the
+  live file and run `memsaga sync` again.
+- **When setting up another machine**: see
+  [Setting up another machine](#setting-up-another-machine).
+
+Details: [two-way sync](#two-way-sync).
 
 ### 11. Let Claude reorganise its memory, safely
 
