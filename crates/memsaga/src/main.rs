@@ -76,8 +76,13 @@ enum Cmd {
         yes: bool,
         /// Restore every file of every root as it was at --at. Overwrites
         /// differing files, never deletes, recreates links as they are.
+        /// Lists live files in scope that the revision does not have.
         #[arg(long)]
         all: bool,
+        /// With --all: move those live files aside, into the data
+        /// repository's `.git/memsaga/stale/<time>/` (never deleted).
+        #[arg(long, requires = "all")]
+        prune: bool,
     },
     /// Last sweeps, last push, repo state.
     Status {
@@ -297,8 +302,14 @@ fn run(cli: Cli) -> Result<()> {
             }
             Ok(())
         }
-        Cmd::Restore { path, at, yes, all } => match (all, path) {
-            (true, None) => cmd_restore_all(&at, yes),
+        Cmd::Restore {
+            path,
+            at,
+            yes,
+            all,
+            prune,
+        } => match (all, path) {
+            (true, None) => cmd_restore_all(&at, yes, prune),
             (false, Some(p)) => cmd_restore(&p, &at, yes),
             (true, Some(_)) => anyhow::bail!("give either a path or --all, not both"),
             (false, None) => anyhow::bail!("a path is required (or --all)"),
@@ -634,9 +645,10 @@ fn cmd_init(
     Ok(())
 }
 
-fn cmd_restore_all(at: &str, yes: bool) -> Result<()> {
+fn cmd_restore_all(at: &str, yes: bool, prune: bool) -> Result<()> {
     let cfg = Config::load()?;
-    let plan = restore::plan_all(&cfg, at)?;
+    let mut plan = restore::plan_all(&cfg, at)?;
+    let stale = memsaga_core::differences::stale(&cfg, at)?;
     for (label, n) in &plan.missing_roots {
         let path = cfg
             .roots
@@ -658,16 +670,44 @@ fn cmd_restore_all(at: &str, yes: bool) -> Result<()> {
     for l in &plan.links {
         println!("  link  {}  ->  {}", l.live.display(), l.target.display());
     }
-    if plan.changed.is_empty() && plan.links.is_empty() {
-        println!("nothing to restore");
-        return Ok(());
-    }
     for f in &plan.changed {
         println!(
             "  {}  ->  {}",
             f.loc.repo_rel.display(),
             f.loc.live.display()
         );
+    }
+    if !stale.is_empty() {
+        println!(
+            "{} live file(s) in scope are not in {at}{}:",
+            stale.len(),
+            if prune {
+                " and will be moved to the data repository's .git/memsaga/stale/"
+            } else {
+                "; they stay as they are (`--prune` moves them aside)"
+            }
+        );
+        for s in &stale {
+            println!("  {}", s.live.display());
+        }
+    }
+    let prune = prune && !stale.is_empty();
+    let freed = if prune {
+        memsaga_core::differences::links_freed(&cfg, at, &stale)?
+    } else {
+        Vec::new()
+    };
+    for l in &freed {
+        println!("  link  {}  (once the folder is empty)", l.display());
+    }
+    // Before any prompt, so answering `n` still shows them.
+    print_differences(
+        &memsaga_core::differences::uncovered(&cfg, at),
+        &memsaga_core::differences::missing_scripts(&cfg),
+    );
+    if plan.changed.is_empty() && plan.links.is_empty() && !prune {
+        println!("nothing to restore");
+        return Ok(());
     }
     if !yes {
         // Show what would change before asking, like the single-file restore.
@@ -678,9 +718,14 @@ fn cmd_restore_all(at: &str, yes: bool) -> Result<()> {
             );
         }
         eprint!(
-            "Overwrite these {} live file(s) and create {} link(s)? [y/N] ",
+            "Overwrite these {} live file(s), create {} link(s){}? [y/N] ",
             plan.changed.len(),
-            plan.links.len()
+            plan.links.len() + freed.len(),
+            if prune {
+                format!(" and move {} file(s) aside", stale.len())
+            } else {
+                String::new()
+            }
         );
         let mut answer = String::new();
         std::io::stdin().read_line(&mut answer)?;
@@ -689,11 +734,30 @@ fn cmd_restore_all(at: &str, yes: bool) -> Result<()> {
             return Ok(());
         }
     }
+    if prune {
+        let dest = memsaga_core::differences::prune(&cfg, &stale)?;
+        println!("moved {} file(s) to {}", stale.len(), dest.display());
+        // A folder that held only leftovers may have been in the way of a
+        // link the revision has.
+        plan = restore::plan_all(&cfg, at)?;
+    }
     for f in &plan.changed {
         restore::verify_destination(&cfg, &f.loc.live)?;
     }
-    let written = restore::write_live_batch(&cfg, &plan.changed, &plan.links, at)?;
-    println!("restored {written} file(s) from {at}; the next Stop commits the live state");
+    restore::write_live_batch(&cfg, &plan.changed, &plan.links, at)?;
+    println!(
+        "restored {} file(s) and {} link(s) from {at}; the next Stop commits the live state",
+        plan.changed.len(),
+        plan.links.len()
+    );
+    // A restored settings.json may run scripts this machine lacks.
+    if plan
+        .changed
+        .iter()
+        .any(|f| f.loc.live.file_name() == Some(std::ffi::OsStr::new("settings.json")))
+    {
+        print_differences(&[], &memsaga_core::differences::missing_scripts(&cfg));
+    }
     Ok(())
 }
 
@@ -705,8 +769,12 @@ fn cmd_restore(path: &str, at: &str, yes: bool) -> Result<()> {
         .with_context(|| format!("{} does not exist at {at}", loc.repo_rel.display()))?;
     let candidate = restore::with_live_ignored_keys(&cfg, &loc, candidate);
     let current = std::fs::read(&loc.live).ok();
+    let is_settings = loc.live.file_name() == Some(std::ffi::OsStr::new("settings.json"));
     if current.as_deref() == Some(candidate.as_slice()) {
         println!("{} already matches {at}; nothing to do", loc.live.display());
+        if is_settings {
+            print_differences(&[], &memsaga_core::differences::missing_scripts(&cfg));
+        }
         return Ok(());
     }
     let diff = restore::diff_against_live(&cfg, &loc.live, &candidate)?;
@@ -730,7 +798,32 @@ fn cmd_restore(path: &str, at: &str, yes: bool) -> Result<()> {
         loc.live.display(),
         candidate.len()
     );
+    if is_settings {
+        print_differences(&[], &memsaga_core::differences::missing_scripts(&cfg));
+    }
     Ok(())
+}
+
+/// What `status` and `restore --all` both report about this machine.
+fn print_differences(uncovered: &[String], missing: &[memsaga_core::differences::MissingScript]) {
+    if !uncovered.is_empty() {
+        println!(
+            "in the repository, not in this machine's config ({}): {}",
+            uncovered.len(),
+            uncovered.join(", ")
+        );
+        println!(
+            "  to mirror them here, copy memsaga/config.toml from the data repository to {}",
+            memsaga_core::config::config_path().display()
+        );
+    }
+    for m in missing {
+        println!(
+            "{} runs {}, which is not on this machine; mirror it from the machine that has it (`files` or `dirs` for a path in a config directory, `extra_files` for one elsewhere), or install the tool that writes it",
+            m.settings.display(),
+            m.script
+        );
+    }
 }
 
 fn print_settled(s: &memsaga_core::sync::Settled) {
@@ -987,6 +1080,17 @@ fn cmd_status(n: usize, json: bool) -> Result<()> {
             println!("  … and {} more", st.absent.len() - 10);
         }
     }
+    if !st.link_over_folder.is_empty() {
+        println!(
+            "a link in the repository, a folder on this machine; nothing under it is mirrored ({}):",
+            st.link_over_folder.len()
+        );
+        for f in &st.link_over_folder {
+            println!("  {f}");
+        }
+        println!("  to keep the link, run `memsaga restore --all --prune` (it moves the folder's files aside and recreates the link); to keep the folder, `git rm` the link in the data repository and commit");
+    }
+    print_differences(&st.uncovered, &st.missing_scripts);
     println!("recent events:");
     for ev in &st.events {
         println!(

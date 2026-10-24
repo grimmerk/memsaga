@@ -34,6 +34,15 @@ pub struct Status {
     /// Repository files in scope that this machine never had live, kept by
     /// the last sweep instead of being deleted (grimmerk/memsaga#22).
     pub absent: Vec<String>,
+    /// Repository links under which the last sweep mirrored nothing, because
+    /// this machine has a folder there (grimmerk/memsaga#29).
+    pub link_over_folder: Vec<String>,
+    /// Top-level entries the repository holds that this machine's config
+    /// does not mirror, as `<label>/<name>` (grimmerk/memsaga#23).
+    pub uncovered: Vec<String>,
+    /// Scripts a root's `settings.json` runs that this machine lacks
+    /// (grimmerk/memsaga#25).
+    pub missing_scripts: Vec<crate::differences::MissingScript>,
     /// Most recent first, from the current `events.jsonl` (rotated files are
     /// not read).
     pub events: Vec<Event>,
@@ -172,6 +181,9 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
             roots,
             incoming: Default::default(),
             absent: Vec::new(),
+            link_over_folder: Vec::new(),
+            uncovered: Vec::new(),
+            missing_scripts: crate::differences::missing_scripts(cfg),
             events: Vec::new(),
         };
     }
@@ -208,6 +220,9 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
         roots,
         incoming: crate::sync::load_incoming(&state),
         absent: crate::sync::load_absent(&state),
+        link_over_folder: crate::sync::load_link_over_folder(&state),
+        uncovered: crate::differences::uncovered(cfg, "HEAD"),
+        missing_scripts: crate::differences::missing_scripts(cfg),
         events,
     }
 }

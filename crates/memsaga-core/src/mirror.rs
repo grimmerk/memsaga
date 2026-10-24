@@ -197,14 +197,10 @@ fn sync_entry(
         return Ok(());
     }
     if meta.is_dir() {
-        // A destination that used to be a symlink must be replaced by a real dir.
-        if dst
-            .symlink_metadata()
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false)
-        {
-            fs::remove_file(&dst)?;
-        }
+        // A folder where the repository has a link: `sync_dir` records it and
+        // mirrors nothing under it. Replacing the link here would commit the
+        // folder over it, and on a machine with a stale folder that spreads
+        // the stale copy (grimmerk/memsaga#29).
         // Relative to the root (the live side): `exclude_paths` are root-relative.
         let prefix = match entry {
             Entry::Dir { rel } => PathBuf::from(rel),
@@ -225,8 +221,24 @@ pub fn sync_dir(
     prefix: &Path,
     stats: &mut Stats,
 ) -> Result<()> {
+    // Never write or delete through a link in the repository: it can point
+    // at a live folder (grimmerk/memsaga#29). walkdir also follows a root
+    // that is a link, which would make the deletion pass walk the live side.
+    if dst
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        scope.note_link_over_folder(dst);
+        return Ok(());
+    }
+    if scope.through_link(dst) {
+        return Ok(());
+    }
     fs::create_dir_all(dst)?;
     let mut keep: BTreeSet<PathBuf> = BTreeSet::new();
+    // Repository links found where the live side has a folder: nothing under
+    // them is mirrored or counted as had.
+    let mut blocked: Vec<PathBuf> = Vec::new();
     for item in WalkDir::new(src).follow_links(false).min_depth(1) {
         let item = item?;
         let name = item.file_name().to_string_lossy().to_string();
@@ -248,8 +260,20 @@ pub fn sync_dir(
             continue;
         }
         let target = dst.join(rel);
+        if blocked.iter().any(|b| target.starts_with(b)) {
+            continue;
+        }
         keep.insert(target.clone());
         let ft = item.file_type();
+        if ft.is_dir()
+            && target
+                .symlink_metadata()
+                .is_ok_and(|m| m.file_type().is_symlink())
+        {
+            scope.note_link_over_folder(&target);
+            blocked.push(target);
+            continue;
+        }
         if !ft.is_dir() {
             stats.present.push(target.clone());
         }
@@ -280,6 +304,7 @@ pub fn sync_dir(
     // Delete what is no longer in the source. Deepest first so dirs empty out.
     let mut extra: Vec<PathBuf> = WalkDir::new(dst)
         .follow_links(false)
+        .follow_root_links(false)
         .min_depth(1)
         .into_iter()
         .filter_map(|e| e.ok())

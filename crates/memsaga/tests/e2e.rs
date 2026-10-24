@@ -2041,6 +2041,426 @@ fn a_machine_without_a_record_keeps_what_it_lacks_and_still_drops_what_it_exclud
 }
 
 #[test]
+fn a_folder_where_the_repository_has_a_link_is_never_written_through_and_prune_restores_the_link() {
+    // grimmerk/memsaga#29: scripts/tool was a link into a skill when it was
+    // committed; the repository stores it with the live target, so copying a
+    // folder now found at scripts/tool into the repository wrote into the
+    // live skill, and the next sweep committed the old copy.
+    let fx = fixture("turn", "");
+    let skill = fx.claude.join("skills/tool/scripts/a.cjs");
+    write(&skill, "new\n");
+    let link = fx.claude.join("scripts/tool");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink("../skills/tool/scripts", &link).unwrap();
+    run(&fx, &["init", "--no-backfill"]);
+    // As on a machine that still has the folder from before the link.
+    fs::remove_file(&link).unwrap();
+    write(&link.join("a.cjs"), "stale\n");
+    write(&link.join("sub/b.cjs"), "stale\n");
+    run(&fx, &["sweep"]);
+    run(&fx, &["sweep"]);
+    assert_eq!(fs::read_to_string(&skill).unwrap(), "new\n");
+    assert!(!fx.claude.join("skills/tool/scripts/sub").exists());
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/skills/tool/scripts/a.cjs"]),
+        "new\n"
+    );
+    let v = status_json(&fx);
+    assert_eq!(
+        v["link_over_folder"],
+        serde_json::json!(["claude/scripts/tool"])
+    );
+    let seen = fs::read_to_string(fx.repo.join(".git/memsaga/seen.json")).unwrap();
+    assert!(!seen.contains("claude/scripts/tool/"), "{seen}");
+    // An entry an older version put on the incoming list for such a path is
+    // skipped, not settled through the link.
+    write(
+        &fx.repo.join(".git/memsaga/incoming.json"),
+        r#"{"claude/scripts/tool/a.cjs":{"base":null,"from":"hand edit"}}"#,
+    );
+    let out = run(
+        &fx,
+        &["sync", "--take", "repo", "claude/scripts/tool/a.cjs"],
+    );
+    assert!(out.contains("inside a link in the repository"), "{out}");
+    assert_eq!(fs::read_to_string(link.join("a.cjs")).unwrap(), "stale\n");
+    assert_eq!(fs::read_to_string(&skill).unwrap(), "new\n");
+    // `--take live` drops it without writing anything.
+    run(
+        &fx,
+        &["sync", "--take", "live", "claude/scripts/tool/a.cjs"],
+    );
+    assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
+    assert_eq!(fs::read_to_string(&skill).unwrap(), "new\n");
+
+    // restore --all lists the folder's files as not in the repository;
+    // --prune moves them aside and the link comes back.
+    let out = run(&fx, &["restore", "--all", "--yes"]);
+    assert!(out.contains("scripts/tool/a.cjs"), "{out}");
+    assert!(link.join("a.cjs").exists(), "listed only, without --prune");
+    let out = run(&fx, &["restore", "--all", "--prune", "--yes"]);
+    assert!(out.contains("moved 2 file(s)"), "{out}");
+    assert!(
+        out.contains("(once the folder is empty)"),
+        "announced: {out}"
+    );
+    assert_eq!(
+        fs::read_link(&link).unwrap(),
+        fx.claude.join("skills/tool/scripts")
+    );
+    assert_eq!(fs::read_to_string(&skill).unwrap(), "new\n");
+    let found = std::process::Command::new("find")
+        .arg(fx.repo.join(".git/memsaga/stale"))
+        .args(["-path", "*/claude/scripts/tool/a.cjs"])
+        .output()
+        .unwrap();
+    let kept: Vec<String> = String::from_utf8_lossy(&found.stdout)
+        .lines()
+        .map(String::from)
+        .collect();
+    assert_eq!(kept.len(), 1, "moved aside, not deleted");
+    assert_eq!(fs::read_to_string(&kept[0]).unwrap(), "stale\n");
+    // The second account's skills is a link to the first's: never walked
+    // into, so the real skill files are not taken for leftovers.
+    assert!(fx.claude.join("skills/foo/SKILL.md").exists());
+    run(&fx, &["sweep"]);
+    assert_eq!(status_json(&fx)["link_over_folder"], serde_json::json!([]));
+    // An empty folder in the way holds nothing: the link comes back without
+    // --prune.
+    fs::remove_file(&link).unwrap();
+    fs::create_dir(&link).unwrap();
+    run(&fx, &["restore", "--all", "--yes"]);
+    assert!(
+        fs::read_link(&link).is_ok(),
+        "an empty folder blocked the link"
+    );
+}
+
+#[test]
+fn a_configured_folder_where_the_repository_has_a_link_keeps_the_link() {
+    // grimmerk/memsaga#29 for a top-level entry: the second account's
+    // `skills` is a link in the repository. A folder found there now is
+    // reported, not committed over the link, and `--prune` brings the link
+    // back even though the entry's own folder stays (emptied).
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let link = fx.work.join("skills");
+    let target = fs::read_link(&link).unwrap();
+    fs::remove_file(&link).unwrap();
+    write(&link.join("foo/SKILL.md"), "stale\n");
+    run(&fx, &["sweep"]);
+    assert_eq!(
+        git(&fx, &["ls-tree", "HEAD", "claude-work/skills"])
+            .split_whitespace()
+            .next(),
+        Some("120000"),
+        "the link was replaced"
+    );
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("skills/foo/SKILL.md")).unwrap(),
+        "skill\n"
+    );
+    assert_eq!(
+        status_json(&fx)["link_over_folder"],
+        serde_json::json!(["claude-work/skills"])
+    );
+    let out = run(&fx, &["restore", "--all", "--prune", "--yes"]);
+    assert!(out.contains("moved 1 file(s)"), "{out}");
+    assert_eq!(fs::read_link(&link).unwrap(), target);
+}
+
+#[test]
+fn index_md_is_the_same_on_two_machines_and_restore_reports_a_narrower_config() {
+    // grimmerk/memsaga#24 and #23: the index used to come from each machine's
+    // live files, so a second machine rewrote it on every commit.
+    let tmp = TempDir::new().unwrap();
+    let a = Machine::new(tmp.path(), "alpha");
+    let b = Machine::new(tmp.path(), "beta");
+    let cfg = fs::read_to_string(&a.cfg).unwrap();
+    write(
+        &a.cfg,
+        &cfg.replace(
+            "push_min_interval_secs = 0\n",
+            "push_min_interval_secs = 0\ndirs = [\"skills\", \"only-a\"]\n",
+        ),
+    );
+    write(&a.claude.join("only-a/x.md"), "x\n");
+    // Each machine's prompt history names a different folder for the same
+    // memory name (git/webapp and git-webapp encode alike): the repository's
+    // paths.json decides.
+    write(
+        &a.claude.join("history.jsonl"),
+        &format!(
+            "{{\"display\":\"hi\",\"project\":\"{}\"}}\n",
+            a.home.join("git/webapp").display()
+        ),
+    );
+    write(
+        &b.claude.join("history.jsonl"),
+        &format!(
+            "{{\"display\":\"hi\",\"project\":\"{}\"}}\n",
+            b.home.join("git-webapp").display()
+        ),
+    );
+    write(&a.claude.join("skills/s/SKILL.md"), "s\n");
+    let fact = a.memory_dir("git/webapp").join("fact.md");
+    write(&fact, "fact\n");
+    // An old file time: the index date comes from commits, not from it.
+    fs::File::options()
+        .write(true)
+        .open(&fact)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000))
+        .unwrap();
+    a.run(&["init", "--no-backfill"]);
+    let index = fs::read_to_string(a.repo.join("index.md")).unwrap();
+    let today = String::from_utf8(
+        std::process::Command::new("date")
+            .args(["-u", "+%Y-%m-%d"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert!(
+        index.contains(&format!("| {} |", today.trim())) && !index.contains("2001-"),
+        "{index}"
+    );
+    assert!(index.contains("[only-a](claude/only-a)"), "{index}");
+    assert!(index.contains("[~/git/webapp]"), "{index}");
+
+    let origin = tmp.path().join("origin.git");
+    plain_git(
+        tmp.path(),
+        &["init", "-q", "--bare", origin.to_str().unwrap()],
+    );
+    plain_git(
+        &a.repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    a.run(&["push"]);
+    plain_git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            origin.to_str().unwrap(),
+            b.repo.to_str().unwrap(),
+        ],
+    );
+    // beta's config does not have only-a, and its restored files carry
+    // commit times rather than alpha's.
+    let out = b.run(&["restore", "--all", "--yes"]);
+    assert!(
+        out.contains("in the repository, not in this machine's config (1): claude/only-a"),
+        "{out}"
+    );
+    // Folders git does not track differ between clones: an empty one left
+    // after a deletion, one holding only an empty project folder.
+    fs::create_dir_all(b.repo.join("claude/leftover/sub")).unwrap();
+    fs::create_dir_all(b.repo.join("claude/memory/HOME-git-ghost")).unwrap();
+    // beta's own config differs (its paths, no only-a), so it commits
+    // memsaga/config.toml; the index must not be in that commit.
+    b.run(&["sweep"]);
+    let touched = plain_git(&b.repo, &["show", "--name-only", "--format=", "HEAD"]);
+    assert!(
+        !touched.contains("index.md"),
+        "beta rewrote the index: {touched}"
+    );
+    assert_eq!(fs::read_to_string(b.repo.join("index.md")).unwrap(), index);
+}
+
+#[test]
+fn after_a_merge_that_keeps_this_index_the_other_sides_projects_get_their_commit_date() {
+    // grimmerk/memsaga#24: index rows carry their date from the previous
+    // index; a conflict in index.md keeps this machine's copy, so a project
+    // only the other machine changed must have its date looked up.
+    let tmp = TempDir::new().unwrap();
+    let a = Machine::new(tmp.path(), "alpha");
+    let b = Machine::new(tmp.path(), "beta");
+    write(&a.memory_dir("git/p").join("p.md"), "p\n");
+    write(&a.memory_dir("git/q").join("q.md"), "q\n");
+    a.run(&["init", "--no-backfill"]);
+    let origin = tmp.path().join("origin.git");
+    plain_git(
+        tmp.path(),
+        &["init", "-q", "--bare", origin.to_str().unwrap()],
+    );
+    plain_git(
+        &a.repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    a.run(&["push"]);
+    plain_git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            origin.to_str().unwrap(),
+            b.repo.to_str().unwrap(),
+        ],
+    );
+    b.run(&["restore", "--all", "--yes"]);
+    b.run(&["sweep"]);
+    // alpha changes p in a commit dated 2001; beta changes q. Both rewrite
+    // neighbouring rows of index.md, which conflicts.
+    write(&a.memory_dir("git/p").join("p.md"), "p2\n");
+    let out = a
+        .cmd()
+        .env("GIT_COMMITTER_DATE", "2001-09-09T12:00:00")
+        .arg("sweep")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    a.run(&["push"]);
+    write(&b.memory_dir("git/q").join("q.md"), "q2\n");
+    b.run(&["sweep"]);
+    b.run(&["sync"]);
+    let index = fs::read_to_string(b.repo.join("index.md")).unwrap();
+    let row = index
+        .lines()
+        .find(|l| l.contains("`HOME-git-p`"))
+        .unwrap_or_default();
+    assert!(row.contains("| 2001-09-09 |"), "{index}");
+}
+
+#[test]
+fn a_root_with_nothing_left_in_the_repository_leaves_the_index() {
+    // grimmerk/memsaga#24: the index describes the repository; a root whose
+    // last file was deleted keeps no rows from an older index.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let index = fs::read_to_string(fx.repo.join("index.md")).unwrap();
+    assert!(index.contains("## claude-work"), "{index}");
+    for p in ["CLAUDE.md", "skills", "settings.json"] {
+        let p = fx.work.join(p);
+        if fs::symlink_metadata(&p).is_ok_and(|m| m.is_dir()) {
+            fs::remove_dir_all(&p).unwrap();
+        } else {
+            fs::remove_file(&p).unwrap();
+        }
+    }
+    fs::remove_dir_all(fx.work.join("projects")).unwrap();
+    run(&fx, &["sweep"]);
+    // Including the skills link: deleting it is checked as one entry, not
+    // as the files of the folder it points at.
+    let left = git(&fx, &["ls-files", "claude-work"]);
+    assert!(left.is_empty(), "{left}");
+    assert_eq!(status_json(&fx)["absent"], serde_json::json!([]));
+    let index = fs::read_to_string(fx.repo.join("index.md")).unwrap();
+    assert!(!index.contains("claude-work"), "{index}");
+}
+
+#[test]
+fn status_names_the_scripts_settings_json_runs_that_are_missing() {
+    // grimmerk/memsaga#25: a restored settings.json carries hook
+    // registrations, not the scripts they run.
+    let fx = fixture("turn", "");
+    write(
+        &fx.claude.join("settings.json"),
+        r#"{"hooks":{"Stop":[{"hooks":[
+            {"type":"command","command":"$HOME/.claude/hooks/x.sh"},
+            {"type":"command","command":"bash ~/.claude/hooks/gone.sh --flag"},
+            {"type":"command","command":"~/.claude/hooks/dangling.sh;"},
+            {"type":"command","command":"/bin/sh -c '[ -x \"$HOME/.tool/bridge\" ] && \"$HOME/.tool/bridge\"; exit 0'"},
+            {"type":"command","command":"/bin/sh -c '[ !  -x \"$HOME/.tool/neg\" ] || \"$HOME/.tool/neg\"; [ -x $HOME/.tool/pre ] && $HOME/.tool/pre2'"}]}]},
+          "statusLine":{"type":"command","command":"\"${CLAUDE_CONFIG_DIR}/status.sh\""}}"#,
+    );
+    // A link whose target is gone cannot run either.
+    std::os::unix::fs::symlink("nowhere.sh", fx.claude.join("hooks/dangling.sh")).unwrap();
+    run(&fx, &["init", "--no-backfill"]);
+    let home = fx.claude.parent().unwrap();
+    let out = cmd(&fx)
+        .env("HOME", home)
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let scripts: Vec<&str> = v["missing_scripts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["script"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        scripts,
+        [
+            "~/.claude/hooks/gone.sh",
+            "~/.claude/hooks/dangling.sh",
+            "$HOME/.tool/neg",
+            "$HOME/.tool/pre2",
+            "${CLAUDE_CONFIG_DIR}/status.sh"
+        ],
+        "{v}"
+    );
+    let out = cmd(&fx).env("HOME", home).arg("status").output().unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout)
+        .contains("runs ~/.claude/hooks/gone.sh, which is not on this machine"));
+    // A config directory outside the home still has its own scripts checked.
+    let elsewhere = TempDir::new().unwrap();
+    let out = cmd(&fx)
+        .env("HOME", elsewhere.path())
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(
+        v["missing_scripts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["script"] == "${CLAUDE_CONFIG_DIR}/status.sh"),
+        "{v}"
+    );
+}
+
+#[test]
+fn restore_from_a_revision_in_the_old_layout_lists_no_memory_as_stale() {
+    // Before 2026-09-18 memory lived at <label>/projects/<slug>/memory/;
+    // restore reads that layout, so the stale list must too.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let name = git(&fx, &["ls-files", "claude/memory"])
+        .lines()
+        .next()
+        .unwrap()
+        .split('/')
+        .nth(2)
+        .unwrap()
+        .to_string();
+    git(
+        &fx,
+        &[
+            "mv",
+            &format!("claude/memory/{name}"),
+            "claude/projects-old",
+        ],
+    );
+    fs::create_dir_all(fx.repo.join("claude/projects/-h-git-a")).unwrap();
+    git(
+        &fx,
+        &[
+            "mv",
+            "claude/projects-old",
+            "claude/projects/-h-git-a/memory",
+        ],
+    );
+    git(
+        &fx,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            "old layout",
+        ],
+    );
+    let out = run(&fx, &["restore", "--all", "--at", "HEAD", "--yes"]);
+    assert!(!out.contains("not in HEAD"), "{out}");
+}
+
+#[test]
 fn restore_recreates_a_link_to_another_tools_folder_even_when_its_target_is_missing() {
     // grimmerk/memsaga#22: skipped, the missing link would be committed as a
     // deletion by the next sweep and removed on every machine.
