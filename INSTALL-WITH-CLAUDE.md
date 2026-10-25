@@ -116,10 +116,11 @@ case it is:
 
 Otherwise, show the user where the data repository would go and how much would
 be imported. The dry run lists each Claude Code config directory it found
-(`root …` lines). If the user has another one that is not listed (check with
-`ls -d ~/.claude*`; a second account set up with `CLAUDE_CONFIG_DIR`, such as
-`~/.claude-work`), tell them it is not included, and that "Two Claude Code
-accounts" in the README shows how to add it after the install.
+(`root …` lines). Look for others with `ls -d ~/.claude*/` (folders only),
+and ask whether the user runs Claude Code with `CLAUDE_CONFIG_DIR` set to
+another folder, which may be anywhere. Tell them any one that is not listed
+is not included, and that "Two Claude Code accounts" in the README shows how
+to add it after the install.
 
 Ask whether that place and folder name are fine, or where they want it
 instead; any path works, and the folder does not have to be called
@@ -167,8 +168,9 @@ gh repo create <name> --private --source "<data repository path>" --push
 
 Without `gh`, ask the user to create an empty private repository on
 github.com and give you its URL. Before pushing, check that it is not public:
-an unauthenticated request for a private repository answers 404, a public one
-200. On 200, stop and ask the user to make it private.
+an unauthenticated request for a private repository answers 404. Push only on
+404. On anything else (200 means public; a rate limit, an error or no answer
+proves nothing), stop and ask the user to confirm the repository is private.
 
 ```sh
 curl -s -o /dev/null -w '%{http_code}\n' https://api.github.com/repos/<owner>/<name>
