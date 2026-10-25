@@ -15,6 +15,9 @@ and you can stop at any point. Some steps also show a permission prompt from
 Claude Code itself; [What to expect](#what-to-expect-from-permission-prompts)
 says which ones.
 
+The same file covers updating and uninstalling: start the prompt with "Update
+memsaga for me" or "Uninstall memsaga for me" instead.
+
 The rest of this file is written for Claude.
 
 ---
@@ -59,8 +62,10 @@ command -v gh && gh auth status
   On anything else, stop and say so.
 - git is required. If it is missing, tell the user how to install it for
   their system and stop.
-- If memsaga is already installed, ask whether to update it (step 2) or skip
-  to step 3, which also finds out whether this machine was set up before.
+- If memsaga is already installed and `memsaga status` shows a data
+  repository, the user probably wants an update: follow
+  [If the user asks to update](#if-the-user-asks-to-update) instead of the
+  steps below.
 - `gh` is optional. It only makes step 5 shorter.
 
 ### Step 2: install the binary
@@ -80,7 +85,10 @@ downloading the archive from the Releases page themselves.
 The installer may add `~/.cargo/bin` to the shell's startup file, but the
 shell that Claude Code runs commands in does not pick that up. Until the user
 opens a new terminal, call the binary by its full path, `~/.cargo/bin/memsaga`,
-in every step below. Check with `~/.cargo/bin/memsaga --version`.
+in every step below. Check with `~/.cargo/bin/memsaga --version`. If the
+binary is somewhere else (an install from before, or an archive the user
+unpacked), use the path `command -v memsaga` printed, or the one the user
+gives, wherever this file writes `~/.cargo/bin/memsaga`.
 
 ### Step 3: create the data repository
 
@@ -110,11 +118,14 @@ want it instead; any path works, and the folder does not have to be called
 
 ```sh
 ~/.cargo/bin/memsaga init
-~/.cargo/bin/memsaga init --repo <path the user chose>
+~/.cargo/bin/memsaga init --repo "<path the user chose>"
 ```
 
+Quote every path you fill in, here and below, since it may contain spaces.
 If `init` stops because the folder already holds something else, ask the user
-for another path and use `--repo`. Never delete or move their folder.
+for another path and use `--repo`. Never delete or move their folder. (When
+the user's own config file sets `repo`, `init` refuses a different `--repo`;
+change the line in `~/.config/memsaga/config.toml` instead.)
 
 ### Step 4: register the hooks
 
@@ -122,7 +133,9 @@ Ask first. Explain that this adds memsaga's hooks to Claude Code's
 `settings.json` in each config directory (usually only `~/.claude`), so that
 every turn which changes Claude Code's memory or configuration ends with a
 commit. Ask whether they also want the bundled skills, which let Claude answer
-questions about the history (`--skills`):
+questions about the history (`--skills`). `--skills` writes the folders
+`memsaga-history`, `companion-docs` and `companions` under `skills/`; if one of
+them already exists and memsaga did not write it, ask before overwriting it.
 
 ```sh
 ~/.cargo/bin/memsaga install
@@ -132,22 +145,23 @@ questions about the history (`--skills`):
 ### Step 5 (optional): a private GitHub repository
 
 Ask whether the user wants the history backed up to GitHub, and pushed
-automatically. If yes, ask for the repository name (`memories` is a good
+automatically (with the default settings, at most once every ten minutes
+and at the end of a session). If yes, ask for the repository name (`memories` is a good
 default). Get the data repository's path with `~/.cargo/bin/memsaga repo` and
 write that path into the commands below, rather than `"$(memsaga repo)"`:
 Claude Code cannot check a command with `$(…)` before it runs, so it always
 asks, and offers no "don't ask again" choice. With `gh` logged in:
 
 ```sh
-gh repo create <name> --private --source <data repository path> --push
+gh repo create <name> --private --source "<data repository path>" --push
 ```
 
 Without `gh`, ask the user to create an empty private repository on
 github.com, give you its URL, and then run:
 
 ```sh
-git -C <data repository path> remote add origin <URL>
-git -C <data repository path> push -u origin HEAD
+git -C "<data repository path>" remote add origin "<URL>"
+git -C "<data repository path>" push -u origin HEAD
 ```
 
 If the push fails for lack of credentials, the user has to set up git access
@@ -175,6 +189,25 @@ Then tell the user, in a few lines:
 
 ---
 
+### If the user asks to update
+
+Ask first, then:
+
+1. Run the install script of step 2 again; it replaces `~/.cargo/bin/memsaga`
+   with the latest release. If memsaga was built with cargo, add `--force` to
+   the `cargo install` line instead. If the user installed an archive by
+   hand, ask them to replace that binary with the new release's.
+2. Run `~/.cargo/bin/memsaga install` again, with `--skills` if the folder
+   `memsaga-history` exists under `skills/` in the config directory. This
+   updates memsaga's hook entries and adds any the new version needs;
+   `--skills` overwrites the bundled skills (an edited one keeps its old text
+   in the history).
+3. Show `~/.cargo/bin/memsaga --version`. Running Claude Code sessions need no
+   restart. If several machines share the data repository, tell the user to
+   update them all.
+
+Never run `memsaga init` for an update.
+
 ### If the user asks to uninstall
 
 Ask before each part, and never delete the data repository or the GitHub
@@ -184,8 +217,9 @@ let the user choose:
 1. `memsaga uninstall` removes the hooks from each config directory.
 2. The bundled skills, if `--skills` was used: the folders `memsaga-history`,
    `companion-docs` and `companions` under `skills/` in each config directory.
-3. The binary, `~/.cargo/bin/memsaga`, and `~/.config/memsaga/` (the config
-   file and the installer's receipt).
+3. The binary (`~/.cargo/bin/memsaga`, or wherever `command -v memsaga`
+   points; `cargo uninstall memsaga` if it was built with cargo), and
+   `~/.config/memsaga/` (the config file and the installer's receipt).
 4. The line `. "$HOME/.cargo/env"` that the install script added to the
    shell startup files (`~/.zshrc`, `~/.bashrc`, `~/.profile`), and
    `~/.cargo/env`: only if nothing else the user has is installed in

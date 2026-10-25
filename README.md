@@ -250,7 +250,7 @@ and ask me before each step that changes my machine.
 Claude runs the steps above and asks before each one, including where the
 data repository goes. [INSTALL-WITH-CLAUDE.md](INSTALL-WITH-CLAUDE.md) is the
 file it follows. It also lists the permission prompts seen in a test run:
-none in auto mode, one per command in manual mode.
+none in auto mode, 11 in manual mode.
 
 From then on nothing else is needed. Every turn that changed something in
 scope ends with a commit, and the terminal shows a one-line notice. Once the
@@ -752,6 +752,9 @@ The prompt text is never copied into a commit.
    adds any hook the new version needs. `--skills` overwrites the bundled
    skills; if you edited one, the old text is in the history.
 
+To let Claude Code do both steps, paste the prompt from the quick start with
+"Update memsaga for me" in place of "Install memsaga for me".
+
 `memsaga --version` shows what is installed. Running sessions need no restart:
 every hook starts a new process, so the next one uses the new binary. If
 several machines share one data repository, update them together.
@@ -763,16 +766,21 @@ several machines share one data repository, update them together.
 2. If you ran `memsaga install --skills`, delete the `memsaga-history`,
    `companion-docs` and `companions` folders under `skills/` in each config
    directory.
-3. Delete the binary, `~/.cargo/bin/memsaga` (`cargo uninstall memsaga` if
-   you built it with cargo), and `~/.config/memsaga/`, which holds the config
-   file and the install script's receipt.
+3. Delete the binary: `~/.cargo/bin/memsaga` from the install script, the
+   copy you put on your `PATH` from a downloaded archive, or
+   `cargo uninstall memsaga` if you built it with cargo. Then delete
+   `~/.config/memsaga/`, which holds the config file and the install script's
+   receipt.
 4. The install script adds the line `. "$HOME/.cargo/env"` to the shell
    startup files it finds (`~/.zshrc`, `~/.bashrc`, `~/.profile`). Remove it,
    and `~/.cargo/env`, only if nothing else you use is installed in
    `~/.cargo`.
 
 None of this touches the data repository or its copy on GitHub: they are your
-history. Delete them yourself only if you no longer want it.
+history. Delete them yourself only if you no longer want it. Claude Code can
+also do the steps above, asking before each one: paste the prompt from the
+quick start with "Uninstall memsaga for me" in place of "Install memsaga for
+me".
 
 ### Setting up another machine
 
