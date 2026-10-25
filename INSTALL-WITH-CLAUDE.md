@@ -120,7 +120,7 @@ be imported. The dry run lists each Claude Code config directory it found
 and ask whether the user runs Claude Code with `CLAUDE_CONFIG_DIR` set to
 another folder, which may be anywhere (`echo "$CLAUDE_CONFIG_DIR"` shows it
 for the current session). When this session has `CLAUDE_CONFIG_DIR` set,
-memsaga after 0.1.1 lists that folder as a root and `init` records it, when
+memsaga 0.1.2 and later list that folder as a root and `init` records it, when
 the folder exists and the config file lists no roots of its own; memsaga
 0.1.1 does not, and no version finds the folder of an account this session
 does not use. If a folder the user uses is not listed, and above all

@@ -272,7 +272,7 @@ it, or a Claude Code session using it): `init` adds that folder and records
 all roots as `[[roots]]` in `~/.config/memsaga/config.toml`, so every session
 sees the same ones. It does so only when the config file lists no roots of
 its own. The `root …` lines of `init --dry-run` show the result.
-memsaga 0.1.1 does not do this yet; with it, write the lines yourself before
+memsaga 0.1.1 does not do this; with it, write the lines yourself before
 `init`. Listing roots turns off the automatic search, so list `~/.claude` too
 if you also use it:
 
