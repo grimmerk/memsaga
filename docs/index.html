@@ -587,7 +587,7 @@ git log --grep 'Session-Title: .*login'</pre>
     </div>
     <div class="promises">
       <div class="promise"><h3>Your files stay where they are</h3><p>The repository holds copies. memsaga writes Claude's files only when you restore one, or when an edit you made elsewhere arrives.</p></div>
-      <div class="promise"><h3>Every version can come back</h3><p>Restore one file, or all of them, from any point in history. A restore shows the diff and waits for your yes. No git needed: with the bundled skills, ask Claude what a file said last week.</p></div>
+      <div class="promise"><h3>Every version can come back</h3><p>Restore one file, or all of them, from any point in history. A restore shows the diff and waits for your yes. No git needed: after <code>memsaga install --skills</code>, ask Claude what <code>CLAUDE.md</code> or a memory file said last week.</p></div>
       <div class="promise"><h3>It stays out of Claude's way</h3><p>If something fails, Claude Code carries on as usual, and <code>memsaga status</code> tells you what happened.</p></div>
       <div class="promise"><h3>What you add stays</h3><p>Files you put in the repository yourself are committed and never removed by memsaga.</p></div>
       <div class="promise"><h3>Secrets stay out</h3><p>Not copied: <code>~/.claude.json</code>, credentials, transcripts and caches. <code>settings.json</code> only if you ask.</p></div>
@@ -765,7 +765,7 @@ and ask me before each step that changes my machine.</pre>
     var a = document.createElement('a');
     a.className = 'anchor';
     a.href = '#' + h.closest('section').id;
-    a.setAttribute('aria-label', 'Link to this section');
+    a.setAttribute('aria-label', 'Link to the section: ' + h.textContent.trim());
     a.textContent = '#';
     h.appendChild(a);
   });
