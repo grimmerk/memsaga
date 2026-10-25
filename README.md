@@ -4,7 +4,8 @@ Version control and two-way sync for the files your AI coding agent works
 with: what it remembers, how you configure it, and anything else you choose.
 
 **Website:** [memsaga.grimmer.io](https://memsaga.grimmer.io) ·
-[Install](#quick-start) · [Do you need it?](#do-you-need-memsaga) ·
+Install ([with Claude Code](#install-with-claude-code) or
+[by hand](#install-by-hand)) · [Do you need it?](#do-you-need-memsaga) ·
 [FAQ](docs/faq.md) ·
 [Discussions](https://github.com/grimmerk/memsaga/discussions)
 
@@ -98,7 +99,7 @@ Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
 ## Contents
 
 - [Do you need memsaga?](#do-you-need-memsaga)
-- [Quick start](#quick-start)
+- [Quick start](#quick-start): [with Claude Code](#install-with-claude-code) or [by hand](#install-by-hand)
 - [What you can do with it](#what-you-can-do-with-it)
   - Claude Code's config directory
     1. [See what Claude remembered, and when it changed](#1-see-what-claude-remembered-and-when-it-changed)
@@ -192,10 +193,33 @@ Other ways to do this, compared, and the do-it-yourself setup step by step:
 ## Quick start
 
 You need macOS or Linux, git and Claude Code. `gh` (the GitHub command-line
-tool) is optional, for creating the GitHub repository. The first line installs a
-prebuilt binary into `~/.cargo/bin` (Apple silicon and Intel Macs, Linux on
-x86_64 and arm64). To build from source instead, with Rust's `cargo` (Rust
-1.88 or later): `cargo install memsaga --locked` from crates.io, or
+tool) is optional, for creating the GitHub repository. There are two ways to
+install: [let Claude Code do it](#install-with-claude-code), or
+[install by hand](#install-by-hand). Both run the same steps.
+
+### Install with Claude Code
+
+Paste this prompt into Claude Code:
+
+```text
+Install memsaga for me. Follow
+https://raw.githubusercontent.com/grimmerk/memsaga/main/INSTALL-WITH-CLAUDE.md
+and ask me before each step that changes my machine.
+```
+
+Claude checks what you have, then runs the steps of
+[Install by hand](#install-by-hand) and asks before each one, including where
+the data repository goes. [INSTALL-WITH-CLAUDE.md](INSTALL-WITH-CLAUDE.md) is
+the file it follows. It also lists the permission prompts seen in a test run:
+none in auto mode, 11 in manual mode. To read each command before anything
+runs, install by hand instead.
+
+### Install by hand
+
+The first line installs a prebuilt binary into `~/.cargo/bin` (Apple silicon
+and Intel Macs, Linux on x86_64 and arm64). To build from source instead,
+with Rust's `cargo` (Rust 1.88 or later): `cargo install memsaga --locked`
+from crates.io, or
 `cargo install --git https://github.com/grimmerk/memsaga memsaga --locked` for
 the latest `main`.
 Rather not pipe a script into `sh`? Download the archive for your platform from
@@ -240,13 +264,17 @@ commands below use it, so they work wherever yours is. Example
 projects here live under `~/git` (for example `~/git/webapp`); read that as
 the folder where you keep code.
 
-**Claude Code's config somewhere else.** memsaga finds Claude Code's config
-directory as `~/.claude`, or through the account list of
-[CodeV](#8-two-claude-code-accounts). It does not read `CLAUDE_CONFIG_DIR`.
-If you run Claude Code with `CLAUDE_CONFIG_DIR` set, write the folder into
-`~/.config/memsaga/config.toml` before `init`. Any `[[roots]]` entry replaces
-the automatic search, so if you also use `~/.claude`, list it too. Check the
-`root …` lines of `init --dry-run`, then run the steps above:
+**Claude Code's config somewhere else.** memsaga looks for Claude Code's
+config directory at `~/.claude` and in the account list of
+[CodeV](#8-two-claude-code-accounts). If you run Claude Code with
+`CLAUDE_CONFIG_DIR` set, run `init` where it is set (a terminal that exports
+it, or a Claude Code session using it): `init` adds that folder and records
+all roots as `[[roots]]` in `~/.config/memsaga/config.toml`, so every session
+sees the same ones. It does so only when the config file lists no roots of
+its own. The `root …` lines of `init --dry-run` show the result.
+memsaga 0.1.1 does not do this yet; with it, write the lines yourself before
+`init`. Listing roots turns off the automatic search, so list `~/.claude` too
+if you also use it:
 
 ```toml
 [[roots]]
@@ -259,27 +287,21 @@ path = "~/.claude"
 label = "claude-default"
 ```
 
-**Or let Claude Code install it.** Paste this prompt into Claude Code:
+`memsaga install`, `memsaga status` and `memsaga config` warn when
+`CLAUDE_CONFIG_DIR` names a folder that is not a root, and print the lines to
+add. A second account set up without `CLAUDE_CONFIG_DIR` in the shell where
+you run `init` (for example `~/.claude-work`) is not found either: list it as
+in [Two Claude Code accounts](#8-two-claude-code-accounts).
 
-```text
-Install memsaga for me. Follow
-https://raw.githubusercontent.com/grimmerk/memsaga/main/INSTALL-WITH-CLAUDE.md
-and ask me before each step that changes my machine.
-```
+### After the install
 
-Claude runs the steps above and asks before each one, including where the
-data repository goes. [INSTALL-WITH-CLAUDE.md](INSTALL-WITH-CLAUDE.md) is the
-file it follows. It also lists the permission prompts seen in a test run:
-none in auto mode, 11 in manual mode.
-
-From then on nothing else is needed. Every turn that changed something in
-scope ends with a commit, and the terminal shows a one-line notice. Once the
-data repository has an `origin` remote (the optional `gh repo create` line
-above), pushes happen on their own, at most once every ten minutes and at the
-end of a session; without one, the history stays on this machine. Without
-`gh`, create an empty private repository on GitHub, then run
-`git -C "$(memsaga repo)" remote add origin <its URL>` and
-`git -C "$(memsaga repo)" push -u origin HEAD`.
+Nothing else is needed. Every turn that changed something in scope ends with a
+commit, and the terminal shows a one-line notice. Once the data repository has
+an `origin` remote (the optional `gh repo create` line above), pushes happen
+on their own, at most once every ten minutes and at the end of a session;
+without one, the history stays on this machine. Without `gh`, create an empty
+private repository on GitHub, then run `git -C "$(memsaga repo)" remote add
+origin <its URL>` and `git -C "$(memsaga repo)" push -u origin HEAD`.
 
 **Keep the data repository private.** Memory holds whatever Claude learned
 while working with you, which often includes details of your work. The default
@@ -726,9 +748,10 @@ label = "claude"
 ```
 
 Without `[[roots]]`, memsaga reads CodeV's `~/.config/codev/accounts.json` if
-present, else uses `~/.claude`; `CLAUDE_CONFIG_DIR` is not read, so a config
-directory set that way must be listed under `[[roots]]`. Without `repo`, it
-uses an existing memsaga
+present, else uses `~/.claude`. That search does not read
+`CLAUDE_CONFIG_DIR`; `init` adds the folder it names and writes the roots into
+the file (memsaga 0.1.1 does not; list the folder yourself). Without `repo`,
+it uses an existing memsaga
 repository called `memories` in one of the folders the quick start names, else
 the place `init` would choose. If the config file disappears while the
 repository still holds its mirrored copy, memsaga runs on its defaults: fewer
@@ -766,7 +789,7 @@ The prompt text is never copied into a commit.
 
 ### Updating
 
-1. Run the install line from the [quick start](#quick-start) again: it
+1. Run the install line from [Install by hand](#install-by-hand) again: it
    downloads the latest release and replaces `~/.cargo/bin/memsaga`. If you
    built from source, add `--force` to the `cargo install` line.
 2. `memsaga install`, with `--skills` if you installed the bundled skills.
@@ -774,7 +797,8 @@ The prompt text is never copied into a commit.
    adds any hook the new version needs. `--skills` overwrites the bundled
    skills; if you edited one, the old text is in the history.
 
-To let Claude Code do both steps, paste the prompt from the quick start with
+To let Claude Code do both steps, paste the prompt from
+[Install with Claude Code](#install-with-claude-code) with
 "Update memsaga for me" in place of "Install memsaga for me".
 
 `memsaga --version` shows what is installed. Running sessions need no restart:
@@ -823,8 +847,8 @@ rm -r ~/.config/memsaga
 
 None of this touches the data repository or its copy on GitHub: they are your
 history. Delete them yourself only if you no longer want it. Claude Code can
-also do the steps above, asking before each one: paste the prompt from the
-quick start with "Uninstall memsaga for me" in place of "Install memsaga for
+also do the steps above, asking before each one: paste the prompt from
+[Install with Claude Code](#install-with-claude-code) with "Uninstall memsaga for me" in place of "Install memsaga for
 me".
 
 ### Setting up another machine
@@ -844,7 +868,7 @@ Tested with the same user name and the same folder layout on both machines:
    git clone git@github.com:<you>/memories.git "$D"   # or: gh repo clone <you>/memories "$D"
    mkdir -p ~/.config/memsaga && cp "$D/memsaga/config.toml" ~/.config/memsaga/config.toml
    ```
-3. Install memsaga (the install line in the [quick start](#quick-start)).
+3. Install memsaga (the install line in [Install by hand](#install-by-hand)).
 4. `memsaga restore --all --at HEAD`: read the list and the diffs, answer
    `n`; then run it again with `--yes`. Files get their content, executable
    bits and commit time back; links that share files between accounts are
