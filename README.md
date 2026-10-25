@@ -244,13 +244,19 @@ the folder where you keep code.
 directory as `~/.claude`, or through the account list of
 [CodeV](#8-two-claude-code-accounts). It does not read `CLAUDE_CONFIG_DIR`.
 If you run Claude Code with `CLAUDE_CONFIG_DIR` set, write the folder into
-`~/.config/memsaga/config.toml` before `init` (the `root …` lines of
-`init --dry-run` show what was found), then run the steps above:
+`~/.config/memsaga/config.toml` before `init`. Any `[[roots]]` entry replaces
+the automatic search, so if you also use `~/.claude`, list it too. Check the
+`root …` lines of `init --dry-run`, then run the steps above:
 
 ```toml
 [[roots]]
 path = "~/my-claude-config"   # the folder CLAUDE_CONFIG_DIR points to
 label = "claude"
+
+# only if you also use ~/.claude; each root needs its own label
+[[roots]]
+path = "~/.claude"
+label = "claude-default"
 ```
 
 **Or let Claude Code install it.** Paste this prompt into Claude Code:
