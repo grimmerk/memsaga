@@ -234,6 +234,8 @@ pre.cmd { margin: 0; padding: 12px 14px; border-radius: 8px; background: var(--c
 .term button { font: 600 .76rem/1 var(--mono); color: var(--code-ink); background: transparent; border: 1px solid var(--code-dim); border-radius: 6px;
   padding: 6px 10px; cursor: pointer; }
 .term pre { margin: 0; padding: 16px; font: 400 .84rem/1.7 var(--mono); overflow-x: auto; }
+/* install commands wrap instead of scrolling, so the long URLs stay visible */
+.install .term pre { white-space: pre-wrap; word-break: break-all; }
 .term .c { color: var(--code-dim); }
 .term .p { color: #E5A945; user-select: none; }
 .steps { margin: 0; padding-left: 1.2em; display: grid; gap: 10px; color: var(--muted); }
@@ -648,7 +650,7 @@ git log --grep 'Session-Title: .*login'</pre>
 Install memsaga for me. Follow
 https://raw.githubusercontent.com/grimmerk/memsaga/main/INSTALL-WITH-CLAUDE.md
 and ask me before each step that changes my machine.</pre>
-      <pre style="border-top:1px solid var(--code-line)"><span class="c"># to try it on example data first, run these after the install line;</span>
+      <pre style="border-top:1px solid var(--code-line)"><span class="c"># to try it on example data first (after the install line):</span>
 <span class="c"># your real Claude Code config is never read or written</span>
 <span class="p">$ </span>git clone https://github.com/grimmerk/memsaga
 <span class="p">$ </span>memsaga/demo/setup.sh &amp;&amp; source /tmp/memsaga-demo/env.sh</pre>

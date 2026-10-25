@@ -770,10 +770,11 @@ script), these commands remove everything memsaga added:
 memsaga uninstall
 
 # 2. the bundled skills, if you ran `memsaga install --skills`,
-#    and the copy of settings.json that `memsaga install` took first
+#    then, if you no longer need it, the copy of settings.json that
+#    `memsaga install` took first (rm -i asks before deleting it)
 rm -r ~/.claude/skills/memsaga-history ~/.claude/skills/companion-docs \
   ~/.claude/skills/companions
-rm -f ~/.claude/settings.json.memsaga-bak
+rm -i ~/.claude/settings.json.memsaga-bak
 
 # 3. the binary, the config file and the install script's receipt
 rm ~/.cargo/bin/memsaga
