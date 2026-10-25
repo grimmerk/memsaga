@@ -327,6 +327,40 @@ footer .wrap { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 
   </div>
 </section>
 
+<section class="band" id="memory">
+  <div class="wrap">
+    <div class="band-head">
+      <span class="eyebrow">Background</span>
+      <h2>How Claude Code remembers</h2>
+      <p class="lede">Two kinds of Markdown files, both on your machine. Auto memory and your global <code>CLAUDE.md</code> have no history, and live only on the machine that wrote them; a <code>CLAUDE.md</code> inside a repository is versioned with that repository. <a href="https://code.claude.com/docs/en/memory">Anthropic's docs</a></p>
+    </div>
+    <div class="sources">
+      <div class="src">
+        <h3><code>CLAUDE.md</code></h3>
+        <p>You write it, or Claude does when you ask ("add this to CLAUDE.md"): <code>~/.claude/CLAUDE.md</code> for every project, and <code>CLAUDE.md</code> in a repository. Loaded whole in every session.</p>
+      </div>
+      <div class="src">
+        <h3>Auto memory</h3>
+        <p>Claude Code's own name for the notes Claude writes: when you ask it to remember something, and on its own from your corrections. A <code>MEMORY.md</code> index and one file per memory, under <code>~/.claude/projects/&lt;project&gt;/memory/</code>. The index is loaded in every session, each memory file when Claude needs it.</p>
+      </div>
+      <div class="src">
+        <h3>An example</h3>
+        <pre class="cmd">you:     Remember that the API
+         tests need a local Redis.
+Claude:  writes api_tests.md
+         Saved 1 memory
+
+you:     No, we only deploy on
+         Fridays, from a git tag.
+Claude:  decides to keep it,
+         writes deploy_rules.md
+         Saved 1 memory</pre>
+        <p>Next week a session loads the index and reads these files when they matter. A later session can also rewrite them, with no way back.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="band" id="see">
   <div class="wrap">
     <div class="band-head">

@@ -13,11 +13,58 @@ with: what it remembers, how you configure it, and anything else you choose.
   <img src="docs/assets/hero-light.png" width="100%" alt="memsaga: three sources (Claude Code's config directory in every account, files elsewhere you choose, and content kept only in the repository) become a readable history in a git repository you own, each change named after its session, from fixing a login redirect to restoring CLAUDE.md to Monday's version. The repository syncs both ways between this machine, a private GitHub repository and another machine, and edits made on the web or a phone come back.">
 </picture>
 
-Claude Code keeps your global instructions in `~/.claude/CLAUDE.md`, writes
-what it learns about each project into `~/.claude/projects/<slug>/memory/`,
-and reads your skills, hooks and scripts from `~/.claude/`. None of that has
-history. Two sessions that edit the same file on one day leave no trace of the
-earlier version, and a memory clean-up that deletes or merges files is final.
+### How Claude Code remembers
+
+Claude Code keeps two kinds of memory, both plain Markdown files on your
+machine ([Anthropic's docs](https://code.claude.com/docs/en/memory)):
+
+| | `CLAUDE.md` | Auto memory (Claude Code's own name for it) |
+|---|---|---|
+| Who writes it | You, or Claude when you ask ("add this to CLAUDE.md") | Claude: when you ask it to remember something, and on its own from your corrections and preferences |
+| Where | `~/.claude/CLAUDE.md` for every project, and `CLAUDE.md` in a repository | `~/.claude/projects/<project>/memory/`: a `MEMORY.md` index and one file per memory |
+| Loaded | The whole file, every session | The first 200 lines (or 25 KB) of `MEMORY.md` every session; each memory file when Claude needs it |
+
+Two ways a memory gets written:
+
+```text
+you:          Remember that the API tests need a local Redis.
+Claude:       writes memory/api_tests.md, and adds a line for it to MEMORY.md
+Claude Code:  Saved 1 memory
+
+you:          No, we only deploy on Fridays, from a git tag.
+Claude:       decides this is worth keeping, writes memory/deploy_rules.md
+Claude Code:  Saved 1 memory
+```
+
+Claude decides what is worth keeping, so not every session saves something.
+A session next week loads `MEMORY.md`, sees the line for `deploy_rules.md`,
+and reads that file before it answers how to deploy. Claude also reads your
+skills, hooks and scripts from `~/.claude/`.
+
+Auto memory and your global `~/.claude/CLAUDE.md` have no history, and they
+live only on the machine that wrote them (a `CLAUDE.md` inside a repository is
+versioned with that repository). A later session can rewrite
+`deploy_rules.md`, two sessions that edit the same file on one day leave no
+trace of the earlier version, and a clean-up that merges ten memories into
+three cannot be undone.
+
+memsaga keeps them as history:
+
+```text
+① Claude writes or changes a memory, CLAUDE.md or a skill
+        │
+② at the end of the turn (by default; `granularity = "edit"` commits after
+  each edit), a memsaga hook copies what changed into your data repository
+  and commits it, named after the conversation
+        │
+③ with an `origin` remote (on GitHub, for example), it is pushed there: at
+  most once per `push_min_interval_secs` (`0` turns that off), at the end of
+  a session (`push_on_session_end`), or now with `memsaga push`; your other
+  machines pull it, and an edit made on another machine or on GitHub
+  reaches the live file
+```
+
+### What goes into the data repository
 
 memsaga keeps one git repository you own, the data repository, and fills it
 from three places, told apart by where a file lives:
@@ -35,15 +82,14 @@ from three places, told apart by where a file lives:
    drafts about other repositories), anything else; edit and push from
    anywhere. memsaga commits what you add and never deletes it.
 
-At the end of every turn a hook copies what changed and commits it, one commit
-per turn. Each commit names the session that made the change, by title and by
-ID, so you can go from any change back to the conversation that caused it, and
-from a conversation to everything it changed. The
-repository can live on GitHub and be shared by several machines and Claude Code
-accounts; an edit made in one place (another machine, GitHub's web editor, a
-phone) reaches the live files everywhere else.
+Each commit names the session that made the change, by title and by ID, so
+you can go from any change back to the conversation that caused it, and from a
+conversation to everything it changed. One repository can be shared by several
+machines and Claude Code accounts; an edit made in one place (another machine,
+GitHub's web editor, a phone) reaches the live files everywhere else.
 
-Status: early, in daily use by its author on macOS (CI also runs on Linux).
+Status: early, in daily use by its author on macOS; Linux is tested in CI and
+in a container.
 Claude Code is the only source today; other agents and sources are on the
 [roadmap](#roadmap). Contributor notes: [`docs/architecture.md`](docs/architecture.md).
 Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
