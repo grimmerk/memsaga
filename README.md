@@ -785,7 +785,10 @@ The subject is `[<session title>] <areas>`, for example
 characters there so the subject stays within 72; the `Session-Title:` line keeps
 the whole title. The other lines: `Event:` (the hook or command), `Account:`
 (from `CLAUDE_CONFIG_DIR`), `Session:` (the session ID), `Cwd:` and `Agent:`.
-The prompt text is never copied into a commit.
+The prompt text is never copied into a commit. A commit made by a command you
+run yourself, such as `memsaga sync` or `memsaga init`, belongs to no session:
+its subject starts with the command (`sync: claude:memory:HOME-git`), and
+`Session:` and `Cwd:` read `none`.
 
 ### Updating
 
