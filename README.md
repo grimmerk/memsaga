@@ -109,7 +109,7 @@ Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
   - Files elsewhere, and content only in the repository
     5. [Version any file Claude edits for you](#5-version-any-file-claude-edits-for-you)
     6. [Add your own files to the repository](#6-add-your-own-files-to-the-repository)
-    7. [Keep notes beside a repository without committing them](#7-keep-notes-beside-a-repository-without-committing-them)
+    7. [Companion docs: notes beside a repository, never committed to it](#7-companion-docs-notes-beside-a-repository-never-committed-to-it)
   - Everywhere you work
     8. [Two Claude Code accounts](#8-two-claude-code-accounts)
     9. [Two machines](#9-two-machines)
@@ -185,7 +185,7 @@ It also handles what the do-it-yourself setup cannot easily handle:
   draft) and it is kept in memsaga's repository under `companion/`, filed by
   the project and file it is about, so a later conversation finds it again.
   memsaga calls these companion documents
-  ([use case 7](#7-keep-notes-beside-a-repository-without-committing-them)).
+  ([use case 7](#7-companion-docs-notes-beside-a-repository-never-committed-to-it)).
 
 Other ways to do this, compared, and the do-it-yourself setup step by step:
 [FAQ](docs/faq.md).
@@ -329,6 +329,11 @@ Use cases 1 to 4 work right after the quick start (3 also needs
 working in more than one place. 11 is one example of what a full history makes
 safe to try.
 
+None of them needs you to know git. `memsaga restore` shows the change and
+asks before it writes anything, and with the bundled skills you can ask Claude
+instead: "what did CLAUDE.md say about testing last week?" The git commands
+below are there for those who want them.
+
 ### 1. See what Claude remembered, and when it changed
 
 <img src="docs/assets/demo.gif" width="100%" alt="Terminal recording on example data: git log of a week of memsaga commits, each named after its session; the Session-Title and Session trailers of the commit that added a memory about the OAuth redirect; git log -S finding the session that removed a rule from CLAUDE.md and the restore that brought it back; the live CLAUDE.md with the rule again.">
@@ -467,7 +472,7 @@ copy. You can also commit and push from another machine or edit in GitHub's
 web editor. An edit to a mirrored file made in the repository, say to
 `claude/CLAUDE.md`, is not overwritten: it goes to the live file (use case 10).
 
-### 7. Keep notes beside a repository without committing them
+### 7. Companion docs: notes beside a repository, never committed to it
 
 Some documents belong with a repository but must not be committed to it: a
 translation of its docs, your annotated copy, a draft written before the source
