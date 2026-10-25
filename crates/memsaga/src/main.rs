@@ -12,9 +12,9 @@ use memsaga_core::hook::{self, Action, HookInput};
 use memsaga_core::roots::{Entry, Scope};
 use memsaga_core::state::State;
 use memsaga_core::sweep::{self, Attribution};
-use memsaga_core::{backfill, install, restore, skills, slug};
+use memsaga_core::{backfill, install, mirror, restore, skills, slug};
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(
@@ -582,12 +582,13 @@ fn cmd_init(
             match &e {
                 Entry::File { rel } => println!("  {rel}"),
                 Entry::Dir { rel } => {
-                    let n = count_files(&src);
+                    let n = mirror::count_mirrored(&scope, &src, Path::new(rel));
                     total_files += n;
                     println!("  {rel}/  ({n} files)");
                 }
                 Entry::Memory { slug: s } => {
-                    let n = count_files(&src);
+                    let prefix = Path::new("projects").join(s).join("memory");
+                    let n = mirror::count_mirrored(&scope, &src, &prefix);
                     total_files += n;
                     let real = slug::resolve(&map, s)
                         .map(|p| slug::display_path(&p))
@@ -1115,13 +1116,4 @@ fn fmt_stamp(s: &Option<memsaga_core::status::Stamp>) -> String {
         Some(s) => format!("{} ({}s ago)", s.at, s.age_secs),
         None => "never".into(),
     }
-}
-
-fn count_files(dir: &std::path::Path) -> usize {
-    walkdir::WalkDir::new(dir)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .count()
 }
