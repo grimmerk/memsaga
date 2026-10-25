@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/memsaga-core", "crates/memsaga"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/grimmerk/memsaga"
@@ -14,7 +14,7 @@ rust-version = "1.88"
 
 [workspace.dependencies]
 # Published together; keep the version equal to workspace.package.version.
-memsaga-core = { path = "crates/memsaga-core", version = "0.1.1" }
+memsaga-core = { path = "crates/memsaga-core", version = "0.1.2" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
