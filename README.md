@@ -41,20 +41,25 @@ A session next week loads `MEMORY.md`, sees the line for `deploy_rules.md`,
 and reads that file before it answers how to deploy. Claude also reads your
 skills, hooks and scripts from `~/.claude/`.
 
-None of these files has history, and they live only on the machine that wrote
-them. A later session can rewrite `deploy_rules.md`, two sessions that edit the
-same file on one day leave no trace of the earlier version, and a clean-up
-that merges ten memories into three cannot be undone.
+Auto memory and your global `~/.claude/CLAUDE.md` have no history, and they
+live only on the machine that wrote them (a `CLAUDE.md` inside a repository is
+versioned with that repository). A later session can rewrite
+`deploy_rules.md`, two sessions that edit the same file on one day leave no
+trace of the earlier version, and a clean-up that merges ten memories into
+three cannot be undone.
 
 memsaga keeps them as history:
 
 ```text
 ① Claude writes or changes a memory, CLAUDE.md or a skill
         │
-② at the end of the turn, a memsaga hook copies what changed into your
-  data repository and commits it, named after the conversation
+② at the end of the turn (by default; `granularity = "edit"` commits after
+  each edit), a memsaga hook copies what changed into your data repository
+  and commits it, named after the conversation
         │
-③ with a GitHub remote, the repository is pushed there; your other machines
+③ with a GitHub remote, it is pushed there: at most once per
+  `push_min_interval_secs` (`0` turns that off), at the end of a session
+  (`push_on_session_end`), or now with `memsaga push`; your other machines
   pull it, and an edit made on another machine or on GitHub reaches the
   live file
 ```
