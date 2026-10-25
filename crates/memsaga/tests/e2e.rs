@@ -3699,6 +3699,117 @@ fn init_puts_the_repository_in_an_existing_code_folder_and_records_it() {
     assert!(u.effective_repo().contains(&code.display().to_string()));
 }
 
+/// Run memsaga as a session whose Claude Code uses `dir` (CLAUDE_CONFIG_DIR).
+fn with_config_dir(u: &NewUser, dir: &Path, args: &[&str]) -> String {
+    let out = u
+        .command(None)
+        .env("CLAUDE_CONFIG_DIR", dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "memsaga {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+#[test]
+fn init_adds_and_records_the_claude_config_dir_folder() {
+    // Root discovery does not read CLAUDE_CONFIG_DIR: with Claude Code's
+    // config only in a folder of its own, init found no root and install
+    // registered no hook (grimmerk/memsaga#42).
+    let u = NewUser::new(&["git"]);
+    fs::remove_dir_all(u.home.join(".claude")).unwrap();
+    let mine = u.home.join("cc-config");
+    write(&mine.join("CLAUDE.md"), "# mine\n");
+    write(&mine.join("projects/-x/memory/a.md"), "a\n");
+
+    let dry = with_config_dir(&u, &mine, &["init", "--no-backfill", "--dry-run"]);
+    assert!(
+        dry.contains("is CLAUDE_CONFIG_DIR; init would record all roots"),
+        "{dry}"
+    );
+    assert!(dry.contains("root cc-config ("), "{dry}");
+    assert!(!u.cfg().exists(), "a dry run writes nothing");
+
+    with_config_dir(&u, &mine, &["init", "--no-backfill"]);
+    let cfg = fs::read_to_string(u.cfg()).unwrap();
+    assert!(
+        cfg.contains("[[roots]]\npath = \"~/cc-config\"\nlabel = \"cc-config\"\n"),
+        "{cfg}"
+    );
+    let repo = u.home.join("git/memories");
+    assert!(repo.join("cc-config/CLAUDE.md").is_file());
+    assert!(repo.join("cc-config/memory/-x/a.md").is_file());
+
+    let out = with_config_dir(&u, &mine, &["install"]);
+    assert!(out.contains("hooks registered"), "{out}");
+    assert!(mine.join("settings.json").is_file());
+    // Recorded, so a session without the variable sees the same root.
+    let status = u.run(&["status"]);
+    assert!(status.contains("root cc-config:"), "{status}");
+    assert!(!status.contains("CLAUDE_CONFIG_DIR is"), "{status}");
+}
+
+#[test]
+fn init_records_claude_config_dir_beside_the_default_root() {
+    let u = NewUser::new(&["git"]);
+    let mine = u.home.join(".config/claude");
+    write(&mine.join("CLAUDE.md"), "# mine\n");
+    with_config_dir(&u, &mine, &["init", "--no-backfill"]);
+    let cfg = fs::read_to_string(u.cfg()).unwrap();
+    // Listing roots turns discovery off, so ~/.claude is recorded too, and
+    // the second folder named `claude` gets a label of its own.
+    assert!(
+        cfg.contains("path = \"~/.claude\"\nlabel = \"claude\"\n"),
+        "{cfg}"
+    );
+    assert!(
+        cfg.contains("path = \"~/.config/claude\"\nlabel = \"claude-2\"\n"),
+        "{cfg}"
+    );
+    let repo = u.home.join("git/memories");
+    assert!(repo.join("claude/CLAUDE.md").is_file());
+    assert!(repo.join("claude-2/CLAUDE.md").is_file());
+}
+
+#[test]
+fn init_leaves_the_config_alone_when_claude_config_dir_is_a_root() {
+    let u = NewUser::new(&["git"]);
+    let dot = u.home.join(".claude");
+    let out = with_config_dir(&u, &dot, &["init", "--no-backfill"]);
+    assert!(!out.contains("CLAUDE_CONFIG_DIR"), "{out}");
+    let cfg = fs::read_to_string(u.cfg()).unwrap();
+    assert!(!cfg.contains("[[roots]]"), "{cfg}");
+}
+
+#[test]
+fn install_and_status_warn_about_an_unlisted_claude_config_dir() {
+    let u = NewUser::new(&["git"]);
+    u.run(&["init", "--no-backfill"]);
+    let mine = u.home.join("cc-config");
+    fs::create_dir_all(&mine).unwrap();
+    let out = with_config_dir(&u, &mine, &["install"]);
+    assert!(out.contains("CLAUDE_CONFIG_DIR is "), "{out}");
+    assert!(
+        out.contains("path = \"~/.claude\"\nlabel = \"claude\"\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("path = \"~/cc-config\"\nlabel = \"cc-config\""),
+        "{out}"
+    );
+    assert!(
+        !mine.join("settings.json").exists(),
+        "nothing written there"
+    );
+    let status = with_config_dir(&u, &mine, &["status"]);
+    assert!(status.contains("CLAUDE_CONFIG_DIR is "), "{status}");
+}
+
 #[test]
 fn dry_run_counts_only_the_files_init_imports() {
     // claude.ai-synced skills live under skills/synced, excluded by default:

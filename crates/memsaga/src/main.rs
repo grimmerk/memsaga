@@ -339,6 +339,11 @@ fn run(cli: Cli) -> Result<()> {
                 Some(b) => b,
                 None => install::portable_bin(&std::env::current_exe()?.to_string_lossy()),
             };
+            if root.is_empty() {
+                for w in memsaga_core::status::roots_warnings(&cfg) {
+                    println!("{w}");
+                }
+            }
             let roots: Vec<PathBuf> = if root.is_empty() {
                 cfg.roots.iter().map(|r| r.path.clone()).collect()
             } else {
@@ -494,6 +499,9 @@ fn run(cli: Cli) -> Result<()> {
             for w in memsaga_core::status::extra_folder_warnings(&cfg) {
                 println!("# {w}");
             }
+            for w in memsaga_core::status::roots_warnings(&cfg) {
+                println!("# {}", w.replace('\n', "\n# "));
+            }
             Ok(())
         }
     }
@@ -572,6 +580,25 @@ fn cmd_init(
         let verb = if dry_run { "would record" } else { "records" };
         println!("init {verb} it as `repo` in {}", cfg_path.display());
     }
+    // Root discovery does not read CLAUDE_CONFIG_DIR (hooks in each account's
+    // sessions would see different roots); init adds that folder and records
+    // the roots, so every session sees the same ones.
+    let added_root = cfg.add_config_dir_root();
+    if let Some(r) = &added_root {
+        let verb = if dry_run { "would record" } else { "records" };
+        println!(
+            "root {} ({}) is CLAUDE_CONFIG_DIR; init {verb} all roots as [[roots]] in {}",
+            r.label,
+            r.path.display(),
+            cfg_path.display()
+        );
+    }
+    if cfg.roots.is_empty() {
+        println!(
+            "no Claude Code config directory found (memsaga looks at ~/.claude, CodeV's account list and CLAUDE_CONFIG_DIR); run init with CLAUDE_CONFIG_DIR set, or list the folder under [[roots]] in {}",
+            cfg_path.display()
+        );
+    }
     let scope = Scope::new(&cfg);
     let mut total_files = 0;
     for root in &cfg.roots {
@@ -621,6 +648,11 @@ fn cmd_init(
         let _lock = State::new(cfg.state_dir()).lock(std::time::Duration::from_secs(20))?;
         memsaga_core::config::record_repo(&cfg.repo)?;
         println!("recorded repo in {}", cfg_path.display());
+    }
+    if added_root.is_some() {
+        let _lock = State::new(cfg.state_dir()).lock(std::time::Duration::from_secs(20))?;
+        memsaga_core::config::record_roots(&cfg.roots)?;
+        println!("recorded roots in {}", cfg_path.display());
     }
     // A .gitattributes so MEMORY.md indexes merge line-by-line across machines.
     let ga = cfg.repo.join(".gitattributes");
@@ -1015,6 +1047,9 @@ fn cmd_status(n: usize, json: bool) -> Result<()> {
         }
     }
     for w in memsaga_core::status::extra_folder_warnings(&cfg) {
+        println!("{w}");
+    }
+    for w in memsaga_core::status::roots_warnings(&cfg) {
         println!("{w}");
     }
     println!("repo: {}", st.repo.display());

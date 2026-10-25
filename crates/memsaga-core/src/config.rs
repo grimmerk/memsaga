@@ -48,6 +48,18 @@ pub enum RepoOrigin {
     Detected,
 }
 
+/// Where the roots came from.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum RootsOrigin {
+    /// The config file lists `[[roots]]`.
+    File,
+    /// `MEMSAGA_ROOTS` overrides them for this run.
+    Env,
+    /// Nothing lists them: [`discover_roots`] found them.
+    #[default]
+    Discovered,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -62,6 +74,9 @@ pub struct Config {
     pub file_repo: Option<PathBuf>,
     /// Roots to mirror. Empty means "discover".
     pub roots: Vec<Root>,
+    /// Where `roots` came from; not part of the file.
+    #[serde(skip)]
+    pub roots_origin: RootsOrigin,
     /// Top-level files of each root to mirror (relative names).
     pub files: Vec<String>,
     /// Top-level directories of each root to mirror recursively.
@@ -102,6 +117,7 @@ impl Default for Config {
             repo_origin: RepoOrigin::Detected,
             file_repo: None,
             roots: Vec::new(),
+            roots_origin: RootsOrigin::Discovered,
             // What the user writes in a config directory. Claude Code reads
             // CLAUDE.md, keybindings.json and the directories from skills to
             // agent-memory itself (code.claude.com/docs/en/claude-directory);
@@ -171,6 +187,9 @@ impl Config {
         } else {
             cfg.repo = detect_repo();
         }
+        if !cfg.roots.is_empty() {
+            cfg.roots_origin = RootsOrigin::File;
+        }
         for r in &mut cfg.roots {
             r.path = expand_tilde_path(&r.path);
             if r.label.is_empty() {
@@ -193,9 +212,11 @@ impl Config {
                     }
                 })
                 .collect();
+            cfg.roots_origin = RootsOrigin::Env;
         }
         if cfg.roots.is_empty() {
             cfg.roots = discover_roots();
+            cfg.roots_origin = RootsOrigin::Discovered;
         }
         for d in &cfg.dirs {
             if d == "memory" || d == "projects" {
@@ -230,9 +251,42 @@ impl Config {
     /// account of the session that fired the hook is known.
     pub fn current_root(&self) -> Option<&Root> {
         let dir = std::env::var("CLAUDE_CONFIG_DIR")
+            .ok()
+            .filter(|v| !v.is_empty())
             .map(|v| expand_tilde(&v))
-            .unwrap_or_else(|_| expand_tilde("~/.claude"));
-        self.roots.iter().find(|r| r.path == dir)
+            .unwrap_or_else(|| expand_tilde("~/.claude"));
+        let dir = normalize(&dir);
+        self.roots.iter().find(|r| normalize(&r.path) == dir)
+    }
+
+    /// The folder `CLAUDE_CONFIG_DIR` names, when it is set, exists and is
+    /// not one of the roots. Root discovery never reads the variable (hooks
+    /// run in every account's sessions, and each would see a different set),
+    /// so `init` adds it and records it, and `install` and `status` warn.
+    pub fn unlisted_config_dir(&self) -> Option<PathBuf> {
+        let dir = std::env::var("CLAUDE_CONFIG_DIR")
+            .ok()
+            .filter(|v| !v.is_empty())?;
+        let dir = normalize(&expand_tilde(&dir));
+        if !dir.is_dir() || self.roots.iter().any(|r| normalize(&r.path) == dir) {
+            return None;
+        }
+        Some(dir)
+    }
+
+    /// For `init`: add the folder `CLAUDE_CONFIG_DIR` names to discovered
+    /// roots, with a label no other root has. Returns the new root; `None`
+    /// when the roots come from the file or `MEMSAGA_ROOTS`, or nothing is
+    /// missing.
+    pub fn add_config_dir_root(&mut self) -> Option<Root> {
+        if self.roots_origin != RootsOrigin::Discovered {
+            return None;
+        }
+        let path = self.unlisted_config_dir()?;
+        let label = unique_label(&self.roots, &label_for(&path));
+        let root = Root { path, label };
+        self.roots.push(root.clone());
+        Some(root)
     }
 
     /// Where memsaga keeps its own state inside the repo.
@@ -321,11 +375,62 @@ pub fn record_repo(repo: &Path) -> Result<()> {
             }
             format!("{line}{old}")
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => format!(
-            "# memsaga configuration. Keys left out keep their defaults; `memsaga config` prints them all.\n{line}"
-        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => format!("{CONFIG_HEADER}{line}"),
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
+    write_config(&path, &text)
+}
+
+const CONFIG_HEADER: &str =
+    "# memsaga configuration. Keys left out keep their defaults; `memsaga config` prints them all.\n";
+
+/// Append `roots` to the config file as `[[roots]]` tables, so every session
+/// sees the same roots whatever its `CLAUDE_CONFIG_DIR`. Refuses when the file
+/// already lists roots. Paths under the home folder are written with `~/`.
+pub fn record_roots(roots: &[Root]) -> Result<()> {
+    let path = config_path();
+    let old = match std::fs::read_to_string(&path) {
+        Ok(old) => {
+            if toml::from_str::<toml::Table>(&old).is_ok_and(|t| t.contains_key("roots")) {
+                anyhow::bail!("{} already lists roots", path.display());
+            }
+            old
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => CONFIG_HEADER.to_string(),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    let mut text = old;
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str("\n# found by `memsaga init`; listing roots turns off the automatic search\n");
+    text.push_str(&roots_toml(roots));
+    write_config(&path, &text)
+}
+
+/// `roots` as `[[roots]]` tables, paths under the home folder written with `~/`.
+pub fn roots_toml(roots: &[Root]) -> String {
+    let home = dirs::home_dir();
+    let mut out = String::new();
+    for r in roots {
+        let shown = match home
+            .as_ref()
+            .and_then(|h| r.path.strip_prefix(h).ok().map(Path::to_path_buf))
+        {
+            Some(rel) => format!("~/{}", rel.display()),
+            None => r.path.display().to_string(),
+        };
+        out.push_str(&format!(
+            "[[roots]]\npath = {}\nlabel = {}\n",
+            toml::Value::String(shown),
+            toml::Value::String(r.label.clone())
+        ));
+    }
+    out
+}
+
+fn write_config(path: &Path, text: &str) -> Result<()> {
+    let path = path.to_path_buf();
     // A config kept in a dotfiles repository is often a symlink: write the file
     // it points at, so the link (and the dotfiles copy) stays the source.
     let target = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
@@ -367,6 +472,18 @@ pub fn normalize(p: &Path) -> PathBuf {
 }
 
 /// `.claude` -> `claude`, `.claude-work` -> `claude-work`, `foo` -> `foo`.
+/// `base`, or `base-2`, `base-3`, … when a root already has that label: each
+/// root's label names its own subtree in the repository.
+pub fn unique_label(roots: &[Root], base: &str) -> String {
+    let mut label = base.to_string();
+    let mut n = 2;
+    while roots.iter().any(|r| r.label == label) {
+        label = format!("{base}-{n}");
+        n += 1;
+    }
+    label
+}
+
 pub fn label_for(path: &Path) -> String {
     path.file_name()
         .map(|s| s.to_string_lossy().trim_start_matches('.').to_string())

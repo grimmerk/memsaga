@@ -129,6 +129,34 @@ pub fn extra_folder_warnings(cfg: &Config) -> Vec<String> {
         .collect()
 }
 
+/// Warnings about the roots, shared by `status`, `config` and `install`: no
+/// root at all, or a `CLAUDE_CONFIG_DIR` folder that is not one (root
+/// discovery does not read the variable; `init` adds and records it).
+pub fn roots_warnings(cfg: &Config) -> Vec<String> {
+    let path = config_path();
+    let mut out = Vec::new();
+    if cfg.roots.is_empty() {
+        out.push(format!(
+            "memsaga: no Claude Code config directory found (memsaga looks at ~/.claude and CodeV's account list); list yours under [[roots]] in {}",
+            path.display()
+        ));
+    }
+    if let Some(dir) = cfg.unlisted_config_dir() {
+        let mut roots = cfg.roots.clone();
+        roots.push(crate::config::Root {
+            label: crate::config::unique_label(&cfg.roots, &crate::config::label_for(&dir)),
+            path: dir.clone(),
+        });
+        out.push(format!(
+            "memsaga: CLAUDE_CONFIG_DIR is {}, which memsaga does not mirror. To add it, put these lines in {} (listing roots turns off the automatic search, so the roots in use now are listed too), then run `memsaga install`:\n{}",
+            dir.display(),
+            path.display(),
+            crate::config::roots_toml(&roots).trim_end()
+        ));
+    }
+    out
+}
+
 /// `s` as one shell word: unchanged when it is plainly safe, else in single
 /// quotes (with any `'` written as `'\''`).
 fn shell_quote(s: &str) -> String {
