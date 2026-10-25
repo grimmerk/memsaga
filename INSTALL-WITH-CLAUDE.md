@@ -118,9 +118,20 @@ Otherwise, show the user where the data repository would go and how much would
 be imported. The dry run lists each Claude Code config directory it found
 (`root …` lines). Look for others with `ls -d ~/.claude*/` (folders only),
 and ask whether the user runs Claude Code with `CLAUDE_CONFIG_DIR` set to
-another folder, which may be anywhere. Tell them any one that is not listed
-is not included, and that "Two Claude Code accounts" in the README shows how
-to add it after the install.
+another folder, which may be anywhere (`echo "$CLAUDE_CONFIG_DIR"` shows it
+for the current session). memsaga does not read `CLAUDE_CONFIG_DIR`. If a
+folder the user uses is not listed, and above all if no `root` line is
+listed at all, ask first, then add it to `~/.config/memsaga/config.toml` as
+below, run the dry run again, and only then go on:
+
+```toml
+[[roots]]
+path = "<the folder>"
+label = "claude"          # a second one gets its own label, e.g. "claude-work"
+```
+
+Listing roots replaces the automatic search, so list `~/.claude` too when the
+user also uses it.
 
 Ask whether that place and folder name are fine, or where they want it
 instead; any path works, and the folder does not have to be called
@@ -156,9 +167,10 @@ them already exists and memsaga did not write it, ask before overwriting it.
 
 Ask whether the user wants the history backed up to GitHub, and pushed
 automatically (with the default settings, at most once every ten minutes
-and at the end of a session). If yes, ask for the repository name (`memories` is a good
-default). Get the data repository's path with `~/.cargo/bin/memsaga repo` and
-write that path into the commands below, rather than `"$(memsaga repo)"`:
+and at the end of a session). If yes, ask for the repository name
+(`memories` is a good default). Get the data repository's path with
+`~/.cargo/bin/memsaga repo` and write that path into the commands below,
+rather than `"$(memsaga repo)"`:
 Claude Code cannot check a command with `$(…)` before it runs, so it always
 asks, and offers no "don't ask again" choice. With `gh` logged in:
 
@@ -260,7 +272,7 @@ the install script, `memsaga init`, `memsaga install` (which edits
 `~/.claude/settings.json`) and `gh repo create`.
 
 **Manual mode** (Claude Code asks before each command): 11 permission prompts,
-one per command, on top of Claude's own questions. They were for:
+one for nearly every command, on top of Claude's own questions. They were for:
 
 | Step | Commands that asked |
 |---|---|
@@ -277,5 +289,9 @@ To answer fewer of them, choose "Yes, and don't ask again for
 --version`; that covers every memsaga command after it.
 
 The hooks work in the same session as soon as step 4 has run: the reply that
-ran `memsaga install` already ended with memsaga's commit notice. No restart
-is needed.
+ran `memsaga install` ended with a memsaga notice, and its own changes (the
+bundled skills) were committed. No restart is needed.
+
+A second run, on a Mac in daily use with memsaga moved aside (Opus 5.5, auto
+mode, no `gh`), gave the same result for install and uninstall: nothing was
+blocked.

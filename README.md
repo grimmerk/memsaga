@@ -240,6 +240,19 @@ commands below use it, so they work wherever yours is. Example
 projects here live under `~/git` (for example `~/git/webapp`); read that as
 the folder where you keep code.
 
+**Claude Code's config somewhere else.** memsaga finds Claude Code's config
+directory as `~/.claude`, or through the account list of
+[CodeV](#8-two-claude-code-accounts). It does not read `CLAUDE_CONFIG_DIR`.
+If you run Claude Code with `CLAUDE_CONFIG_DIR` set, write the folder into
+`~/.config/memsaga/config.toml` before `init` (the `root …` lines of
+`init --dry-run` show what was found), then run the steps above:
+
+```toml
+[[roots]]
+path = "~/my-claude-config"   # the folder CLAUDE_CONFIG_DIR points to
+label = "claude"
+```
+
 **Or let Claude Code install it.** Paste this prompt into Claude Code:
 
 ```text
@@ -707,7 +720,9 @@ label = "claude"
 ```
 
 Without `[[roots]]`, memsaga reads CodeV's `~/.config/codev/accounts.json` if
-present, else uses `~/.claude`. Without `repo`, it uses an existing memsaga
+present, else uses `~/.claude`; `CLAUDE_CONFIG_DIR` is not read, so a config
+directory set that way must be listed under `[[roots]]`. Without `repo`, it
+uses an existing memsaga
 repository called `memories` in one of the folders the quick start names, else
 the place `init` would choose. If the config file disappears while the
 repository still holds its mirrored copy, memsaga runs on its defaults: fewer
@@ -781,9 +796,9 @@ rm ~/.cargo/bin/memsaga
 rm -r ~/.config/memsaga
 ```
 
-- Another config directory (a second account, for example `~/.claude-work`):
-  repeat step 2 with its path. Skip the skills when its `skills` is a link to
-  `~/.claude/skills`.
+- Another config directory (a second account such as `~/.claude-work`, or
+  a folder `CLAUDE_CONFIG_DIR` points to): repeat step 2 with its path. Skip
+  the skills when its `skills` is a link to `~/.claude/skills`.
 - A binary from a downloaded archive: delete the copy you put on your
   `PATH`. Built with cargo: `cargo uninstall memsaga`.
 - The install script also added the line `. "$HOME/.cargo/env"` to the shell
