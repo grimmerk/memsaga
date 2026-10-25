@@ -7,8 +7,14 @@ version = "0.1.1"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/grimmerk/memsaga"
+homepage = "https://memsaga.grimmer.io"
+# The oldest toolchain that builds the locked dependencies (globset needs
+# 1.88; checked with `cargo +1.88 test --locked`, and 1.87 fails).
+rust-version = "1.88"
 
 [workspace.dependencies]
+# Published together; keep the version equal to workspace.package.version.
+memsaga-core = { path = "crates/memsaga-core", version = "0.1.1" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }

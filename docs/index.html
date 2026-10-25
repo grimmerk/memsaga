@@ -592,7 +592,7 @@ git log --grep 'Session-Title: .*login'</pre>
       <span class="eyebrow">Install</span>
       <h2>Set it up once</h2>
       <ol class="steps">
-        <li><strong>The installer</strong> puts a prebuilt memsaga in <code>~/.cargo/bin</code>, for Macs (Apple silicon and Intel) and Linux (x86_64 and arm64). You need git. To build from source instead: <code>cargo install --git https://github.com/grimmerk/memsaga memsaga --locked</code>.</li>
+        <li><strong>The installer</strong> puts a prebuilt memsaga in <code>~/.cargo/bin</code>, for Macs (Apple silicon and Intel) and Linux (x86_64 and arm64). You need git. To build from source instead (Rust 1.88 or later): <code>cargo install memsaga --locked</code> from crates.io, or <code>cargo install --git https://github.com/grimmerk/memsaga memsaga --locked</code> for the latest <code>main</code>.</li>
         <li><strong>init</strong> creates the data repository and replays the edits your recent conversations recorded, so the history starts weeks back. It goes in <code>memories</code> inside the folder where you keep code (<code>~/git</code>, <code>~/code</code>, <code>~/src</code>, <code>~/Projects</code> or <code>~/dev</code>), or in <code>~/memories</code>; <code>--repo</code> picks another place, and <code>--dry-run</code> shows the choice first.</li>
         <li><strong>install</strong> connects memsaga to Claude Code. With <code>--skills</code>, Claude can also answer questions about the history.</li>
         <li><strong>gh repo create</strong> is optional. With a private GitHub repository, pushes and two-way sync happen on their own.</li>

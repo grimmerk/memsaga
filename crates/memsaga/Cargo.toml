@@ -4,14 +4,19 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "memsaga CLI: hook entry point, sweep, init, status, install."
+homepage.workspace = true
+rust-version.workspace = true
+description = "Version control and two-way sync for Claude Code's memory, skills, hooks and config, plus other files you choose, in a git repository you own."
+readme = "../../README.md"
+keywords = ["claude-code", "claude", "memory", "git", "sync"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "memsaga"
 path = "src/main.rs"
 
 [dependencies]
-memsaga-core = { path = "../memsaga-core" }
+memsaga-core.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 clap.workspace = true
