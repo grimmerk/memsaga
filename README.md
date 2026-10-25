@@ -57,11 +57,11 @@ memsaga keeps them as history:
   each edit), a memsaga hook copies what changed into your data repository
   and commits it, named after the conversation
         │
-③ with a GitHub remote, it is pushed there: at most once per
-  `push_min_interval_secs` (`0` turns that off), at the end of a session
-  (`push_on_session_end`), or now with `memsaga push`; your other machines
-  pull it, and an edit made on another machine or on GitHub reaches the
-  live file
+③ with an `origin` remote (on GitHub, for example), it is pushed there: at
+  most once per `push_min_interval_secs` (`0` turns that off), at the end of
+  a session (`push_on_session_end`), or now with `memsaga push`; your other
+  machines pull it, and an edit made on another machine or on GitHub
+  reaches the live file
 ```
 
 ### What goes into the data repository
