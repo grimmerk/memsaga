@@ -87,7 +87,18 @@ p { margin: 0; }
 .top nav { display: flex; gap: 4px 18px; flex-wrap: wrap; justify-content: flex-end; font-size: .95rem; }
 .top nav a { color: var(--muted); text-decoration: none; }
 .top nav a:hover { color: var(--ink); }
-@media (max-width: 640px) { .top nav .opt { display: none; } }
+.top nav .s { display: none; }
+@media (max-width: 640px) {
+  .top .wrap { flex-wrap: wrap; row-gap: 8px; }
+  .top nav { width: 100%; justify-content: space-between; }
+  .top nav .l { display: none; }
+  .top nav .s { display: inline; }
+  html { scroll-padding-top: 104px; }
+}
+/* a link to each section, next to its heading */
+.anchor { margin-left: .3em; color: var(--muted); font-weight: 400; text-decoration: none; opacity: 0; transition: opacity .15s; }
+h2:hover .anchor, .anchor:focus-visible { opacity: 1; }
+@media (hover: none) { .anchor { opacity: .45; } }
 
 /* ---------- hero ---------- */
 .hero { padding-block: clamp(44px, 7vw, 88px) clamp(48px, 7vw, 80px);
@@ -295,8 +306,9 @@ footer .wrap { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 
   <div class="wrap">
     <a class="brand" href="#top"><span class="mark">m</span>memsaga</a>
     <nav aria-label="Sections">
-      <a class="opt" href="#who">Who it is for</a>
-      <a class="opt" href="#anywhere">Two-way sync</a>
+      <a href="#who"><span class="l">Who it is for</span><span class="s">Who</span></a>
+      <a href="#anywhere"><span class="l">Two-way sync</span><span class="s">Sync</span></a>
+      <a href="#companions"><span class="l">Companion docs</span><span class="s">Companions</span></a>
       <a href="#install">Install</a>
       <a href="https://github.com/grimmerk/memsaga">GitHub</a>
     </nav>
@@ -575,7 +587,7 @@ git log --grep 'Session-Title: .*login'</pre>
     </div>
     <div class="promises">
       <div class="promise"><h3>Your files stay where they are</h3><p>The repository holds copies. memsaga writes Claude's files only when you restore one, or when an edit you made elsewhere arrives.</p></div>
-      <div class="promise"><h3>Every version can come back</h3><p>Restore one file, or all of them, from any point in history. A restore shows the diff and waits for your yes.</p></div>
+      <div class="promise"><h3>Every version can come back</h3><p>Restore one file, or all of them, from any point in history. A restore shows the diff and waits for your yes. No git needed: after <code>memsaga install --skills</code>, ask Claude what <code>CLAUDE.md</code> or a memory file said last week.</p></div>
       <div class="promise"><h3>It stays out of Claude's way</h3><p>If something fails, Claude Code carries on as usual, and <code>memsaga status</code> tells you what happened.</p></div>
       <div class="promise"><h3>What you add stays</h3><p>Files you put in the repository yourself are committed and never removed by memsaga.</p></div>
       <div class="promise"><h3>Secrets stay out</h3><p>Not copied: <code>~/.claude.json</code>, credentials, transcripts and caches. <code>settings.json</code> only if you ask.</p></div>
@@ -606,7 +618,7 @@ git log --grep 'Session-Title: .*login'</pre>
         <ol>
           <li><b>5</b><a href="https://github.com/grimmerk/memsaga#5-version-any-file-claude-edits-for-you">Version any file Claude edits for you</a></li>
           <li><b>6</b><a href="https://github.com/grimmerk/memsaga#6-add-your-own-files-to-the-repository">Add your own files to the repository</a></li>
-          <li><b>7</b><a href="https://github.com/grimmerk/memsaga#7-keep-notes-beside-a-repository-without-committing-them">Keep notes beside a repository without committing them</a></li>
+          <li><b>7</b><a href="https://github.com/grimmerk/memsaga#7-companion-docs-notes-beside-a-repository-never-committed-to-it">Companion docs: notes beside a repository</a></li>
         </ol>
       </div>
       <div>
@@ -749,6 +761,14 @@ and ask me before each step that changes my machine.</pre>
     return t.split('\n').map(function (l) { return l.replace(/^\$ /, '').replace(/\s+#.*$/, ''); }).join('\n');
   });
   wire('copy-claude', 'claude-prompt');
+  document.querySelectorAll('section.band[id] h2').forEach(function (h) {
+    var a = document.createElement('a');
+    a.className = 'anchor';
+    a.href = '#' + h.closest('section').id;
+    a.setAttribute('aria-label', 'Link to the section: ' + h.textContent.trim());
+    a.textContent = '#';
+    h.appendChild(a);
+  });
 })();
 </script>
 </body>
