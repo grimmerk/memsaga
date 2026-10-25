@@ -205,12 +205,25 @@ quarantined, and the binary is not notarized, so clear the mark once:
 `xattr -d com.apple.quarantine memsaga`.
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grimmerk/memsaga/releases/latest/download/memsaga-installer.sh | sh
-memsaga init --dry-run    # what would be imported, and how much history can be replayed
-memsaga init              # create the data repository (see "Where the data repository goes"), replay history, import the current state
-memsaga install           # register the hooks in each Claude Code config directory
-gh repo create memories --private --source "$(memsaga repo)" --push   # optional: a private GitHub repository; any name works
-memsaga status            # last sweep, pending changes, push state
+# install a prebuilt binary into ~/.cargo/bin
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/grimmerk/memsaga/releases/latest/download/memsaga-installer.sh | sh
+
+# what would be imported, and how much history can be replayed
+memsaga init --dry-run
+
+# create the data repository (where: see below), replay history,
+# import the current state
+memsaga init
+
+# register the hooks in each Claude Code config directory
+memsaga install
+
+# optional: a private GitHub repository; any name works
+gh repo create memories --private --source "$(memsaga repo)" --push
+
+# last sweep, pending changes, push state
+memsaga status
 ```
 
 **Where the data repository goes.** `init` creates it as `memories` in the
@@ -329,8 +342,12 @@ shows the diff first and asks before it writes:
 
 ```sh
 memsaga restore claude/memory/HOME-git-webapp/notes.md --at HEAD~3
-memsaga restore ~/.claude/CLAUDE.md --at a1b2c3d   # any git revision; the live path works too
-memsaga restore --all --at a1b2c3d                 # every mirrored file as it was then
+
+# any git revision; the live path works too
+memsaga restore ~/.claude/CLAUDE.md --at a1b2c3d
+
+# every mirrored file as it was then
+memsaga restore --all --at a1b2c3d
 ```
 
 A deleted file comes back the same way. `--all` overwrites the files that
@@ -647,18 +664,27 @@ one commit, and `restore --at` still reads older revisions from the old path.
 prints the effective values.
 
 ```toml
-repo = "~/git/memories"          # where init put it (example); `memsaga repo` prints yours
+# where init put it (example); `memsaga repo` prints yours
+repo = "~/git/memories"
 files = ["CLAUDE.md", "keybindings.json"]
-dirs = ["skills", "commands", "agents", "agent-memory", "rules", "output-styles", "themes", "workflows", "hooks", "scripts"]
+dirs = [
+  "skills", "commands", "agents", "agent-memory", "rules",
+  "output-styles", "themes", "workflows", "hooks", "scripts",
+]
 memory = true
 exclude = ["*.codev-bak*", "*.codev-tmp-*", ".DS_Store", "__pycache__"]
-settings_ignore_keys = ["model", "effortLevel", "modelSettings"]  # left out of the mirrored settings.json: Claude Code rewrites them on every /model and /effort
+# left out of the mirrored settings.json: Claude Code rewrites them on
+# every /model and /effort
+settings_ignore_keys = ["model", "effortLevel", "modelSettings"]
 exclude_projects = []            # slug globs
-exclude_paths = ["skills/synced", "skills/.trash"] # root-relative subtrees
-extra_files = []                  # single files outside every root, e.g. "~/.config/codev/accounts.json"
+exclude_paths = ["skills/synced", "skills/.trash"]   # root-relative subtrees
+# single files outside every root, e.g. "~/.config/codev/accounts.json"
+extra_files = []
 granularity = "turn"             # or "edit": one commit per Write/Edit
 reporter = true                  # one-line notice in the terminal after a commit
-push_min_interval_secs = 600     # at most one push per interval on Stop; a throttled push is deferred to the end of the window, not dropped. 0 disables pushes on Stop
+# at most one push per interval on Stop; a throttled push is deferred to the
+# end of the window, not dropped. 0 disables pushes on Stop
+push_min_interval_secs = 600
 push_on_session_end = true
 
 [[roots]]
