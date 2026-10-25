@@ -51,11 +51,11 @@ pub enum RepoOrigin {
 /// Where the roots came from.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum RootsOrigin {
-    /// The config file lists `[[roots]]`.
+    /// The config file has a `roots` key (even an empty one).
     File,
-    /// `MEMSAGA_ROOTS` overrides them for this run.
+    /// `MEMSAGA_ROOTS` is set (even to nothing), overriding them for this run.
     Env,
-    /// Nothing lists them: [`discover_roots`] found them.
+    /// Neither sets them: [`discover_roots`] found them.
     #[default]
     Discovered,
 }
@@ -72,10 +72,6 @@ pub struct Config {
     /// for this run; `None` when the file does not set one.
     #[serde(skip)]
     pub file_repo: Option<PathBuf>,
-    /// Whether the config file has a `roots` key, even an empty one; `init`
-    /// then leaves the roots to the user.
-    #[serde(skip)]
-    pub file_sets_roots: bool,
     /// Roots to mirror. Empty means "discover".
     pub roots: Vec<Root>,
     /// Where `roots` came from; not part of the file.
@@ -120,7 +116,6 @@ impl Default for Config {
             repo: PathBuf::new(),
             repo_origin: RepoOrigin::Detected,
             file_repo: None,
-            file_sets_roots: false,
             roots: Vec::new(),
             roots_origin: RootsOrigin::Discovered,
             // What the user writes in a config directory. Claude Code reads
@@ -182,7 +177,10 @@ impl Config {
             let mut c: Config = toml::Value::Table(table)
                 .try_into()
                 .with_context(|| format!("parsing {}", path.display()))?;
-            c.file_sets_roots = sets_roots;
+            if sets_roots {
+                // Even `roots = []`: the user decided, so init adds nothing.
+                c.roots_origin = RootsOrigin::File;
+            }
             (c, sets_repo)
         } else {
             (Config::default(), false)
@@ -193,9 +191,6 @@ impl Config {
             cfg.file_repo = Some(cfg.repo.clone());
         } else {
             cfg.repo = detect_repo();
-        }
-        if !cfg.roots.is_empty() {
-            cfg.roots_origin = RootsOrigin::File;
         }
         for r in &mut cfg.roots {
             r.path = expand_tilde_path(&r.path);
@@ -221,9 +216,10 @@ impl Config {
                 .collect();
             cfg.roots_origin = RootsOrigin::Env;
         }
+        // An empty list (`roots = []`, `MEMSAGA_ROOTS=`) is filled by discovery,
+        // but keeps the origin of whoever set it.
         if cfg.roots.is_empty() {
             cfg.roots = discover_roots();
-            cfg.roots_origin = RootsOrigin::Discovered;
         }
         for d in &cfg.dirs {
             if d == "memory" || d == "projects" {
@@ -286,7 +282,7 @@ impl Config {
     /// when the file has a `roots` key (even `roots = []`) or `MEMSAGA_ROOTS`
     /// is set, or nothing is missing.
     pub fn add_config_dir_root(&mut self) -> Option<Root> {
-        if self.roots_origin != RootsOrigin::Discovered || self.file_sets_roots {
+        if self.roots_origin != RootsOrigin::Discovered {
             return None;
         }
         let path = self.unlisted_config_dir()?;

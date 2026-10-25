@@ -3814,6 +3814,27 @@ fn install_and_status_warn_about_an_unlisted_claude_config_dir() {
 }
 
 #[test]
+fn init_records_nothing_while_memsaga_roots_is_set_even_empty() {
+    let u = NewUser::new(&["git"]);
+    let mine = u.home.join("cc-config");
+    write(&mine.join("CLAUDE.md"), "# mine\n");
+    let out = u
+        .command(None)
+        .env("CLAUDE_CONFIG_DIR", &mine)
+        .env("MEMSAGA_ROOTS", "")
+        .args(["init", "--no-backfill"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let cfg = fs::read_to_string(u.cfg()).unwrap();
+    assert!(!cfg.contains("[[roots]]"), "{cfg}");
+}
+
+#[test]
 fn init_leaves_an_explicit_empty_roots_list_alone() {
     // `roots = []` is the user's own choice: init must not fail on it, nor
     // write [[roots]] after it; the warning says what to add.
