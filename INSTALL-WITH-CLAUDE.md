@@ -226,16 +226,20 @@ Ask before each part, and never delete the data repository or the GitHub
 repository on your own: they are the history. List these, in this order, and
 let the user choose:
 
-1. `memsaga uninstall` removes the hooks from each config directory.
+1. `memsaga uninstall` removes the hooks from each config directory. The
+   backup `settings.json.memsaga-bak` that `memsaga install` took stays;
+   offer to delete it.
 2. The bundled skills, if `--skills` was used: the folders `memsaga-history`,
-   `companion-docs` and `companions` under `skills/` in each config directory.
+   `companion-docs` and `companions` under `skills/` in each config directory
+   (skip a config directory whose `skills` is a link to another one's).
+   The README's "Uninstalling" section has the commands.
 3. The binary (`~/.cargo/bin/memsaga`, or wherever `command -v memsaga`
    points; `cargo uninstall memsaga` if it was built with cargo), and
    `~/.config/memsaga/` (the config file and the installer's receipt).
 4. The line `. "$HOME/.cargo/env"` that the install script added to the
-   shell startup files (`~/.zshrc`, `~/.bashrc`, `~/.profile`), and
-   `~/.cargo/env`: only if nothing else the user has is installed in
-   `~/.cargo`.
+   shell startup files (on macOS usually `~/.zshenv` and `~/.profile`; check
+   `~/.zshrc`, `~/.bashrc` and `~/.bash_profile` too), and `~/.cargo`: only if
+   nothing else the user has is installed in `~/.cargo`.
 5. The data repository (`memsaga repo` prints where), and the GitHub
    repository if there is one. Suggest keeping both.
 

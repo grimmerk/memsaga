@@ -220,6 +220,7 @@ memsaga init
 memsaga install
 
 # optional: a private GitHub repository; any name works
+# (needs `gh auth login` once)
 gh repo create memories --private --source "$(memsaga repo)" --push
 
 # last sweep, pending changes, push state
@@ -761,20 +762,42 @@ several machines share one data repository, update them together.
 
 ### Uninstalling
 
-1. `memsaga uninstall` removes the hooks from each config directory, and
-   Claude Code stops committing.
-2. If you ran `memsaga install --skills`, delete the `memsaga-history`,
-   `companion-docs` and `companions` folders under `skills/` in each config
-   directory.
-3. Delete the binary: `~/.cargo/bin/memsaga` from the install script, the
-   copy you put on your `PATH` from a downloaded archive, or
-   `cargo uninstall memsaga` if you built it with cargo. Then delete
-   `~/.config/memsaga/`, which holds the config file and the install script's
-   receipt.
-4. The install script adds the line `. "$HOME/.cargo/env"` to the shell
-   startup files it finds (`~/.zshrc`, `~/.bashrc`, `~/.profile`). Remove it,
-   and `~/.cargo/env`, only if nothing else you use is installed in
-   `~/.cargo`.
+For the usual setup (one config directory, `~/.claude`, and the install
+script), these commands remove everything memsaga added:
+
+```sh
+# 1. remove the hooks from every config directory; Claude Code stops committing
+memsaga uninstall
+
+# 2. the bundled skills, if you ran `memsaga install --skills`,
+#    and the copy of settings.json that `memsaga install` took first
+rm -r ~/.claude/skills/memsaga-history ~/.claude/skills/companion-docs \
+  ~/.claude/skills/companions
+rm -f ~/.claude/settings.json.memsaga-bak
+
+# 3. the binary, the config file and the install script's receipt
+rm ~/.cargo/bin/memsaga
+rm -r ~/.config/memsaga
+```
+
+- Another config directory (a second account, for example `~/.claude-work`):
+  repeat step 2 with its path. Skip the skills when its `skills` is a link to
+  `~/.claude/skills`.
+- A binary from a downloaded archive: delete the copy you put on your
+  `PATH`. Built with cargo: `cargo uninstall memsaga`.
+- The install script also added the line `. "$HOME/.cargo/env"` to the shell
+  startup files it found (on macOS usually `~/.zshenv` and `~/.profile`). If
+  nothing else you use lives in `~/.cargo` (no Rust toolchain, no other
+  `cargo install` tools), remove that line and the folder:
+
+  ```sh
+  for f in ~/.zshenv ~/.zshrc ~/.profile ~/.bashrc ~/.bash_profile; do
+    [ -f "$f" ] && sed -i.bak '/\.cargo\/env/d' "$f"
+  done
+  rm -r ~/.cargo
+  ```
+
+  `sed -i.bak` keeps the previous version of each file as `<file>.bak`.
 
 None of this touches the data repository or its copy on GitHub: they are your
 history. Delete them yourself only if you no longer want it. Claude Code can
