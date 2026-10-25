@@ -121,8 +121,8 @@ and ask whether the user runs Claude Code with `CLAUDE_CONFIG_DIR` set to
 another folder, which may be anywhere (`echo "$CLAUDE_CONFIG_DIR"` shows it
 for the current session). When this session has `CLAUDE_CONFIG_DIR` set,
 memsaga 0.1.2 and later list that folder as a root and `init` records it, when
-the folder exists and the config file lists no roots of its own; memsaga
-0.1.1 does not, and no version finds the folder of an account this session
+the folder exists and the config file has no `roots` key (not even
+`roots = []`); memsaga 0.1.1 does not, and no version finds the folder of an account this session
 does not use. If a folder the user uses is not listed, and above all
 if no `root` line is listed at all, ask first, then add it to
 `~/.config/memsaga/config.toml` as below, run the dry run again, and only
