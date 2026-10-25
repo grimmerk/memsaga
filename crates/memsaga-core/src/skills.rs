@@ -14,15 +14,15 @@ pub struct BundledSkill {
 pub const BUNDLED: &[BundledSkill] = &[
     BundledSkill {
         name: "memsaga-history",
-        content: include_str!("../../../skills/memsaga-history/SKILL.md"),
+        content: include_str!("../skills/memsaga-history/SKILL.md"),
     },
     BundledSkill {
         name: "companion-docs",
-        content: include_str!("../../../skills/companion-docs/SKILL.md"),
+        content: include_str!("../skills/companion-docs/SKILL.md"),
     },
     BundledSkill {
         name: "companions",
-        content: include_str!("../../../skills/companions/SKILL.md"),
+        content: include_str!("../skills/companions/SKILL.md"),
     },
 ];
 

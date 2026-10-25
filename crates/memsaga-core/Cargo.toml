@@ -3,7 +3,12 @@ name = "memsaga-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Version control for Claude Code memory and config: mirror, commit, backfill."
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "Library behind the memsaga CLI: mirror, commit, two-way sync and backfill for Claude Code's memory and config."
+keywords = ["claude-code", "claude", "memory", "git"]
+categories = ["development-tools"]
 
 [dependencies]
 anyhow.workspace = true
