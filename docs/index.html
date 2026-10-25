@@ -236,6 +236,11 @@ pre.cmd { margin: 0; padding: 12px 14px; border-radius: 8px; background: var(--c
 .term pre { margin: 0; padding: 16px; font: 400 .84rem/1.7 var(--mono); overflow-x: auto; }
 /* install commands wrap instead of scrolling, so the long URLs stay visible */
 .install .term pre { white-space: pre-wrap; word-break: break-all; }
+.term-stack { display: grid; gap: 18px; min-width: 0; }
+.install .lead-way { margin: 0 0 14px; color: var(--muted); }
+.install .lead-way strong { color: var(--ink); }
+.install .prompt-card { margin: 0 0 22px; }
+.install .prompt-card pre { white-space: pre-wrap; word-break: normal; overflow-wrap: anywhere; }
 .term .c { color: var(--code-dim); }
 .term .p { color: #E5A945; user-select: none; }
 .steps { margin: 0; padding-left: 1.2em; display: grid; gap: 10px; color: var(--muted); }
@@ -627,6 +632,14 @@ git log --grep 'Session-Title: .*login'</pre>
     <div class="band-head">
       <span class="eyebrow">Install</span>
       <h2>Set it up once</h2>
+      <p class="lead-way"><strong>Easiest: let Claude Code do it.</strong> Paste this prompt into Claude Code. It checks what you have, then runs the steps below and asks before each one, including where the data repository goes. It follows <a href="https://github.com/grimmerk/memsaga/blob/main/INSTALL-WITH-CLAUDE.md">INSTALL-WITH-CLAUDE.md</a>.</p>
+      <div class="term prompt-card">
+        <header><span>Claude Code prompt</span><button type="button" id="copy-claude">Copy</button></header>
+<pre id="claude-prompt">Install memsaga for me. Follow
+https://raw.githubusercontent.com/grimmerk/memsaga/main/INSTALL-WITH-CLAUDE.md
+and ask me before each step that changes my machine.</pre>
+      </div>
+      <p class="lead-way"><strong>Or by hand</strong>, with the terminal commands:</p>
       <ol class="steps">
         <li><strong>The installer</strong> puts a prebuilt memsaga in <code>~/.cargo/bin</code>, for Macs (Apple silicon and Intel) and Linux (x86_64 and arm64). You need git. To build from source instead (Rust 1.88 or later): <code>cargo install memsaga --locked</code> from crates.io, or <code>cargo install --git https://github.com/grimmerk/memsaga memsaga --locked</code> for the latest <code>main</code>.</li>
         <li><strong>init</strong> creates the data repository and replays the edits your recent conversations recorded, so the history starts weeks back. It goes in <code>memories</code> inside the folder where you keep code (<code>~/git</code>, <code>~/code</code>, <code>~/src</code>, <code>~/Projects</code> or <code>~/dev</code>), or in <code>~/memories</code>; <code>--repo</code> picks another place, and <code>--dry-run</code> shows the choice first.</li>
@@ -635,6 +648,7 @@ git log --grep 'Session-Title: .*login'</pre>
       </ol>
       <p class="note"><strong>Keep the data repository private.</strong> Memory holds whatever Claude learned while working with you, which often includes details of your work.</p>
     </div>
+    <div class="term-stack">
     <div class="term">
       <header><span>terminal</span><button type="button" id="copy-install">Copy</button></header>
 <pre id="install-cmds"><span class="p">$ </span>curl --proto '=https' --tlsv1.2 -LsSf \
@@ -645,15 +659,11 @@ git log --grep 'Session-Title: .*login'</pre>
 <span class="p">$ </span>gh repo create memories --private --push \
     --source "$(memsaga repo)"   <span class="c"># optional: a private remote</span>
 <span class="p">$ </span>memsaga status</pre>
-      <pre style="border-top:1px solid var(--code-line)"><span class="c"># or paste this into Claude Code; it asks before each step</span>
-<span class="c"># (<a href="https://github.com/grimmerk/memsaga/blob/main/INSTALL-WITH-CLAUDE.md">INSTALL-WITH-CLAUDE.md</a>)</span>
-Install memsaga for me. Follow
-https://raw.githubusercontent.com/grimmerk/memsaga/main/INSTALL-WITH-CLAUDE.md
-and ask me before each step that changes my machine.</pre>
       <pre style="border-top:1px solid var(--code-line)"><span class="c"># to try it on example data first (after the install line):</span>
 <span class="c"># your real Claude Code config is never read or written</span>
 <span class="p">$ </span>git clone https://github.com/grimmerk/memsaga
 <span class="p">$ </span>memsaga/demo/setup.sh &amp;&amp; source /tmp/memsaga-demo/env.sh</pre>
+    </div>
     </div>
   </div>
 </section>
@@ -720,18 +730,25 @@ and ask me before each step that changes my machine.</pre>
     v.play().catch(function () { v.controls = true; try { v.currentTime = still; } catch (e) {} });
   });
 
-  var btn = document.getElementById('copy-install');
-  var pre = document.getElementById('install-cmds');
-  function select() {
-    var r = document.createRange(); r.selectNodeContents(pre);
-    var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
-    btn.textContent = 'Press Cmd/Ctrl+C';
+  function wire(btnId, preId, clean) {
+    var btn = document.getElementById(btnId);
+    var pre = document.getElementById(preId);
+    if (!btn || !pre) return;
+    function select() {
+      var r = document.createRange(); r.selectNodeContents(pre);
+      var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      btn.textContent = 'Press Cmd/Ctrl+C';
+    }
+    btn.addEventListener('click', function () {
+      var text = clean ? clean(pre.innerText) : pre.innerText;
+      var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1600); };
+      try { navigator.clipboard.writeText(text).then(done, select); } catch (e) { select(); }
+    });
   }
-  btn.addEventListener('click', function () {
-    var text = pre.innerText.split('\n').map(function (l) { return l.replace(/^\$ /, '').replace(/\s+#.*$/, ''); }).join('\n');
-    var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1600); };
-    try { navigator.clipboard.writeText(text).then(done, select); } catch (e) { select(); }
+  wire('copy-install', 'install-cmds', function (t) {
+    return t.split('\n').map(function (l) { return l.replace(/^\$ /, '').replace(/\s+#.*$/, ''); }).join('\n');
   });
+  wire('copy-claude', 'claude-prompt');
 })();
 </script>
 </body>

@@ -10,7 +10,7 @@ and ask me before each step that changes my machine.
 ```
 
 Claude reads this file, checks what you have, and walks you through the same
-steps as the [Quick start](README.md#quick-start). It asks before each step,
+steps as [Install by hand](README.md#install-by-hand). It asks before each step,
 and you can stop at any point. Some steps also show a permission prompt from
 Claude Code itself; [What to expect](#what-to-expect-from-permission-prompts)
 says which ones.
