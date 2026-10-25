@@ -240,13 +240,16 @@ commands below use it, so they work wherever yours is. Example
 projects here live under `~/git` (for example `~/git/webapp`); read that as
 the folder where you keep code.
 
-**Claude Code's config somewhere else.** memsaga finds Claude Code's config
-directory as `~/.claude`, or through the account list of
-[CodeV](#8-two-claude-code-accounts). It does not read `CLAUDE_CONFIG_DIR`.
-If you run Claude Code with `CLAUDE_CONFIG_DIR` set, write the folder into
-`~/.config/memsaga/config.toml` before `init`. Any `[[roots]]` entry replaces
-the automatic search, so if you also use `~/.claude`, list it too. Check the
-`root …` lines of `init --dry-run`, then run the steps above:
+**Claude Code's config somewhere else.** memsaga looks for Claude Code's
+config directory at `~/.claude` and in the account list of
+[CodeV](#8-two-claude-code-accounts). If you run Claude Code with
+`CLAUDE_CONFIG_DIR` set, run `init` where it is set (a terminal that exports
+it, or a Claude Code session using it): `init` adds that folder and records
+all roots as `[[roots]]` in `~/.config/memsaga/config.toml`, so every session
+sees the same ones. The `root …` lines of `init --dry-run` show the result.
+memsaga 0.1.1 does not do this yet; with it, write the lines yourself before
+`init`. Listing roots turns off the automatic search, so list `~/.claude` too
+if you also use it:
 
 ```toml
 [[roots]]
@@ -258,6 +261,9 @@ label = "claude"
 path = "~/.claude"
 label = "claude-default"
 ```
+
+`memsaga install` and `memsaga status` warn when `CLAUDE_CONFIG_DIR` names a
+folder that is not a root, and print the lines to add.
 
 **Or let Claude Code install it.** Paste this prompt into Claude Code:
 
@@ -726,9 +732,10 @@ label = "claude"
 ```
 
 Without `[[roots]]`, memsaga reads CodeV's `~/.config/codev/accounts.json` if
-present, else uses `~/.claude`; `CLAUDE_CONFIG_DIR` is not read, so a config
-directory set that way must be listed under `[[roots]]`. Without `repo`, it
-uses an existing memsaga
+present, else uses `~/.claude`. That search does not read
+`CLAUDE_CONFIG_DIR`; `init` adds the folder it names and writes the roots into
+the file (memsaga 0.1.1 does not; list the folder yourself). Without `repo`,
+it uses an existing memsaga
 repository called `memories` in one of the folders the quick start names, else
 the place `init` would choose. If the config file disappears while the
 repository still holds its mirrored copy, memsaga runs on its defaults: fewer
