@@ -119,7 +119,7 @@ Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
 - [FAQ](docs/faq.md): other ways to keep this history, compared
 - [How it works](#how-it-works)
 - [When something looks wrong](#when-something-looks-wrong)
-- [Reference](#reference): [commands](#commands), [what is mirrored](#what-is-mirrored), [memory directory names](#memory-directory-names), [configuration](#configuration), [two-way sync](#two-way-sync), [commit messages](#commit-messages), [updating](#updating), [setting up another machine](#setting-up-another-machine)
+- [Reference](#reference): [commands](#commands), [what is mirrored](#what-is-mirrored), [memory directory names](#memory-directory-names), [configuration](#configuration), [two-way sync](#two-way-sync), [commit messages](#commit-messages), [updating](#updating), [uninstalling](#uninstalling), [setting up another machine](#setting-up-another-machine)
 - [Tests](#tests)
 - [Roadmap](#roadmap)
 - [The name](#the-name)
@@ -238,6 +238,19 @@ other command leave all folders alone. `memsaga repo` prints its path, and the
 commands below use it, so they work wherever yours is. Example
 projects here live under `~/git` (for example `~/git/webapp`); read that as
 the folder where you keep code.
+
+**Or let Claude Code install it.** Paste this prompt into Claude Code:
+
+```text
+Install memsaga for me. Follow
+https://raw.githubusercontent.com/grimmerk/memsaga/main/INSTALL-WITH-CLAUDE.md
+and ask me before each step that changes my machine.
+```
+
+Claude runs the steps above and asks before each one, including where the
+data repository goes. [INSTALL-WITH-CLAUDE.md](INSTALL-WITH-CLAUDE.md) is the
+file it follows. It also lists the permission prompts seen in a test run:
+none in auto mode, one per command in manual mode.
 
 From then on nothing else is needed. Every turn that changed something in
 scope ends with a commit, and the terminal shows a one-line notice. Once the
@@ -742,6 +755,24 @@ The prompt text is never copied into a commit.
 `memsaga --version` shows what is installed. Running sessions need no restart:
 every hook starts a new process, so the next one uses the new binary. If
 several machines share one data repository, update them together.
+
+### Uninstalling
+
+1. `memsaga uninstall` removes the hooks from each config directory, and
+   Claude Code stops committing.
+2. If you ran `memsaga install --skills`, delete the `memsaga-history`,
+   `companion-docs` and `companions` folders under `skills/` in each config
+   directory.
+3. Delete the binary, `~/.cargo/bin/memsaga` (`cargo uninstall memsaga` if
+   you built it with cargo), and `~/.config/memsaga/`, which holds the config
+   file and the install script's receipt.
+4. The install script adds the line `. "$HOME/.cargo/env"` to the shell
+   startup files it finds (`~/.zshrc`, `~/.bashrc`, `~/.profile`). Remove it,
+   and `~/.cargo/env`, only if nothing else you use is installed in
+   `~/.cargo`.
+
+None of this touches the data repository or its copy on GitHub: they are your
+history. Delete them yourself only if you no longer want it.
 
 ### Setting up another machine
 
