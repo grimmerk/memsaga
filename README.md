@@ -119,7 +119,7 @@ Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
 - [FAQ](docs/faq.md): other ways to keep this history, compared
 - [How it works](#how-it-works)
 - [When something looks wrong](#when-something-looks-wrong)
-- [Reference](#reference): [commands](#commands), [what is mirrored](#what-is-mirrored), [memory directory names](#memory-directory-names), [configuration](#configuration), [two-way sync](#two-way-sync), [commit messages](#commit-messages), [updating](#updating), [setting up another machine](#setting-up-another-machine)
+- [Reference](#reference): [commands](#commands), [what is mirrored](#what-is-mirrored), [memory directory names](#memory-directory-names), [configuration](#configuration), [two-way sync](#two-way-sync), [commit messages](#commit-messages), [updating](#updating), [uninstalling](#uninstalling), [setting up another machine](#setting-up-another-machine)
 - [Tests](#tests)
 - [Roadmap](#roadmap)
 - [The name](#the-name)
@@ -220,6 +220,7 @@ memsaga init
 memsaga install
 
 # optional: a private GitHub repository; any name works
+# (needs `gh auth login` once)
 gh repo create memories --private --source "$(memsaga repo)" --push
 
 # last sweep, pending changes, push state
@@ -238,6 +239,38 @@ other command leave all folders alone. `memsaga repo` prints its path, and the
 commands below use it, so they work wherever yours is. Example
 projects here live under `~/git` (for example `~/git/webapp`); read that as
 the folder where you keep code.
+
+**Claude Code's config somewhere else.** memsaga finds Claude Code's config
+directory as `~/.claude`, or through the account list of
+[CodeV](#8-two-claude-code-accounts). It does not read `CLAUDE_CONFIG_DIR`.
+If you run Claude Code with `CLAUDE_CONFIG_DIR` set, write the folder into
+`~/.config/memsaga/config.toml` before `init`. Any `[[roots]]` entry replaces
+the automatic search, so if you also use `~/.claude`, list it too. Check the
+`root …` lines of `init --dry-run`, then run the steps above:
+
+```toml
+[[roots]]
+path = "~/my-claude-config"   # the folder CLAUDE_CONFIG_DIR points to
+label = "claude"
+
+# only if you also use ~/.claude; each root needs its own label
+[[roots]]
+path = "~/.claude"
+label = "claude-default"
+```
+
+**Or let Claude Code install it.** Paste this prompt into Claude Code:
+
+```text
+Install memsaga for me. Follow
+https://raw.githubusercontent.com/grimmerk/memsaga/main/INSTALL-WITH-CLAUDE.md
+and ask me before each step that changes my machine.
+```
+
+Claude runs the steps above and asks before each one, including where the
+data repository goes. [INSTALL-WITH-CLAUDE.md](INSTALL-WITH-CLAUDE.md) is the
+file it follows. It also lists the permission prompts seen in a test run:
+none in auto mode, 11 in manual mode.
 
 From then on nothing else is needed. Every turn that changed something in
 scope ends with a commit, and the terminal shows a one-line notice. Once the
@@ -693,7 +726,9 @@ label = "claude"
 ```
 
 Without `[[roots]]`, memsaga reads CodeV's `~/.config/codev/accounts.json` if
-present, else uses `~/.claude`. Without `repo`, it uses an existing memsaga
+present, else uses `~/.claude`; `CLAUDE_CONFIG_DIR` is not read, so a config
+directory set that way must be listed under `[[roots]]`. Without `repo`, it
+uses an existing memsaga
 repository called `memories` in one of the folders the quick start names, else
 the place `init` would choose. If the config file disappears while the
 repository still holds its mirrored copy, memsaga runs on its defaults: fewer
@@ -739,9 +774,58 @@ The prompt text is never copied into a commit.
    adds any hook the new version needs. `--skills` overwrites the bundled
    skills; if you edited one, the old text is in the history.
 
+To let Claude Code do both steps, paste the prompt from the quick start with
+"Update memsaga for me" in place of "Install memsaga for me".
+
 `memsaga --version` shows what is installed. Running sessions need no restart:
 every hook starts a new process, so the next one uses the new binary. If
 several machines share one data repository, update them together.
+
+### Uninstalling
+
+For the usual setup (one config directory, `~/.claude`, and the install
+script), these commands remove everything memsaga added:
+
+```sh
+# 1. remove the hooks from every config directory; Claude Code stops committing
+memsaga uninstall
+
+# 2. the bundled skills, if you ran `memsaga install --skills`,
+#    then, if you no longer need it, the copy of settings.json that
+#    `memsaga install` took first (rm -i asks before deleting it)
+rm -r ~/.claude/skills/memsaga-history ~/.claude/skills/companion-docs \
+  ~/.claude/skills/companions
+rm -i ~/.claude/settings.json.memsaga-bak
+
+# 3. the binary, the config file and the install script's receipt
+rm ~/.cargo/bin/memsaga
+rm -r ~/.config/memsaga
+```
+
+- Another config directory (a second account such as `~/.claude-work`, or
+  a folder `CLAUDE_CONFIG_DIR` points to): repeat step 2 with its path. Skip
+  the skills when its `skills` is a link to `~/.claude/skills`.
+- A binary from a downloaded archive: delete the copy you put on your
+  `PATH`. Built with cargo: `cargo uninstall memsaga`.
+- The install script also added the line `. "$HOME/.cargo/env"` to the shell
+  startup files it found (on macOS usually `~/.zshenv` and `~/.profile`). If
+  nothing else you use lives in `~/.cargo` (no Rust toolchain, no other
+  `cargo install` tools), remove that line and the folder:
+
+  ```sh
+  for f in ~/.zshenv ~/.zshrc ~/.profile ~/.bashrc ~/.bash_profile; do
+    [ -f "$f" ] && sed -i.bak '/\.cargo\/env/d' "$f"
+  done
+  rm -r ~/.cargo
+  ```
+
+  `sed -i.bak` keeps the previous version of each file as `<file>.bak`.
+
+None of this touches the data repository or its copy on GitHub: they are your
+history. Delete them yourself only if you no longer want it. Claude Code can
+also do the steps above, asking before each one: paste the prompt from the
+quick start with "Uninstall memsaga for me" in place of "Install memsaga for
+me".
 
 ### Setting up another machine
 
