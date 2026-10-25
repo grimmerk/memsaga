@@ -212,6 +212,39 @@ fn sync_entry(
     Ok(())
 }
 
+/// Is `rel`, a path inside a mirrored folder whose root-relative path is
+/// `prefix`, left out by `exclude` (any component) or `exclude_paths`? One
+/// rule for the mirror and for the counts `init --dry-run` prints.
+pub fn excluded_in_dir(scope: &Scope, prefix: &Path, rel: &Path) -> bool {
+    rel.components()
+        .any(|c| scope.excluded_name(&c.as_os_str().to_string_lossy()))
+        || scope.excluded_path(&prefix.join(rel))
+}
+
+/// How many files and links the mirror would keep for `src`: one for a link
+/// (the second account's `skills`, mirrored as a link) or a file, else what
+/// `sync_dir` would mirror.
+pub fn count_mirrored(scope: &Scope, src: &Path, prefix: &Path) -> usize {
+    if src
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink() || m.is_file())
+    {
+        return 1;
+    }
+    WalkDir::new(src)
+        .follow_links(false)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file() || e.file_type().is_symlink())
+        .filter(|e| {
+            e.path()
+                .strip_prefix(src)
+                .is_ok_and(|rel| !excluded_in_dir(scope, prefix, rel))
+        })
+        .count()
+}
+
 /// Recursive directory mirror with delete. `prefix` is `src` relative to its
 /// root, so root-relative `exclude_paths` can be applied while walking.
 pub fn sync_dir(
@@ -241,22 +274,8 @@ pub fn sync_dir(
     let mut blocked: Vec<PathBuf> = Vec::new();
     for item in WalkDir::new(src).follow_links(false).min_depth(1) {
         let item = item?;
-        let name = item.file_name().to_string_lossy().to_string();
-        if scope.excluded_name(&name) {
-            if item.file_type().is_dir() {
-                // walkdir has no skip-subtree on the iterator form we use; excluded
-                // dirs are rare (.DS_Store is a file), so just skip entries below.
-            }
-            continue;
-        }
         let rel = item.path().strip_prefix(src)?;
-        if rel
-            .components()
-            .any(|c| scope.excluded_name(&c.as_os_str().to_string_lossy()))
-        {
-            continue;
-        }
-        if scope.excluded_path(&prefix.join(rel)) {
+        if excluded_in_dir(scope, prefix, rel) {
             continue;
         }
         let target = dst.join(rel);

@@ -3700,6 +3700,33 @@ fn init_puts_the_repository_in_an_existing_code_folder_and_records_it() {
 }
 
 #[test]
+fn dry_run_counts_only_the_files_init_imports() {
+    // claude.ai-synced skills live under skills/synced, excluded by default:
+    // the dry run counted them while init imported none.
+    let u = NewUser::new(&["git"]);
+    write(&u.home.join(".claude/skills/mine/SKILL.md"), "mine\n");
+    for i in 0..3 {
+        write(
+            &u.home.join(format!(".claude/skills/synced/s{i}/SKILL.md")),
+            "synced\n",
+        );
+    }
+    write(&u.home.join(".claude/skills/mine/.DS_Store"), "x");
+    let dry = u.run(&["init", "--no-backfill", "--dry-run"]);
+    assert!(dry.contains("skills/  (1 files)"), "{dry}");
+    assert!(dry.contains("total: 1 files"), "{dry}");
+
+    u.run(&["init", "--no-backfill"]);
+    let repo = u.home.join("git/memories");
+    let out = std::process::Command::new("git")
+        .args(["-C", &repo.to_string_lossy(), "ls-files", "claude/skills"])
+        .output()
+        .unwrap();
+    let files = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(files.lines().count(), 1, "{files}");
+}
+
+#[test]
 fn init_records_repo_given_by_flag_and_refuses_one_that_contradicts_the_file() {
     let u = NewUser::new(&["git"]);
     write(&u.cfg(), "# mine\nreporter = false\n");

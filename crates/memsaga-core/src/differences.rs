@@ -193,11 +193,7 @@ pub fn stale(cfg: &Config, rev: &str) -> Result<Vec<Stale>> {
                         continue;
                     }
                     let rel = item.path().strip_prefix(&src)?;
-                    if rel
-                        .components()
-                        .any(|c| scope.excluded_name(&c.as_os_str().to_string_lossy()))
-                        || scope.excluded_path(&prefix.join(rel))
-                    {
+                    if crate::mirror::excluded_in_dir(&scope, &prefix, rel) {
                         continue;
                     }
                     found.push(prefix.join(rel));
