@@ -339,10 +339,8 @@ fn run(cli: Cli) -> Result<()> {
                 Some(b) => b,
                 None => install::portable_bin(&std::env::current_exe()?.to_string_lossy()),
             };
-            if root.is_empty() {
-                for w in memsaga_core::status::roots_warnings(&cfg) {
-                    println!("{w}");
-                }
+            for w in memsaga_core::status::roots_warnings(&cfg) {
+                println!("{w}");
             }
             let roots: Vec<PathBuf> = if root.is_empty() {
                 cfg.roots.iter().map(|r| r.path.clone()).collect()

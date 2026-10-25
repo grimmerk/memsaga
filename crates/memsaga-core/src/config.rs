@@ -72,6 +72,10 @@ pub struct Config {
     /// for this run; `None` when the file does not set one.
     #[serde(skip)]
     pub file_repo: Option<PathBuf>,
+    /// Whether the config file has a `roots` key, even an empty one; `init`
+    /// then leaves the roots to the user.
+    #[serde(skip)]
+    pub file_sets_roots: bool,
     /// Roots to mirror. Empty means "discover".
     pub roots: Vec<Root>,
     /// Where `roots` came from; not part of the file.
@@ -116,6 +120,7 @@ impl Default for Config {
             repo: PathBuf::new(),
             repo_origin: RepoOrigin::Detected,
             file_repo: None,
+            file_sets_roots: false,
             roots: Vec::new(),
             roots_origin: RootsOrigin::Discovered,
             // What the user writes in a config directory. Claude Code reads
@@ -173,9 +178,11 @@ impl Config {
             let table = toml::from_str::<toml::Table>(&text)
                 .with_context(|| format!("parsing {}", path.display()))?;
             let sets_repo = table.contains_key("repo");
-            let c: Config = toml::Value::Table(table)
+            let sets_roots = table.contains_key("roots");
+            let mut c: Config = toml::Value::Table(table)
                 .try_into()
                 .with_context(|| format!("parsing {}", path.display()))?;
+            c.file_sets_roots = sets_roots;
             (c, sets_repo)
         } else {
             (Config::default(), false)
@@ -276,10 +283,10 @@ impl Config {
 
     /// For `init`: add the folder `CLAUDE_CONFIG_DIR` names to discovered
     /// roots, with a label no other root has. Returns the new root; `None`
-    /// when the roots come from the file or `MEMSAGA_ROOTS`, or nothing is
-    /// missing.
+    /// when the file has a `roots` key (even `roots = []`) or `MEMSAGA_ROOTS`
+    /// is set, or nothing is missing.
     pub fn add_config_dir_root(&mut self) -> Option<Root> {
-        if self.roots_origin != RootsOrigin::Discovered {
+        if self.roots_origin != RootsOrigin::Discovered || self.file_sets_roots {
             return None;
         }
         let path = self.unlisted_config_dir()?;

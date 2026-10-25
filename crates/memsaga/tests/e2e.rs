@@ -3779,7 +3779,8 @@ fn init_records_claude_config_dir_beside_the_default_root() {
 #[test]
 fn init_leaves_the_config_alone_when_claude_config_dir_is_a_root() {
     let u = NewUser::new(&["git"]);
-    let dot = u.home.join(".claude");
+    // With a trailing slash: still the same folder as the root.
+    let dot = PathBuf::from(format!("{}/", u.home.join(".claude").display()));
     let out = with_config_dir(&u, &dot, &["init", "--no-backfill"]);
     assert!(!out.contains("CLAUDE_CONFIG_DIR"), "{out}");
     let cfg = fs::read_to_string(u.cfg()).unwrap();
@@ -3806,6 +3807,24 @@ fn install_and_status_warn_about_an_unlisted_claude_config_dir() {
         !mine.join("settings.json").exists(),
         "nothing written there"
     );
+    let status = with_config_dir(&u, &mine, &["status"]);
+    assert!(status.contains("CLAUDE_CONFIG_DIR is "), "{status}");
+    let config = with_config_dir(&u, &mine, &["config"]);
+    assert!(config.contains("CLAUDE_CONFIG_DIR is "), "{config}");
+}
+
+#[test]
+fn init_leaves_an_explicit_empty_roots_list_alone() {
+    // `roots = []` is the user's own choice: init must not fail on it, nor
+    // write [[roots]] after it; the warning says what to add.
+    let u = NewUser::new(&["git"]);
+    write(&u.cfg(), "roots = []\n");
+    let mine = u.home.join("cc-config");
+    write(&mine.join("CLAUDE.md"), "# mine\n");
+    let out = with_config_dir(&u, &mine, &["init", "--no-backfill"]);
+    assert!(!out.contains("init records all roots"), "{out}");
+    let cfg = fs::read_to_string(u.cfg()).unwrap();
+    assert!(!cfg.contains("[[roots]]"), "{cfg}");
     let status = with_config_dir(&u, &mine, &["status"]);
     assert!(status.contains("CLAUDE_CONFIG_DIR is "), "{status}");
 }

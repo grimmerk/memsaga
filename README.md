@@ -270,7 +270,8 @@ config directory at `~/.claude` and in the account list of
 `CLAUDE_CONFIG_DIR` set, run `init` where it is set (a terminal that exports
 it, or a Claude Code session using it): `init` adds that folder and records
 all roots as `[[roots]]` in `~/.config/memsaga/config.toml`, so every session
-sees the same ones. The `root …` lines of `init --dry-run` show the result.
+sees the same ones. It does so only when the config file lists no roots of
+its own. The `root …` lines of `init --dry-run` show the result.
 memsaga 0.1.1 does not do this yet; with it, write the lines yourself before
 `init`. Listing roots turns off the automatic search, so list `~/.claude` too
 if you also use it:
@@ -286,8 +287,11 @@ path = "~/.claude"
 label = "claude-default"
 ```
 
-`memsaga install` and `memsaga status` warn when `CLAUDE_CONFIG_DIR` names a
-folder that is not a root, and print the lines to add.
+`memsaga install`, `memsaga status` and `memsaga config` warn when
+`CLAUDE_CONFIG_DIR` names a folder that is not a root, and print the lines to
+add. A second account set up without `CLAUDE_CONFIG_DIR` in the shell where
+you run `init` (for example `~/.claude-work`) is not found either: list it as
+in [Two Claude Code accounts](#8-two-claude-code-accounts).
 
 ### After the install
 

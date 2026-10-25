@@ -140,6 +140,11 @@ pub fn roots_warnings(cfg: &Config) -> Vec<String> {
             "memsaga: no Claude Code config directory found (memsaga looks at ~/.claude and CodeV's account list); list yours under [[roots]] in {}",
             path.display()
         ));
+    } else if cfg.roots.iter().all(|r| !r.path.is_dir()) {
+        out.push(format!(
+            "memsaga: none of the roots in {} exists on this machine, so nothing is mirrored",
+            path.display()
+        ));
     }
     if let Some(dir) = cfg.unlisted_config_dir() {
         let mut roots = cfg.roots.clone();
