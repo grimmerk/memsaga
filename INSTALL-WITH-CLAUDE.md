@@ -54,18 +54,21 @@ Run these and summarise the result in a few lines:
 ```sh
 uname -sm
 git --version
-command -v memsaga && memsaga --version
-command -v gh && gh auth status
+command -v memsaga && memsaga --version || echo "memsaga: not installed"
+command -v gh && gh auth status || echo "gh: not installed or not logged in"
 ```
+
+The `|| echo` keeps a missing tool from showing up as a failed command; tell
+the user that "not installed" is an expected answer on a new machine.
 
 - memsaga runs on macOS (Apple silicon and Intel) and Linux (x86_64, arm64).
   On anything else, stop and say so.
 - git is required. If it is missing, tell the user how to install it for
   their system and stop.
-- If memsaga is already installed and `memsaga status` shows a data
-  repository, the user probably wants an update: follow
-  [If the user asks to update](#if-the-user-asks-to-update) instead of the
-  steps below.
+- If memsaga is already installed, ask whether the user wants an update
+  ([If the user asks to update](#if-the-user-asks-to-update)) or to go on
+  with the steps below. A data repository alone does not mean the hooks,
+  the skills or the GitHub backup are set up; step 3 checks for one.
 - `gh` is optional. It only makes step 5 shorter.
 
 ### Step 2: install the binary
@@ -112,8 +115,14 @@ case it is:
 - the user wrote the config file for this install: go on.
 
 Otherwise, show the user where the data repository would go and how much would
-be imported. Ask whether that place and folder name are fine, or where they
-want it instead; any path works, and the folder does not have to be called
+be imported. The dry run lists each Claude Code config directory it found
+(`root …` lines). If the user has another one that is not listed (check with
+`ls -d ~/.claude*`; a second account set up with `CLAUDE_CONFIG_DIR`, such as
+`~/.claude-work`), tell them it is not included, and that "Two Claude Code
+accounts" in the README shows how to add it after the install.
+
+Ask whether that place and folder name are fine, or where they want it
+instead; any path works, and the folder does not have to be called
 `memories`. Then run one of:
 
 ```sh
@@ -157,9 +166,12 @@ gh repo create <name> --private --source "<data repository path>" --push
 ```
 
 Without `gh`, ask the user to create an empty private repository on
-github.com, give you its URL, and then run:
+github.com and give you its URL. Before pushing, check that it is not public:
+an unauthenticated request for a private repository answers 404, a public one
+200. On 200, stop and ask the user to make it private.
 
 ```sh
+curl -s -o /dev/null -w '%{http_code}\n' https://api.github.com/repos/<owner>/<name>
 git -C "<data repository path>" remote add origin "<URL>"
 git -C "<data repository path>" push -u origin HEAD
 ```
