@@ -221,13 +221,13 @@ pub fn excluded_in_dir(scope: &Scope, prefix: &Path, rel: &Path) -> bool {
         || scope.excluded_path(&prefix.join(rel))
 }
 
-/// How many entries other than folders the mirror would keep for `src`: one
-/// for a link (the second account's `skills`, mirrored as a link), else
-/// what `sync_dir` would mirror.
+/// How many files and links the mirror would keep for `src`: one for a link
+/// (the second account's `skills`, mirrored as a link) or a file, else what
+/// `sync_dir` would mirror.
 pub fn count_mirrored(scope: &Scope, src: &Path, prefix: &Path) -> usize {
     if src
         .symlink_metadata()
-        .is_ok_and(|m| m.file_type().is_symlink())
+        .is_ok_and(|m| m.file_type().is_symlink() || m.is_file())
     {
         return 1;
     }
@@ -236,7 +236,7 @@ pub fn count_mirrored(scope: &Scope, src: &Path, prefix: &Path) -> usize {
         .min_depth(1)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| !e.file_type().is_dir())
+        .filter(|e| e.file_type().is_file() || e.file_type().is_symlink())
         .filter(|e| {
             e.path()
                 .strip_prefix(src)
