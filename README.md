@@ -780,7 +780,9 @@ folder another machine added to the config) is kept, and `memsaga status`
 lists it.
 
 The three synchronous hooks of use case 10 ask origin at most once a minute per
-machine, and before a Write or Edit at most every ten seconds. Design and
+machine, and before a Write or Edit at most every ten seconds. Only a session
+start and a Write or Edit wait for the answer; a prompt or a Read starts the
+check in the background and uses the last answer. Design and
 measurements: [`docs/two-way-sync.md`](docs/two-way-sync.md).
 
 ### Commit messages
