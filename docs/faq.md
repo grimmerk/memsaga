@@ -151,9 +151,16 @@ it, does one check and exits.
 - **Pushing to GitHub:** in the background, at most once every ten minutes by
   default (`push_min_interval_secs`).
 - **Checking GitHub for edits made elsewhere (two-way sync):** about half a
-  second, at most once a minute, at the start of a session or a prompt; before
-  Claude writes a file memsaga keeps, at most every ten seconds. Without a
-  GitHub remote, memsaga uses no network at all.
+  second, at most once a minute for the whole machine. Claude Code waits for it
+  only at the start of a session, and before Claude writes a file memsaga keeps
+  (then at most every ten seconds). When you send a prompt or Claude reads a
+  file, the check runs in the background and the hook uses the last answer. It
+  takes longer only when there is something to bring in: the last answer says
+  origin moved, or an edit is still waiting (one made in the data repository by
+  hand, or one an earlier hook could not merge yet). It then writes what merges
+  cleanly into the files before Claude reads them; a conflict is left for
+  `memsaga sync` and named in a notice. Without a GitHub remote, memsaga uses
+  no network at all.
 
 The numbers were measured on a busy machine;
 [`docs/architecture.md`](architecture.md#measured-again-2026-10-15-and-how-to-repeat-it)
