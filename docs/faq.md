@@ -154,10 +154,13 @@ it, does one check and exits.
   second, at most once a minute for the whole machine. Claude Code waits for it
   only at the start of a session, and before Claude writes a file memsaga keeps
   (then at most every ten seconds). When you send a prompt or Claude reads a
-  file, the check runs in the background and the hook uses the last answer; it
-  takes longer only when that answer says something changed elsewhere, which
-  it then writes into the files before Claude reads them. Without a GitHub
-  remote, memsaga uses no network at all.
+  file, the check runs in the background and the hook uses the last answer. It
+  takes longer only when there is something to bring in: the last answer says
+  origin moved, or an edit is still waiting (one made in the data repository by
+  hand, or one an earlier hook could not merge yet). It then writes what merges
+  cleanly into the files before Claude reads them; a conflict is left for
+  `memsaga sync` and named in a notice. Without a GitHub remote, memsaga uses
+  no network at all.
 
 The numbers were measured on a busy machine;
 [`docs/architecture.md`](architecture.md#measured-again-2026-10-15-and-how-to-repeat-it)
