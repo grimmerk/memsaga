@@ -52,7 +52,7 @@ You can, at two levels:
 | Is every change recorded | When the model follows the instruction or uses the skill | Always: a hook runs after every reply |
 | Edits made by you or by other tools | Missed unless they go through the same path | Recorded too |
 | Several agents | Possible with a skill | Claude Code today; Codex is on the [roadmap](../README.md#roadmap) |
-| What has history | Memory | The files Claude Code reads or runs in `~/.claude` (`CLAUDE.md`, memory, skills, hooks…), plus folders and files you list |
+| What has history | Memory | The files memsaga mirrors by default (`CLAUDE.md`, memory, skills, hooks…), plus folders and files you list |
 
 Tools that take this path already exist and go much further, with search,
 indexes and hand-offs between agents. One example is
@@ -60,7 +60,8 @@ indexes and hand-offs between agents. One example is
 agent's own memory with a shared, git-backed markdown wiki for twenty or more
 coding agents. The two can be used together: such a tool keeps the memory, in
 a repository that already has its own history, and memsaga keeps the history of
-the rest of `~/.claude`, such as `CLAUDE.md`, skills and hooks.
+the files in `~/.claude` it mirrors outside memory, such as `CLAUDE.md`, skills
+and hooks.
 
 ## How do I give the built-in memory a history myself?
 

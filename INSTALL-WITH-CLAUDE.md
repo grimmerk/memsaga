@@ -110,7 +110,7 @@ case it is:
   repository and its history are still there. If `~/.config/memsaga/config.toml`
   is gone (the README's uninstall steps delete it), restore it first from the
   copy in the data repository:
-  `git -C "<data repository path>" show HEAD:memsaga/config.toml > ~/.config/memsaga/config.toml`;
+  `mkdir -p ~/.config/memsaga && git -C "<data repository path>" show HEAD:memsaga/config.toml > ~/.config/memsaga/config.toml`;
 - this is a second machine that shares a data repository with another one:
   follow "Setting up another machine" in the README instead of the rest of
   this file, because `init` would commit this machine's state on top of the
@@ -142,9 +142,10 @@ user also uses it.
 
 Ask whether any project must stay out of the history, for example client
 work. If so, add it to `exclude_projects` in `~/.config/memsaga/config.toml`
-now, by the Claude Code directory name the dry run lists (for `~/git/client`
-and the projects below it: `exclude_projects = ["*-git-client",
-"*-git-client-*"]`): what `init` commits stays in the history.
+now, keeping any entries already there, by the Claude Code directory name the
+dry run lists (for `~/git/client` and the projects below it, add
+`"*-git-client"` and `"*-git-client-*"` to the list): what `init` commits
+stays in the history.
 
 Ask whether that place and folder name are fine, or where they want it
 instead; any path works, and the folder does not have to be called

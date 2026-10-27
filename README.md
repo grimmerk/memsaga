@@ -142,7 +142,7 @@ do-it-yourself setup gets you most of the history:
 
 memsaga does this for you, out of the box. There is no list or hook to write
 yourself: it already knows which files Claude Code reads or runs (`CLAUDE.md`,
-memory, skills, agents, commands, rules, hooks), following Claude Code's own
+memory, skills, subagents, commands, rules, hooks), following Claude Code's own
 directory reference, and it leaves out credentials, conversations and caches.
 
 It also handles what the do-it-yourself setup cannot easily handle:
@@ -260,7 +260,9 @@ Run the steps one at a time; each block below is one step.
 3. Create the data repository, replay the history and import the current
    state, then register the hooks in each Claude Code config directory.
    `--skills` also adds the bundled skills that use cases 3 and 7 use; leave
-   it out if you do not want them:
+   it out if you do not want them. It writes the folders `memsaga-history`,
+   `companion-docs` and `companions` under `skills/`, replacing any folder of
+   the same name, so rename one first if you already have it:
 
    ```sh
    memsaga init
@@ -300,8 +302,8 @@ you use it (that list includes `~/.claude`), and otherwise uses
 `CLAUDE_CONFIG_DIR` set, run `init` where it is set (a terminal that exports
 it, or a Claude Code session using it): `init` adds that folder and records
 all roots as `[[roots]]` in `~/.config/memsaga/config.toml`, so every session
-sees the same ones. It does so only when the config file has no `roots` key
-(not even `roots = []`). The `root …` lines of `init --dry-run` show the
+sees the same ones. It does so only when the folder exists, is not already a
+root, and the config file has no `roots` key (not even `roots = []`). The `root …` lines of `init --dry-run` show the
 result. memsaga 0.1.1 does not do this; with it, write the lines yourself before
 `init`. Listing roots turns off the automatic search, so list `~/.claude` too
 if you also use it:
@@ -980,7 +982,7 @@ Tested with the same user name and the same folder layout on both machines:
 
 **A machine that ran memsaga before** (an older data repository or config):
 move the old data repository aside rather than deleting it, then do steps 2
-to 5. Live files from before may still be there after the other machine
+to 6. Live files from before may still be there after the other machine
 removed or moved them: a memory file moved to another project, a folder
 that became a link. `restore --all` lists them as not in the repository and
 leaves them, since on any other machine such a file may simply be new; add
