@@ -110,7 +110,7 @@ case it is:
   repository and its history are still there. If `~/.config/memsaga/config.toml`
   is gone (the README's uninstall steps delete it), restore it first from the
   copy in the data repository:
-  `mkdir -p ~/.config/memsaga && git -C "<data repository path>" show HEAD:memsaga/config.toml > ~/.config/memsaga/config.toml`;
+  `mkdir -p ~/.config/memsaga && git -C "<data repository path>" show HEAD:memsaga/config.toml > ~/.config/memsaga/config.toml.tmp && mv ~/.config/memsaga/config.toml.tmp ~/.config/memsaga/config.toml`;
 - this is a second machine that shares a data repository with another one:
   follow "Setting up another machine" in the README instead of the rest of
   this file, because `init` would commit this machine's state on top of the
