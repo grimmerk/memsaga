@@ -453,7 +453,7 @@ git log --grep 'Session-Title: .*login'</pre>
         <span class="n">1</span>
         <h3>Claude Code's config directory</h3>
         <p>What Claude Code reads and writes in <code>~/.claude</code>, in every account you run.</p>
-        <div class="chips"><span>CLAUDE.md</span><span>memory</span><span>skills</span><span>agents</span><span>commands</span><span>hooks</span><span>mods</span></div>
+        <div class="chips"><span>CLAUDE.md</span><span>memory</span><span>skills</span><span>agents</span><span>commands</span><span>hooks</span></div>
       </div>
       <div class="src">
         <span class="n">2</span>
@@ -482,7 +482,7 @@ git log --grep 'Session-Title: .*login'</pre>
       <li><h3>Claude changes a file</h3><p>A memory, <code>CLAUDE.md</code>, a skill, or a file you listed.</p></li>
       <li><h3>The reply ends</h3><p>Everything that changed becomes one commit, named after the conversation.</p></li>
       <li class="sync"><h3>It is pushed</h3><p>To your private GitHub repository, at most every ten minutes and when the session ends.</p></li>
-      <li class="sync"><h3>Your other machine has it</h3><p>The next time you start a session or send a prompt there.</p></li>
+      <li class="sync"><h3>Your other machine has it</h3><p>The next time you start a session there, or a prompt or two later in one already open.</p></li>
     </ol>
   </div>
 </section>
@@ -598,7 +598,7 @@ git log --grep 'Session-Title: .*login'</pre>
       <div class="promise"><h3>Every version can come back</h3><p>Restore one file, or all of them, from any point in history. A restore shows the diff and waits for your yes. No git needed: after <code>memsaga install --skills</code>, ask Claude what <code>CLAUDE.md</code> or a memory file said last week.</p></div>
       <div class="promise"><h3>It stays out of Claude's way</h3><p>If something fails, Claude Code carries on as usual, and <code>memsaga status</code> tells you what happened.</p></div>
       <div class="promise"><h3>What you add stays</h3><p>Files you put in the repository yourself are committed and never removed by memsaga.</p></div>
-      <div class="promise"><h3>Secrets stay out</h3><p>Not copied: <code>~/.claude.json</code>, credentials, transcripts and caches. <code>settings.json</code> only if you ask.</p></div>
+      <div class="promise"><h3>Credential files stay out</h3><p>Not copied: <code>~/.claude.json</code>, credentials, transcripts and caches. <code>settings.json</code> only if you ask. The files that are copied are not scanned, so keep secrets out of them.</p></div>
       <div class="promise"><h3>You own the repository</h3><p>Plain git, on your disk and in your own private GitHub repository. No service to sign up for, no telemetry.</p></div>
     </div>
   </div>
@@ -662,10 +662,11 @@ and ask me before each step that changes my machine.</pre>
       <p class="lead-way"><strong>Or by hand</strong>, running the terminal commands one at a time:</p>
       <ol class="steps">
         <li><strong>The installer</strong> puts a prebuilt memsaga in <code>~/.cargo/bin</code>, for Macs (Apple silicon and Intel) and Linux (x86_64 and arm64), and adds that folder to your <code>PATH</code> for new terminals: open one before the next step. You need git. To build from source instead (Rust 1.88 or later): <code>cargo install memsaga --locked</code> from crates.io, or <code>cargo install --git https://github.com/grimmerk/memsaga memsaga --locked</code> for the latest <code>main</code>.</li>
-        <li><strong>init</strong> creates the data repository and replays the edits your recent conversations recorded, so the history starts weeks back. It is created as <code>~/git/memories</code>, or as <code>memories</code> in the first of <code>~/code</code>, <code>~/src</code>, <code>~/Projects</code> and <code>~/dev</code> that exists; with none of them, as <code>~/memories</code>. <code>--repo</code> picks another place, and <code>--dry-run</code> shows the choice first.</li>
+        <li><strong>init</strong> creates the data repository and replays the edits your recent conversations recorded, so the history starts weeks back. It is a folder named <code>memories</code> inside the first of <code>~/git</code>, <code>~/code</code>, <code>~/src</code>, <code>~/Projects</code> and <code>~/dev</code> that exists (for example <code>~/git/memories</code>), or <code>~/memories</code> when none of them does. <code>--repo</code> picks another place, and <code>--dry-run</code> shows the choice first.</li>
         <li><strong>install</strong> connects memsaga to Claude Code. With <code>--skills</code>, Claude can also answer questions about the history.</li>
         <li><strong>gh repo create</strong> is optional. With a private GitHub repository, pushes and two-way sync happen on their own.</li>
       </ol>
+      <p class="note"><strong>A second machine for a data repository you already have?</strong> Follow <a href="https://github.com/grimmerk/memsaga#setting-up-another-machine">Setting up another machine</a> instead; running <code>init</code> there would start a second, separate history.</p>
       <p class="note"><strong>Keep the data repository private.</strong> Memory holds whatever Claude learned while working with you, which often includes details of your work.</p>
     </div>
     <div class="term-stack">
@@ -674,7 +675,7 @@ and ask me before each step that changes my machine.</pre>
 <pre id="install-cmds"><span class="cmd" data-cmd="curl --proto &#x27;=https&#x27; --tlsv1.2 -LsSf https://github.com/grimmerk/memsaga/releases/latest/download/memsaga-installer.sh | sh"><span class="p">$ </span>curl --proto '=https' --tlsv1.2 -LsSf \
     https://github.com/grimmerk/memsaga/releases/latest/download/memsaga-installer.sh | sh</span><span class="c cl"># then open a new terminal (or run: source ~/.cargo/env)</span><span class="cmd" data-cmd="memsaga init --dry-run"><span class="p">$ </span>memsaga init --dry-run   <span class="c"># what would be imported</span></span><span class="cmd" data-cmd="memsaga init"><span class="p">$ </span>memsaga init</span><span class="cmd" data-cmd="memsaga install --skills"><span class="p">$ </span>memsaga install --skills</span><span class="cmd" data-cmd="gh repo create memories --private --push --source &quot;$(memsaga repo)&quot;"><span class="p">$ </span>gh repo create memories --private --push \
     --source "$(memsaga repo)"   <span class="c"># optional: a private remote</span></span><span class="cmd" data-cmd="memsaga status"><span class="p">$ </span>memsaga status</span></pre>
-      <pre style="border-top:1px solid var(--code-line)"><span class="c cl"># to try it on example data first (after the install line):</span><span class="c cl"># your real Claude Code config is never read or written</span><span class="cmd" data-cmd="git clone https://github.com/grimmerk/memsaga"><span class="p">$ </span>git clone https://github.com/grimmerk/memsaga</span><span class="cmd" data-cmd="memsaga/demo/setup.sh &amp;&amp; source /tmp/memsaga-demo/env.sh"><span class="p">$ </span>memsaga/demo/setup.sh &amp;&amp; source /tmp/memsaga-demo/env.sh</span></pre>
+      <pre style="border-top:1px solid var(--code-line)"><span class="c cl"># to try it on example data first (after the install line):</span><span class="c cl"># your real Claude Code config is never read or written;</span><span class="c cl"># open a new terminal afterwards to leave the demo</span><span class="cmd" data-cmd="git clone https://github.com/grimmerk/memsaga"><span class="p">$ </span>git clone https://github.com/grimmerk/memsaga</span><span class="cmd" data-cmd="memsaga/demo/setup.sh &amp;&amp; source /tmp/memsaga-demo/env.sh"><span class="p">$ </span>memsaga/demo/setup.sh &amp;&amp; source /tmp/memsaga-demo/env.sh</span></pre>
     </div>
     </div>
   </div>
