@@ -453,7 +453,7 @@ git log --grep 'Session-Title: .*login'</pre>
         <span class="n">1</span>
         <h3>Claude Code's config directory</h3>
         <p>What Claude Code reads and writes in <code>~/.claude</code>, in every account you run.</p>
-        <div class="chips"><span>CLAUDE.md</span><span>memory</span><span>skills</span><span>agents</span><span>commands</span><span>hooks</span></div>
+        <div class="chips"><span>CLAUDE.md</span><span>memory</span><span>skills</span><span>agents</span><span>commands</span><span>hooks</span><span>mods, if you add them</span></div>
       </div>
       <div class="src">
         <span class="n">2</span>
@@ -662,7 +662,7 @@ and ask me before each step that changes my machine.</pre>
       <p class="lead-way"><strong>Or by hand</strong>, running the terminal commands one at a time:</p>
       <ol class="steps">
         <li><strong>The installer</strong> puts a prebuilt memsaga in <code>~/.cargo/bin</code>, for Macs (Apple silicon and Intel) and Linux (x86_64 and arm64), and adds that folder to your <code>PATH</code> for new terminals: open one before the next step. You need git. To build from source instead (Rust 1.88 or later): <code>cargo install memsaga --locked</code> from crates.io, or <code>cargo install --git https://github.com/grimmerk/memsaga memsaga --locked</code> for the latest <code>main</code>.</li>
-        <li><strong>init</strong> creates the data repository and replays the edits your recent conversations recorded, so the history starts weeks back. It is a folder named <code>memories</code> inside the first of <code>~/git</code>, <code>~/code</code>, <code>~/src</code>, <code>~/Projects</code> and <code>~/dev</code> that exists (for example <code>~/git/memories</code>), or <code>~/memories</code> when none of them does. <code>--repo</code> picks another place, and <code>--dry-run</code> shows the choice first.</li>
+        <li><strong>init</strong> creates the data repository and replays the edits your recent conversations recorded, so the history starts weeks back. It is a folder named <code>memories</code> inside the first of <code>~/git</code>, <code>~/code</code>, <code>~/src</code>, <code>~/Projects</code> and <code>~/dev</code> that exists (for example <code>~/git/memories</code>), or <code>~/memories</code> when none of them does; an existing memsaga repository named <code>memories</code> in one of those places is used first. <code>--repo</code> picks another place, and <code>--dry-run</code> shows the choice first.</li>
         <li><strong>install</strong> connects memsaga to Claude Code. With <code>--skills</code>, Claude can also answer questions about the history.</li>
         <li><strong>gh repo create</strong> is optional. With a private GitHub repository, pushes and two-way sync happen on their own.</li>
       </ol>
@@ -768,7 +768,12 @@ and ask me before each step that changes my machine.</pre>
     b.setAttribute('aria-label', 'Copy: ' + text);
     b.addEventListener('click', function () {
       var done = function () { b.setAttribute('data-label', 'copied'); setTimeout(function () { b.setAttribute('data-label', 'copy'); }, 1600); };
-      try { navigator.clipboard.writeText(text).then(done, function () {}); } catch (e) {}
+      var select = function () {
+        var r = document.createRange(); r.selectNodeContents(line);
+        var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+        b.setAttribute('data-label', 'Cmd/Ctrl+C');
+      };
+      try { navigator.clipboard.writeText(text).then(done, select); } catch (e) { select(); }
     });
     line.appendChild(b);
   });

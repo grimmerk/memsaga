@@ -327,8 +327,9 @@ in [Two Claude Code accounts](#8-two-claude-code-accounts).
 
 Nothing else is needed. Every turn that changed something in scope ends with a
 commit, and the terminal shows a one-line notice. Once the data repository has
-an `origin` remote (optional step 4 above), pushes happen on their own, at
-most once every ten minutes and at the end of a session; without one, the
+an `origin` remote (optional step 4 above), pushes happen on their own, by
+default at most once every ten minutes and at the end of a session (both can
+be changed in [configuration](#configuration); `memsaga push` pushes now); without one, the
 history stays on this machine. Without `gh`, create an empty private
 repository on GitHub, then run `git -C "$(memsaga repo)" remote add origin
 <its URL>` and `git -C "$(memsaga repo)" push -u origin HEAD`.
@@ -360,7 +361,9 @@ bundled skills from `memsaga install --skills`). 5 to 7 add files of your own.
 full history makes safe to try.
 
 The examples use `~/git/webapp` for a project of yours. If you keep code
-somewhere else, read `~/git` as that folder.
+somewhere else, read `~/git` as that folder, and `HOME-git-webapp` (the
+project's memory folder in the repository) as the name `memsaga paths` shows
+for it.
 
 None of them needs you to know git. `memsaga restore` shows the change and
 asks before it writes anything, and with the bundled skills you can ask Claude
@@ -899,10 +902,12 @@ script), these steps remove everything memsaga added. Run them one at a time.
    rm -r ~/.config/memsaga
    ```
 
-3. If you ran `memsaga install --skills`, remove the bundled skills:
+3. If you ran `memsaga install --skills`, remove the bundled skills. If you
+   added files of your own to these folders, move them out first; `rm -rI`
+   asks once before it removes anything:
 
    ```sh
-   rm -r ~/.claude/skills/memsaga-history ~/.claude/skills/companion-docs \
+   rm -rI ~/.claude/skills/memsaga-history ~/.claude/skills/companion-docs \
      ~/.claude/skills/companions
    ```
 
