@@ -107,7 +107,10 @@ repository on this machine already. Do not run `init` yet; ask the user which
 case it is:
 
 - memsaga ran here before and was removed: skip to step 4, since the data
-  repository and its history are still there;
+  repository and its history are still there. If `~/.config/memsaga/config.toml`
+  is gone (the README's uninstall steps delete it), restore it first from the
+  copy in the data repository:
+  `mkdir -p ~/.config/memsaga && git -C "<data repository path>" show HEAD:memsaga/config.toml > ~/.config/memsaga/config.toml.tmp && mv ~/.config/memsaga/config.toml.tmp ~/.config/memsaga/config.toml`;
 - this is a second machine that shares a data repository with another one:
   follow "Setting up another machine" in the README instead of the rest of
   this file, because `init` would commit this machine's state on top of the
@@ -137,6 +140,13 @@ label = "claude"          # a second one gets its own label, e.g. "claude-work"
 Listing roots replaces the automatic search, so list `~/.claude` too when the
 user also uses it.
 
+Ask whether any project must stay out of the history, for example client
+work. If so, add it to `exclude_projects` in `~/.config/memsaga/config.toml`
+now, keeping any entries already there, by the Claude Code directory name the
+dry run lists (for `~/git/client` and the projects below it, add
+`"*-git-client"` and `"*-git-client-*"` to the list): what `init` commits
+stays in the history.
+
 Ask whether that place and folder name are fine, or where they want it
 instead; any path works, and the folder does not have to be called
 `memories`. Then run one of:
@@ -161,6 +171,7 @@ commit. Ask whether they also want the bundled skills, which let Claude answer
 questions about the history (`--skills`). `--skills` writes the folders
 `memsaga-history`, `companion-docs` and `companions` under `skills/`; if one of
 them already exists and memsaga did not write it, ask before overwriting it.
+Then run one of:
 
 ```sh
 ~/.cargo/bin/memsaga install
