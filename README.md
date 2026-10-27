@@ -216,10 +216,9 @@ runs, install by hand instead.
 
 ### Install by hand
 
-The first line installs a prebuilt binary into `~/.cargo/bin` (Apple silicon
-and Intel Macs, Linux on x86_64 and arm64). To build from source instead,
-with Rust's `cargo` (Rust 1.88 or later): `cargo install memsaga --locked`
-from crates.io, or
+Step 1 installs a prebuilt binary (Apple silicon and Intel Macs, Linux on
+x86_64 and arm64). To build from source instead, with Rust's `cargo` (Rust
+1.88 or later): `cargo install memsaga --locked` from crates.io, or
 `cargo install --git https://github.com/grimmerk/memsaga memsaga --locked` for
 the latest `main`.
 Rather not pipe a script into `sh`? Download the archive for your platform from
@@ -228,41 +227,56 @@ put `memsaga` on your `PATH`. On macOS a browser marks the download as
 quarantined, and the binary is not notarized, so clear the mark once:
 `xattr -d com.apple.quarantine memsaga`.
 
-```sh
-# install a prebuilt binary into ~/.cargo/bin
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/grimmerk/memsaga/releases/latest/download/memsaga-installer.sh | sh
+Run the steps one at a time; each block below is one step.
 
-# what would be imported, and how much history can be replayed
-memsaga init --dry-run
+1. Install the prebuilt binary into `~/.cargo/bin`:
 
-# create the data repository (where: see below), replay history,
-# import the current state
-memsaga init
+   ```sh
+   curl --proto '=https' --tlsv1.2 -LsSf \
+     https://github.com/grimmerk/memsaga/releases/latest/download/memsaga-installer.sh | sh
+   ```
 
-# register the hooks in each Claude Code config directory
-memsaga install
+   The installer adds `~/.cargo/bin` to your `PATH` for new terminals only.
+   Open a new terminal, or run `source ~/.cargo/env`, before the next step.
 
-# optional: a private GitHub repository; any name works
-# (needs `gh auth login` once)
-gh repo create memories --private --source "$(memsaga repo)" --push
+2. See where the data repository would go (below), what would be imported,
+   and how much history can be replayed. Nothing is written:
 
-# last sweep, pending changes, push state
-memsaga status
-```
+   ```sh
+   memsaga init --dry-run
+   ```
 
-**Where the data repository goes.** `init` creates it as `memories` in the
-first of `~/git`, `~/code`, `~/src`, `~/Projects` and `~/dev` that exists, or as
-`~/memories` when none does, and records the choice as `repo` in
+3. Create the data repository, replay the history and import the current
+   state, then register the hooks in each Claude Code config directory:
+
+   ```sh
+   memsaga init
+   memsaga install
+   ```
+
+4. Optional: a private GitHub repository, so the history is backed up and
+   synced between machines. Any name works; `gh` needs `gh auth login` once:
+
+   ```sh
+   gh repo create memories --private --source "$(memsaga repo)" --push
+   ```
+
+5. Check the last sweep, pending changes and push state:
+
+   ```sh
+   memsaga status
+   ```
+
+**Where the data repository goes.** `init` creates it as `~/git/memories`, or
+as `memories` in the first of `~/code`, `~/src`, `~/Projects` and `~/dev` that
+exists; with none of them, as `~/memories`. It records the choice as `repo` in
 `~/.config/memsaga/config.toml`. `memsaga init --repo <path>` puts it anywhere
 else, and `init --dry-run` shows the choice first. A folder of that name that
 already holds something else is never taken over: `init` stops and asks for
-`--repo`. A git repository you name yourself, such as a fresh clone of an empty
-GitHub repository, is used as it is. Until `init` has run, the hooks and every
-other command leave all folders alone. `memsaga repo` prints its path, and the
-commands below use it, so they work wherever yours is. Example
-projects here live under `~/git` (for example `~/git/webapp`); read that as
-the folder where you keep code.
+`--repo`. A git repository you name yourself, such as a fresh clone of an
+empty GitHub repository, is used as it is. Until `init` has run, the hooks and
+every other command leave all folders alone. `memsaga repo` prints its path,
+and the commands below use it, so they work wherever yours is.
 
 **Claude Code's config somewhere else.** memsaga looks for Claude Code's
 config directory at `~/.claude` and in the account list of
@@ -297,11 +311,11 @@ in [Two Claude Code accounts](#8-two-claude-code-accounts).
 
 Nothing else is needed. Every turn that changed something in scope ends with a
 commit, and the terminal shows a one-line notice. Once the data repository has
-an `origin` remote (the optional `gh repo create` line above), pushes happen
-on their own, at most once every ten minutes and at the end of a session;
-without one, the history stays on this machine. Without `gh`, create an empty
-private repository on GitHub, then run `git -C "$(memsaga repo)" remote add
-origin <its URL>` and `git -C "$(memsaga repo)" push -u origin HEAD`.
+an `origin` remote (optional step 4 above), pushes happen on their own, at
+most once every ten minutes and at the end of a session; without one, the
+history stays on this machine. Without `gh`, create an empty private
+repository on GitHub, then run `git -C "$(memsaga repo)" remote add origin
+<its URL>` and `git -C "$(memsaga repo)" push -u origin HEAD`.
 
 **Keep the data repository private.** Memory holds whatever Claude learned
 while working with you, which often includes details of your work. The default
@@ -328,6 +342,9 @@ Use cases 1 to 4 work right after the quick start (3 also needs
 `memsaga install --skills`). 5 to 7 add files of your own. 8 to 10 are about
 working in more than one place. 11 is one example of what a full history makes
 safe to try.
+
+The examples use `~/git/webapp` for a project of yours. If you keep code
+somewhere else, read `~/git` as that folder.
 
 None of them needs you to know git. `memsaga restore` shows the change and
 asks before it writes anything, and with the bundled skills you can ask Claude
@@ -398,7 +415,8 @@ with its real directory, and the memory files already use frontmatter and
 ### 2. Undo a bad edit or a memory clean-up
 
 `memsaga restore` copies a file from history back to its live location. It
-shows the diff first and asks before it writes:
+shows the diff first and asks before it writes. Three examples; run one at a
+time, since each waits for your answer:
 
 ```sh
 memsaga restore claude/memory/HOME-git-webapp/notes.md --at HEAD~3
@@ -802,7 +820,7 @@ the merge `sync` makes when origin moved is just `sync: merge origin/main`.
 
 ### Updating
 
-1. Run the install line from [Install by hand](#install-by-hand) again: it
+1. Run step 1 of [Install by hand](#install-by-hand) again: it
    downloads the latest release and replaces `~/.cargo/bin/memsaga`. If you
    built from source, add `--force` to the `cargo install` line.
 2. `memsaga install`, with `--skills` if you installed the bundled skills.
@@ -821,27 +839,39 @@ several machines share one data repository, update them together.
 ### Uninstalling
 
 For the usual setup (one config directory, `~/.claude`, and the install
-script), these commands remove everything memsaga added:
+script), these steps remove everything memsaga added. Run them one at a time.
 
-```sh
-# 1. remove the hooks from every config directory; Claude Code stops committing
-memsaga uninstall
+1. Remove the hooks from every config directory; Claude Code stops
+   committing:
 
-# 2. the bundled skills, if you ran `memsaga install --skills`,
-#    then, if you no longer need it, the copy of settings.json that
-#    `memsaga install` took first (rm -i asks before deleting it)
-rm -r ~/.claude/skills/memsaga-history ~/.claude/skills/companion-docs \
-  ~/.claude/skills/companions
-rm -i ~/.claude/settings.json.memsaga-bak
+   ```sh
+   memsaga uninstall
+   ```
 
-# 3. the binary, the config file and the install script's receipt
-rm ~/.cargo/bin/memsaga
-rm -r ~/.config/memsaga
-```
+2. Remove the binary, the config file and the install script's receipt:
+
+   ```sh
+   rm ~/.cargo/bin/memsaga
+   rm -r ~/.config/memsaga
+   ```
+
+3. If you ran `memsaga install --skills`, remove the bundled skills:
+
+   ```sh
+   rm -r ~/.claude/skills/memsaga-history ~/.claude/skills/companion-docs \
+     ~/.claude/skills/companions
+   ```
+
+4. If you no longer need it, remove the copy of `settings.json` that
+   `memsaga install` took before its first change. `rm -i` asks first:
+
+   ```sh
+   rm -i ~/.claude/settings.json.memsaga-bak
+   ```
 
 - Another config directory (a second account such as `~/.claude-work`, or
-  a folder `CLAUDE_CONFIG_DIR` points to): repeat step 2 with its path. Skip
-  the skills when its `skills` is a link to `~/.claude/skills`.
+  a folder `CLAUDE_CONFIG_DIR` points to): repeat steps 3 and 4 with its path.
+  Skip the skills when its `skills` is a link to `~/.claude/skills`.
 - A binary from a downloaded archive: delete the copy you put on your
   `PATH`. Built with cargo: `cargo uninstall memsaga`.
 - The install script also added the line `. "$HOME/.cargo/env"` to the shell
@@ -861,8 +891,8 @@ rm -r ~/.config/memsaga
 None of this touches the data repository or its copy on GitHub: they are your
 history. Delete them yourself only if you no longer want it. Claude Code can
 also do the steps above, asking before each one: paste the prompt from
-[Install with Claude Code](#install-with-claude-code) with "Uninstall memsaga for me" in place of "Install memsaga for
-me".
+[Install with Claude Code](#install-with-claude-code) with "Uninstall memsaga
+for me" in place of "Install memsaga for me".
 
 ### Setting up another machine
 
@@ -881,7 +911,7 @@ Tested with the same user name and the same folder layout on both machines:
    git clone git@github.com:<you>/memories.git "$D"   # or: gh repo clone <you>/memories "$D"
    mkdir -p ~/.config/memsaga && cp "$D/memsaga/config.toml" ~/.config/memsaga/config.toml
    ```
-3. Install memsaga (the install line in [Install by hand](#install-by-hand)).
+3. Install memsaga (step 1 of [Install by hand](#install-by-hand)).
 4. `memsaga restore --all --at HEAD`: read the list and the diffs, answer
    `n`; then run it again with `--yes`. Files get their content, executable
    bits and commit time back; links that share files between accounts are

@@ -246,7 +246,15 @@ pre.cmd { margin: 0; padding: 12px 14px; border-radius: 8px; background: var(--c
   padding: 6px 10px; cursor: pointer; }
 .term pre { margin: 0; padding: 16px; font: 400 .84rem/1.7 var(--mono); overflow-x: auto; }
 /* install commands wrap instead of scrolling, so the long URLs stay visible */
-.install .term pre { white-space: pre-wrap; word-break: break-all; }
+.install .term pre { white-space: pre-wrap; word-break: normal; overflow-wrap: anywhere; }
+/* one copy button per command: copying a whole block would run the next
+   steps before the installer's PATH change applies */
+.cmd { display: block; position: relative; padding-right: 3.8em; margin-bottom: 6px; }
+.c.cl { display: block; }
+.line-copy { position: absolute; top: .2em; right: 0; font: 600 .68rem/1.4 var(--mono); padding: 0 6px; border-radius: 5px;
+  border: 1px solid var(--code-line); background: transparent; color: var(--code-ink); cursor: pointer; opacity: .45; }
+.line-copy::before { content: attr(data-label); }
+.cmd:hover .line-copy, .line-copy:focus-visible { opacity: 1; }
 .term-stack { display: grid; gap: 18px; min-width: 0; }
 .install .lead-way { margin: 0 0 14px; color: var(--muted); }
 .install .lead-way strong { color: var(--ink); }
@@ -651,10 +659,10 @@ git log --grep 'Session-Title: .*login'</pre>
 https://raw.githubusercontent.com/grimmerk/memsaga/main/INSTALL-WITH-CLAUDE.md
 and ask me before each step that changes my machine.</pre>
       </div>
-      <p class="lead-way"><strong>Or by hand</strong>, with the terminal commands:</p>
+      <p class="lead-way"><strong>Or by hand</strong>, running the terminal commands one at a time:</p>
       <ol class="steps">
-        <li><strong>The installer</strong> puts a prebuilt memsaga in <code>~/.cargo/bin</code>, for Macs (Apple silicon and Intel) and Linux (x86_64 and arm64). You need git. To build from source instead (Rust 1.88 or later): <code>cargo install memsaga --locked</code> from crates.io, or <code>cargo install --git https://github.com/grimmerk/memsaga memsaga --locked</code> for the latest <code>main</code>.</li>
-        <li><strong>init</strong> creates the data repository and replays the edits your recent conversations recorded, so the history starts weeks back. It goes in <code>memories</code> inside the folder where you keep code (<code>~/git</code>, <code>~/code</code>, <code>~/src</code>, <code>~/Projects</code> or <code>~/dev</code>), or in <code>~/memories</code>; <code>--repo</code> picks another place, and <code>--dry-run</code> shows the choice first.</li>
+        <li><strong>The installer</strong> puts a prebuilt memsaga in <code>~/.cargo/bin</code>, for Macs (Apple silicon and Intel) and Linux (x86_64 and arm64), and adds that folder to your <code>PATH</code> for new terminals: open one before the next step. You need git. To build from source instead (Rust 1.88 or later): <code>cargo install memsaga --locked</code> from crates.io, or <code>cargo install --git https://github.com/grimmerk/memsaga memsaga --locked</code> for the latest <code>main</code>.</li>
+        <li><strong>init</strong> creates the data repository and replays the edits your recent conversations recorded, so the history starts weeks back. It is created as <code>~/git/memories</code>, or as <code>memories</code> in the first of <code>~/code</code>, <code>~/src</code>, <code>~/Projects</code> and <code>~/dev</code> that exists; with none of them, as <code>~/memories</code>. <code>--repo</code> picks another place, and <code>--dry-run</code> shows the choice first.</li>
         <li><strong>install</strong> connects memsaga to Claude Code. With <code>--skills</code>, Claude can also answer questions about the history.</li>
         <li><strong>gh repo create</strong> is optional. With a private GitHub repository, pushes and two-way sync happen on their own.</li>
       </ol>
@@ -662,19 +670,11 @@ and ask me before each step that changes my machine.</pre>
     </div>
     <div class="term-stack">
     <div class="term">
-      <header><span>terminal</span><button type="button" id="copy-install">Copy</button></header>
-<pre id="install-cmds"><span class="p">$ </span>curl --proto '=https' --tlsv1.2 -LsSf \
-    https://github.com/grimmerk/memsaga/releases/latest/download/memsaga-installer.sh | sh
-<span class="p">$ </span>memsaga init --dry-run   <span class="c"># what would be imported</span>
-<span class="p">$ </span>memsaga init
-<span class="p">$ </span>memsaga install --skills
-<span class="p">$ </span>gh repo create memories --private --push \
-    --source "$(memsaga repo)"   <span class="c"># optional: a private remote</span>
-<span class="p">$ </span>memsaga status</pre>
-      <pre style="border-top:1px solid var(--code-line)"><span class="c"># to try it on example data first (after the install line):</span>
-<span class="c"># your real Claude Code config is never read or written</span>
-<span class="p">$ </span>git clone https://github.com/grimmerk/memsaga
-<span class="p">$ </span>memsaga/demo/setup.sh &amp;&amp; source /tmp/memsaga-demo/env.sh</pre>
+      <header><span>terminal · one command at a time</span></header>
+<pre id="install-cmds"><span class="cmd" data-cmd="curl --proto &#x27;=https&#x27; --tlsv1.2 -LsSf https://github.com/grimmerk/memsaga/releases/latest/download/memsaga-installer.sh | sh"><span class="p">$ </span>curl --proto '=https' --tlsv1.2 -LsSf \
+    https://github.com/grimmerk/memsaga/releases/latest/download/memsaga-installer.sh | sh</span><span class="c cl"># then open a new terminal (or run: source ~/.cargo/env)</span><span class="cmd" data-cmd="memsaga init --dry-run"><span class="p">$ </span>memsaga init --dry-run   <span class="c"># what would be imported</span></span><span class="cmd" data-cmd="memsaga init"><span class="p">$ </span>memsaga init</span><span class="cmd" data-cmd="memsaga install --skills"><span class="p">$ </span>memsaga install --skills</span><span class="cmd" data-cmd="gh repo create memories --private --push --source &quot;$(memsaga repo)&quot;"><span class="p">$ </span>gh repo create memories --private --push \
+    --source "$(memsaga repo)"   <span class="c"># optional: a private remote</span></span><span class="cmd" data-cmd="memsaga status"><span class="p">$ </span>memsaga status</span></pre>
+      <pre style="border-top:1px solid var(--code-line)"><span class="c cl"># to try it on example data first (after the install line):</span><span class="c cl"># your real Claude Code config is never read or written</span><span class="cmd" data-cmd="git clone https://github.com/grimmerk/memsaga"><span class="p">$ </span>git clone https://github.com/grimmerk/memsaga</span><span class="cmd" data-cmd="memsaga/demo/setup.sh &amp;&amp; source /tmp/memsaga-demo/env.sh"><span class="p">$ </span>memsaga/demo/setup.sh &amp;&amp; source /tmp/memsaga-demo/env.sh</span></pre>
     </div>
     </div>
   </div>
@@ -757,10 +757,20 @@ and ask me before each step that changes my machine.</pre>
       try { navigator.clipboard.writeText(text).then(done, select); } catch (e) { select(); }
     });
   }
-  wire('copy-install', 'install-cmds', function (t) {
-    return t.split('\n').map(function (l) { return l.replace(/^\$ /, '').replace(/\s+#.*$/, ''); }).join('\n');
-  });
   wire('copy-claude', 'claude-prompt');
+  document.querySelectorAll('.cmd[data-cmd]').forEach(function (line) {
+    var text = line.getAttribute('data-cmd');
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'line-copy';
+    b.setAttribute('data-label', 'copy');
+    b.setAttribute('aria-label', 'Copy: ' + text);
+    b.addEventListener('click', function () {
+      var done = function () { b.setAttribute('data-label', 'copied'); setTimeout(function () { b.setAttribute('data-label', 'copy'); }, 1600); };
+      try { navigator.clipboard.writeText(text).then(done, function () {}); } catch (e) {}
+    });
+    line.appendChild(b);
+  });
   document.querySelectorAll('section.band[id] h2').forEach(function (h) {
     var a = document.createElement('a');
     a.className = 'anchor';
