@@ -1,10 +1,11 @@
 # memsaga
 
-Version control and two-way sync for the files your AI coding agent works
-with: what it remembers, how you configure it, and anything else you choose.
+Version control and two-way sync for your AI coding agent's files, starting
+with Claude Code: what it remembers, how you configure it, and anything else
+you choose.
 
 **Website:** [memsaga.grimmer.io](https://memsaga.grimmer.io) ·
-Install ([with Claude Code](#install-with-claude-code) or
+[Try it first](#try-it-first) · Install ([with Claude Code](#install-with-claude-code) or
 [by hand](#install-by-hand)) · [Do you need it?](#do-you-need-memsaga) ·
 [FAQ](docs/faq.md) ·
 [Discussions](https://github.com/grimmerk/memsaga/discussions)
@@ -14,7 +15,37 @@ Install ([with Claude Code](#install-with-claude-code) or
   <img src="docs/assets/hero-light.png" width="100%" alt="memsaga: three sources (Claude Code's config directory in every account, files elsewhere you choose, and content kept only in the repository) become a readable history in a git repository you own, each change named after its session, from fixing a login redirect to restoring CLAUDE.md to Monday's version. The repository syncs both ways between this machine, a private GitHub repository and another machine, and edits made on the web or a phone come back.">
 </picture>
 
-### How Claude Code remembers
+Claude Code writes what it learns about you and your projects into Markdown
+files on your machine (its auto memory), next to your `CLAUDE.md`
+instructions and your skills. These files have no history, and they live only
+on the machine that wrote them. A later session can rewrite a memory, two
+sessions that edit the same file on one day leave no trace of the earlier
+version, and a clean-up that merges ten memories into three cannot be undone.
+(A `CLAUDE.md` inside a repository is versioned with that repository; your
+global `~/.claude/CLAUDE.md` and the memory files are not.)
+
+memsaga keeps them as history:
+
+```text
+① Claude writes or changes a memory, CLAUDE.md or a skill
+        │
+② when Claude's reply ends (a turn), a memsaga hook copies what changed into a git
+  repository you own (the data repository) and commits it, named after the
+  conversation
+        │
+③ with an `origin` remote (on GitHub, for example), the commit is pushed
+  there on its own; your other machines pull it, and an edit made on another
+  machine or on GitHub reaches the live file (the one Claude Code reads)
+```
+
+When each step runs, and how to change it: [Timing](#timing).
+
+Status: early, in daily use by its author on macOS; Linux is tested in CI and
+in a container. Claude Code is the only source today; other agents and
+sources are on the [roadmap](#roadmap).
+
+<details>
+<summary><b>New to Claude Code's memory?</b> The two kinds, and how a memory gets written</summary>
 
 Claude Code keeps two kinds of memory, both plain Markdown files on your
 machine ([Anthropic's docs](https://code.claude.com/docs/en/memory)):
@@ -43,63 +74,13 @@ and reads that file before it answers how to deploy. Claude also reads your
 skills from `~/.claude/`, and Claude Code runs the hooks `settings.json` points
 at.
 
-Auto memory and your global `~/.claude/CLAUDE.md` have no history, and they
-live only on the machine that wrote them (a `CLAUDE.md` inside a repository is
-versioned with that repository). A later session can rewrite
-`deploy_rules.md`, two sessions that edit the same file on one day leave no
-trace of the earlier version, and a clean-up that merges ten memories into
-three cannot be undone.
-
-memsaga keeps them as history:
-
-```text
-① Claude writes or changes a memory, CLAUDE.md or a skill
-        │
-② at the end of the turn (by default; it can commit after each edit
-  instead), a memsaga hook copies what changed into your data repository
-  and commits it, named after the conversation
-        │
-③ with an `origin` remote (on GitHub, for example), it is pushed there: by
-  default at most once every ten minutes and at the end of a session, or
-  now with `memsaga push`; your other machines pull it, and an edit made on
-  another machine or on GitHub reaches the live file
-```
-
-### What goes into the data repository
-
-memsaga keeps one git repository you own, the data repository, and fills it
-from three places, told apart by where a file lives:
-
-1. **Claude Code's config directory** (`~/.claude`). What Claude Code reads
-   and writes there: memory, `CLAUDE.md`, skills, hooks, scripts and (if you
-   want) `settings.json`, plus folders of your own such as drafts or
-   hand-written mods. They are mirrored without changing where they live or how
-   Claude Code writes them.
-2. **Files elsewhere that you choose.** A notes file, a plan in your home
-   directory, a dotfile: whoever edits it, you or Claude, the change is
-   committed.
-3. **Content that lives only in the repository.** It is a normal git
-   repository: add notes, companion documents (your notes, translations or
-   drafts about other repositories), anything else; edit and push from
-   anywhere. memsaga commits what you add and never deletes it.
-
-Each commit names the session that made the change, by title and by ID, so
-you can go from any change back to the conversation that caused it, and from a
-conversation to everything it changed. One repository can be shared by several
-machines and Claude Code accounts; an edit made in one place (another machine,
-GitHub's web editor, a phone) reaches the live files everywhere else.
-
-Status: early, in daily use by its author on macOS; Linux is tested in CI and
-in a container.
-Claude Code is the only source today; other agents and sources are on the
-[roadmap](#roadmap). Contributor notes: [`docs/architecture.md`](docs/architecture.md).
-Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
-[`docs/design.md`](docs/design.md).
+</details>
 
 ## Contents
 
+- [What goes into the data repository](#what-goes-into-the-data-repository)
 - [Do you need memsaga?](#do-you-need-memsaga)
-- [Quick start](#quick-start): [with Claude Code](#install-with-claude-code) or [by hand](#install-by-hand)
+- [Quick start](#quick-start): [try it first](#try-it-first), [with Claude Code](#install-with-claude-code) or [by hand](#install-by-hand)
 - [What you can do with it](#what-you-can-do-with-it)
   - Claude Code's config directory
     1. [See what Claude remembered, and when it changed](#1-see-what-claude-remembered-and-when-it-changed)
@@ -117,17 +98,40 @@ Two-way sync: [`docs/two-way-sync.md`](docs/two-way-sync.md). Design record:
   - Going further
     11. [Let Claude reorganise its memory, safely](#11-let-claude-reorganise-its-memory-safely)
 - [What memsaga does not cover, and what to use instead](#what-memsaga-does-not-cover-and-what-to-use-instead)
-- [FAQ](docs/faq.md): other ways to keep this history, compared
-- [How it works](#how-it-works)
+- [How it works](#how-it-works), and [timing](#timing): when it commits, pushes and checks for edits
 - [When something looks wrong](#when-something-looks-wrong)
 - [Reference](#reference): [commands](#commands), [what is mirrored](#what-is-mirrored), [memory directory names](#memory-directory-names), [configuration](#configuration), [two-way sync](#two-way-sync), [commit messages](#commit-messages), [updating](#updating), [uninstalling](#uninstalling), [setting up another machine](#setting-up-another-machine)
-- [Tests](#tests)
-- [Roadmap](#roadmap)
-- [The name](#the-name)
+- [Tests](#tests) · [Roadmap](#roadmap) · [The name](#the-name)
 
-Pictures: the image at the top (where files come from, and where the history
-goes), and a sequence diagram in [use case 10](#10-edit-from-anywhere) (what happens
-when a file changed elsewhere).
+More documents: [FAQ](docs/faq.md) (other ways to keep this history,
+compared) · [`docs/architecture.md`](docs/architecture.md) (for contributors) ·
+[`docs/two-way-sync.md`](docs/two-way-sync.md) (design and measurements of
+two-way sync) · [`docs/design.md`](docs/design.md) (the design record).
+
+Pictures: the image at the top; a recording in
+[use case 1](#1-see-what-claude-remembered-and-when-it-changed); a sequence
+diagram and a recording in [use case 10](#10-edit-from-anywhere).
+
+## What goes into the data repository
+
+memsaga keeps one git repository you own, the data repository, and fills it
+from three places, told apart by where a file lives:
+
+1. **Claude Code's config directory** (`~/.claude`). What Claude Code reads
+   and writes there: memory, `CLAUDE.md`, skills, hooks, scripts and (if you
+   want) `settings.json`, plus folders of your own such as drafts or
+   hand-written mods, once you list them in `dirs`. They are mirrored without changing where they live or how
+   Claude Code writes them.
+2. **Files elsewhere that you choose.** A notes file, a plan in your home
+   directory, a dotfile: whoever edits it, you or Claude, the change is
+   committed.
+3. **Content that lives only in the repository.** It is a normal git
+   repository: add notes, companion documents (your notes, translations or
+   drafts about other repositories), anything else; edit and push from
+   anywhere. memsaga commits what you add and never deletes it.
+
+One repository can hold every Claude Code account and machine you use, and
+each commit names the conversation that made it.
 
 ## Do you need memsaga?
 
@@ -140,52 +144,19 @@ do-it-yourself setup gets you most of the history:
    `CLAUDE.md`, skills) and keeps out conversations and credentials.
 3. Add a hook that commits at the end of every reply (a `Stop` hook).
 
-memsaga does this for you, out of the box. There is no list or hook to write
-yourself: it already knows which files Claude Code reads or runs (`CLAUDE.md`,
-memory, skills, subagents, commands, rules, hooks), following Claude Code's own
-directory reference, and it leaves out credentials, conversations and caches.
+memsaga does this for you, with nothing to write yourself, and also handles
+what that setup cannot easily handle:
 
-It also handles what the do-it-yourself setup cannot easily handle:
-
-- **A separate repository, away from the files Claude is using.** In the
-  do-it-yourself setup, Claude Code's own folder *is* the repository, so a
-  single git command run there (`git checkout`, `git clean`) or a merge
-  conflict changes the files Claude is reading. memsaga keeps its copies in a
-  normal folder you choose (by default `memories` in the folder where you keep
-  code), not in the hidden `~/.claude`, with an `index.md` that lists every
-  project by its real folder,
-  so it is easy to browse in Finder, an editor or Obsidian.
-- **Files you choose, even outside Claude Code's folder.** Beyond the files
-  Claude Code uses, which are covered by default (above), a folder you create
-  in `~/.claude` yourself, such as `~/.claude/drafts/`, takes one line in
-  `dirs`. Outside `~/.claude`, name each file in `extra_files`,
-  such as a plan in your home directory or another tool's config file, and
-  every change to it is committed, whether you made it or Claude did
-  ([use case 5](#5-version-any-file-claude-edits-for-you)). Whole folders
-  outside `~/.claude` are not supported yet
-  ([#20](https://github.com/grimmerk/memsaga/issues/20)).
-- **Edits from anywhere, and more than one account or computer.** You can fix
-  a memory in GitHub's web editor, on a phone, or on another computer. In the
-  do-it-yourself setup, bringing such an edit back is a `git pull` that writes
-  straight into the files in use, and a conflict leaves git's markers in a file
-  Claude reads. memsaga brings the edit to the live file for you: it keeps the
-  edits made on both sides, and if both changed the same line, it stops and
-  tells you. It also tells Claude what changed. Every account lives in one
-  repository, and another computer picks up changes the next time you use
-  Claude there.
-- **Which conversation made each change.** Every commit names the conversation
-  behind it, and `claude --resume` reopens that conversation as long as Claude
-  Code keeps it: 30 days after its last use, unless you raise
-  `cleanupPeriodDays`.
-- **History from before you installed it.** memsaga rebuilds it from the edits
-  recorded in those same saved conversations.
-- **Your own documents about other projects.** Some documents are about a
-  project but must not go into its repository, for example notes on your
-  employer's code. Ask Claude for one (a note, a translation of its docs, or a
-  draft) and it is kept in memsaga's repository under `companion/`, filed by
-  the project and file it is about, so a later conversation finds it again.
-  memsaga calls these companion documents
-  ([use case 7](#7-companion-docs-notes-beside-a-repository-never-committed-to-it)).
+| | Do it yourself | memsaga |
+|---|---|---|
+| Which files are kept | A list you write and keep up to date | The files Claude Code reads or runs (`CLAUDE.md`, memory, skills, subagents, commands, rules, hooks), from Claude Code's own directory reference. Credentials, conversations and caches stay out |
+| Where the history lives | In `~/.claude` itself, so one `git checkout` or `git clean` there, or a merge conflict, changes the files Claude is reading | In a normal folder you choose, away from the files Claude is using (by default `memories` in the folder where you keep code). Its `index.md` lists every project by its real folder, so it is easy to browse in Finder, an editor or Obsidian |
+| Files outside `~/.claude` | Not covered | Any file you name, such as a plan in your home directory or another tool's config file, whoever edits it; folders of your own inside `~/.claude` too ([use case 5](#5-version-any-file-claude-edits-for-you)). Whole folders outside `~/.claude` are not supported yet ([#20](https://github.com/grimmerk/memsaga/issues/20)) |
+| An edit made on GitHub, a phone or another computer | Comes back through a `git pull` that writes straight into the files in use; a conflict leaves git's markers in a file Claude reads | Brought to the live file for you, keeping the edits of both sides. If both changed the same line, memsaga stops and tells you. Claude is told what changed ([use case 10](#10-edit-from-anywhere)) |
+| More than one account or computer | A second account needs a second repository | Every account in one repository; another computer picks up changes the next time you use Claude there ([use cases 8](#8-two-claude-code-accounts) and [9](#9-two-machines)) |
+| Which conversation made a change | Not recorded, unless your hook adds it | Every commit names it, and `claude --resume` reopens it while Claude Code still keeps the conversation ([use case 1](#1-see-what-claude-remembered-and-when-it-changed)) |
+| History from before you started | None | Rebuilt from the edits recorded in Claude Code's saved conversations ([use case 4](#4-start-with-the-history-you-already-have)) |
+| Your own documents about other projects | No place for them | A note, translation or draft that must not go into the project's own repository (your employer's, say) is filed by project and file under `companion/`, so a later conversation finds it ([use case 7](#7-companion-docs-notes-beside-a-repository-never-committed-to-it)) |
 
 Other ways to do this, compared, and the do-it-yourself setup step by step:
 [FAQ](docs/faq.md).
@@ -193,13 +164,31 @@ Other ways to do this, compared, and the do-it-yourself setup step by step:
 ## Quick start
 
 You need macOS or Linux, git and Claude Code. `gh` (the GitHub command-line
-tool) is optional, for creating the GitHub repository. There are two ways to
-install: [let Claude Code do it](#install-with-claude-code), or
-[install by hand](#install-by-hand). Both run the same steps.
+tool) is optional, for creating the GitHub repository.
+
+| Way | What happens |
+|---|---|
+| [Try it first](#try-it-first) | Look at a week of example history on GitHub, or build it on your machine without touching your own setup |
+| [Install with Claude Code](#install-with-claude-code) | Claude Code runs the install steps and asks before each one |
+| [Install by hand](#install-by-hand) | You run the same steps yourself, one command at a time |
 
 **A second machine for a data repository you already have?** Follow
 [Setting up another machine](#setting-up-another-machine) instead. Running
 `init` there would start a second, separate history.
+
+### Try it first
+
+To look without installing anything, browse
+[grimmerk/memsaga-example](https://github.com/grimmerk/memsaga-example): a
+data repository with a week of example commits (a bug fix, a memory tidy-up,
+companion documents, a file added by hand, a restore).
+
+To try the commands on that example, install memsaga (step 1 below), then run
+`demo/setup.sh` from a clone of this repository. It builds a fake home
+directory under `/tmp` with a Claude Code config, two projects' memory and the
+same week of history, and never reads or writes your real one;
+`source /tmp/memsaga-demo/env.sh` then points `memsaga` and `git` at it, in
+that terminal only. Open a new terminal before you set up your own.
 
 ### Install with Claude Code
 
@@ -220,20 +209,11 @@ runs, install by hand instead.
 
 ### Install by hand
 
-Step 1 installs a prebuilt binary (Apple silicon and Intel Macs, Linux on
-x86_64 and arm64). To build from source instead, with Rust's `cargo` (Rust
-1.88 or later): `cargo install memsaga --locked` from crates.io, or
-`cargo install --git https://github.com/grimmerk/memsaga memsaga --locked` for
-the latest `main`.
-Rather not pipe a script into `sh`? Download the archive for your platform from
-the [Releases page](https://github.com/grimmerk/memsaga/releases/latest) and
-put `memsaga` on your `PATH`. On macOS a browser marks the download as
-quarantined, and the binary is not notarized, so clear the mark once:
-`xattr -d com.apple.quarantine memsaga`.
-
 Run the steps one at a time; each block below is one step.
 
-1. Install the prebuilt binary into `~/.cargo/bin`:
+1. Install the prebuilt binary (Apple silicon and Intel Macs, Linux on x86_64
+   and arm64) into `~/.cargo/bin`. Other ways to install are
+   [further down](#other-ways-to-install).
 
    ```sh
    curl --proto '=https' --tlsv1.2 -LsSf \
@@ -243,19 +223,29 @@ Run the steps one at a time; each block below is one step.
    The installer adds `~/.cargo/bin` to your `PATH` for new terminals only.
    Open a new terminal, or run `source ~/.cargo/env`, before the next step.
 
-2. See where the data repository would go (below), what would be imported,
-   and how much history can be replayed. Nothing is written:
+2. See where the data repository would go, what would be imported, and how
+   much history can be replayed. Nothing is written:
 
    ```sh
    memsaga init --dry-run
    ```
 
-   To keep a project's memory out entirely, for example client work, exclude
-   it now, before step 3: what step 3 commits stays in the history. Add a
-   line to `~/.config/memsaga/config.toml` with the project's Claude Code
-   directory name, as the dry run lists it. For `~/git/client` and every
-   project below it (and any sibling whose name starts with `client-`):
-   `exclude_projects = ["*-git-client", "*-git-client-*"]`.
+   Check three things before step 3:
+
+   - **Where the data repository goes:** by default a folder named `memories`
+     in the folder where you keep code, for example `~/git/memories`. To put
+     it elsewhere, add `--repo <path>` to `memsaga init` in step 3;
+     [where the data repository goes](#where-the-data-repository-goes) has
+     the rules.
+   - **The dry run's `root …` lines** list the Claude Code config folders it found. If
+     one you use is missing (you run Claude Code with `CLAUDE_CONFIG_DIR`, or
+     a second account), see [Which config directories](#which-config-directories).
+   - **A project to keep out entirely**, for example client work: exclude it
+     now, since what step 3 commits stays in the history. Add a line to
+     `~/.config/memsaga/config.toml` with the project's Claude Code directory
+     name, as the dry run lists it. For `~/git/client` and every project below
+     it (and any sibling whose name starts with `client-`):
+     `exclude_projects = ["*-git-client", "*-git-client-*"]`.
 
 3. Create the data repository, replay the history and import the current
    state, then register the hooks in each Claude Code config directory.
@@ -276,65 +266,23 @@ Run the steps one at a time; each block below is one step.
    gh repo create memories --private --source "$(memsaga repo)" --push
    ```
 
+   Without `gh`, create an empty private repository on GitHub, then run
+   `git -C "$(memsaga repo)" remote add origin <its URL>` and
+   `git -C "$(memsaga repo)" push -u origin HEAD`.
+
 5. Check the last sweep, pending changes and push state:
 
    ```sh
    memsaga status
    ```
 
-**Where the data repository goes.** `init` creates a folder named
-`memories` inside the first of `~/git`, `~/code`, `~/src`, `~/Projects` and
-`~/dev` that exists (for example `~/git/memories`); when none of them exists,
-it creates `~/memories`. An existing memsaga repository named `memories` in
-one of those places is used first. It records the choice as `repo` in
-`~/.config/memsaga/config.toml`. `memsaga init --repo <path>` puts it anywhere
-else, and `init --dry-run` shows the choice first. A folder of that name that
-already holds something else is never taken over: `init` stops and asks for
-`--repo`. A git repository you name yourself, such as a fresh clone of an
-empty GitHub repository, is used as it is. Until `init` has run, the hooks and
-every other command leave all folders alone. `memsaga repo` prints its path,
-and the commands below use it, so they work wherever yours is.
-
-**Claude Code's config somewhere else.** memsaga takes Claude Code's config
-directories from the account list of [CodeV](#8-two-claude-code-accounts) if
-you use it (that list includes `~/.claude`), and otherwise uses
-`~/.claude`. If you run Claude Code with
-`CLAUDE_CONFIG_DIR` set, run `init` where it is set (a terminal that exports
-it, or a Claude Code session using it): `init` adds that folder and records
-all roots as `[[roots]]` in `~/.config/memsaga/config.toml`, so every session
-sees the same ones. It does so only when the folder exists, is not already a
-root, and the config file has no `roots` key (not even `roots = []`). The `root …` lines of `init --dry-run` show the
-result. memsaga 0.1.1 does not do this; with it, write the lines yourself before
-`init`. Listing roots turns off the automatic search, so list `~/.claude` too
-if you also use it:
-
-```toml
-[[roots]]
-path = "~/my-claude-config"   # the folder CLAUDE_CONFIG_DIR points to
-label = "claude"
-
-# only if you also use ~/.claude; each root needs its own label
-[[roots]]
-path = "~/.claude"
-label = "claude-default"
-```
-
-`memsaga install`, `memsaga status` and `memsaga config` warn when
-`CLAUDE_CONFIG_DIR` names a folder that is not a root, and print the lines to
-add. A second account set up without `CLAUDE_CONFIG_DIR` in the shell where
-you run `init` (for example `~/.claude-work`) is not found either: list it as
-in [Two Claude Code accounts](#8-two-claude-code-accounts).
-
 ### After the install
 
 Nothing else is needed. Every turn that changed something in scope ends with a
 commit, and the terminal shows a one-line notice. Once the data repository has
-an `origin` remote (optional step 4 above), pushes happen on their own, by
-default at most once every ten minutes and at the end of a session (both can
-be changed in [configuration](#configuration); `memsaga push` pushes now); without one, the
-history stays on this machine. Without `gh`, create an empty private
-repository on GitHub, then run `git -C "$(memsaga repo)" remote add origin
-<its URL>` and `git -C "$(memsaga repo)" push -u origin HEAD`.
+an `origin` remote (optional step 4 above), pushes happen on their own
+([timing](#timing); `memsaga push` pushes now); without one, the history stays
+on this machine.
 
 **Keep the data repository private.** Memory holds whatever Claude learned
 while working with you, which often includes details of your work. The default
@@ -345,15 +293,17 @@ you add to `files`, `dirs` or `extra_files`. To keep a project's memory out
 entirely, exclude it before `init` (step 2 above); excluding it later stops
 new commits but does not remove what is already in the history.
 
-**To try it first on example data**, install memsaga, then run
-`demo/setup.sh` from a clone of this repository. It builds a fake home directory under `/tmp` with a Claude Code
-config, two projects' memory and a week of history (a bug fix, a memory
-tidy-up, companion documents, a file added by hand, a restore), and never reads or writes your real
-one; `source /tmp/memsaga-demo/env.sh` then points `memsaga` and `git` at it,
-in that terminal only. Open a new terminal before you set up your own.
-To look without installing anything, browse
-[grimmerk/memsaga-example](https://github.com/grimmerk/memsaga-example): the
-data repository that script builds, with its week of commits on GitHub.
+### Other ways to install
+
+- **From source**, with Rust's `cargo` (Rust 1.88 or later):
+  `cargo install memsaga --locked` from crates.io, or
+  `cargo install --git https://github.com/grimmerk/memsaga memsaga --locked`
+  for the latest `main`.
+- **Without piping a script into `sh`:** download the archive for your
+  platform from the [Releases page](https://github.com/grimmerk/memsaga/releases/latest)
+  and put `memsaga` on your `PATH`. On macOS a browser marks the download as
+  quarantined, and the binary is not notarized, so clear the mark once:
+  `xattr -d com.apple.quarantine memsaga`.
 
 ## What you can do with it
 
@@ -363,9 +313,11 @@ bundled skills from `memsaga install --skills`). 5 to 7 add files of your own.
 full history makes safe to try.
 
 The examples use `~/git/webapp` for a project of yours. If you keep code
-somewhere else, read `~/git` as that folder, and `HOME-git-webapp` (the
-project's memory folder in the repository) as the name `memsaga paths` shows
-for it.
+somewhere else, read `~/git` as that folder. In the data repository, that
+project's memory is the folder `claude/memory/HOME-git-webapp/`
+([memory directory names](#memory-directory-names) explains the name), and
+`index.md` at the top of the data repository lists the folder of each of your
+projects.
 
 None of them needs you to know git. `memsaga restore` shows the change and
 asks before it writes anything, and with the bundled skills you can ask Claude
@@ -589,6 +541,18 @@ It brings it to the live file:
   <img src="docs/assets/sync-sequence-light.png" width="100%" alt="Sequence: you edit and commit a memory file in GitHub's web editor. At the next session start or prompt, the memsaga hooks ask GitHub whether origin moved (at most once a minute); it did, so they merge origin into the data repository, write the new version to the live file (merging if both sides changed), and send Claude a notice with the changed lines. Claude reads the file again before using it.">
 </picture>
 
+In short:
+
+1. When a session starts, and at each prompt, memsaga asks GitHub whether the
+   repository moved.
+2. If it moved, memsaga merges the change and writes it to the live file. Edits
+   made on both sides are kept; when both sides changed the same lines, the
+   file is left alone and you are told.
+3. Claude gets a short notice with the changed lines, so it does not answer
+   from the copy it loaded earlier.
+4. Before Claude writes a file memsaga keeps, memsaga asks again, so the edit
+   is not built on an old copy.
+
 A real session (example data): just before it started, `deploys.md` was edited
 on GitHub to say production deploys every Friday. Asked how webapp deploys,
 Claude reads the file again and answers from the new text. (The notice under
@@ -598,29 +562,8 @@ commit is written; see
 
 <img src="docs/assets/sync-demo.gif" width="100%" alt="Claude Code session on example data: the user asks how webapp deploys to production; Claude reads deploys.md and answers that production deploys every Friday from a git tag, the text edited on GitHub just before the session; the memsaga Stop notice lists commits from earlier turns.">
 
-1. At session start, a hook asks GitHub whether the repository moved. This
-   takes about half a second and happens at most once a minute per machine.
-   At each prompt the same question runs in the background, and its answer
-   is used from the next prompt on, so a session already open picks the
-   change up a prompt later.
-2. If it moved, memsaga merges it. A file that changed only in the repository
-   is written to the live file. If both sides changed different lines, the
-   texts are merged. Edits to the same lines are left alone and reported.
-3. The model gets a short notice with the changed lines, so it does not answer
-   from the copy it loaded earlier.
-4. Before a Write or Edit, the hook asks GitHub again unless it asked in the
-   last ten seconds, and pulls a change it finds first. A Write that would
-   replace text that just arrived is refused, and Claude is told to read the
-   file again; a change that cannot be merged is refused and left to you. A
-   Read uses the last answer and refreshes it in the background, so an edit
-   made elsewhere within the last minute may reach a read only at the next
-   prompt.
-
-All of this happens inside Claude Code sessions: a turn that changed something
-ends with a commit. With an `origin` remote, the end of a turn also pushes, at
-most once per `push_min_interval_secs` (`0` turns these pushes off), and the
-end of a session pushes when `push_on_session_end` is on (the default). Run it
-by hand when no session will do it for you:
+All of this happens inside Claude Code sessions. Run it by hand when no
+session will do it for you:
 
 - **Before you use a machine that has been idle**, or before editing its live
   files outside Claude Code: `memsaga sync` (both directions) or
@@ -628,12 +571,13 @@ by hand when no session will do it for you:
 - **To push right away**, instead of waiting for the throttle or the end of
   the session, or when those pushes are turned off: `memsaga push`.
 - **When a sync reports a conflict** (both sides changed the same lines):
-  `memsaga sync --take live <path>` or `--take repo <path>`, or edit the
-  live file and run `memsaga sync` again.
+  see [When something looks wrong](#when-something-looks-wrong).
 - **When setting up another machine**: see
   [Setting up another machine](#setting-up-another-machine).
 
-Details: [two-way sync](#two-way-sync).
+How often each step runs, and what Claude Code waits for: [timing](#timing).
+What happens to a write that would replace text that just arrived:
+[two-way sync](#two-way-sync).
 
 ### 11. Let Claude reorganise its memory, safely
 
@@ -677,11 +621,26 @@ a new hook. Try it, read the diff, keep it or roll it back.
 - **Cost.** A turn that changed nothing in scope costs a check of modification
   times. A turn that did costs a copy and a commit, well under a second, and
   runs in the background. Asking GitHub whether the repository moved costs
-  about half a second, at most once a minute.
+  about half a second ([timing](#timing)).
 - **Safety.** One lock serialises concurrent sessions. A hook never fails a
   turn: errors go to a log and to `memsaga status`.
 
 More: [`docs/architecture.md`](docs/architecture.md).
+
+### Timing
+
+When memsaga commits, pushes and checks for edits made elsewhere. Without an
+`origin` remote, memsaga uses no network: it commits, and an edit you make by
+hand in the data repository still comes in, at the next prompt or before
+Claude reads or writes that file.
+
+| What | When | How to change it |
+|---|---|---|
+| Commit | At the end of each turn that changed a file in scope, in the background | `granularity = "edit"`: one commit per Write or Edit instead |
+| Push | At the end of a turn, at most once every ten minutes. A push that falls inside those ten minutes is not dropped: it runs when they are up. When a session ends, it pushes right away | `push_min_interval_secs` (default `600`; `0` turns the end-of-turn push off), `push_on_session_end` (default `true`); `memsaga push` pushes now |
+| Check GitHub for edits made elsewhere | When a session starts (Claude Code waits for the answer, about half a second). At each prompt, and when Claude reads a file memsaga keeps, the check runs in the background and its answer is used from the next prompt on. At most once a minute for the whole machine | `memsaga sync` or `memsaga pull` checks now |
+| Check again before a write | Before Claude writes or edits a file memsaga keeps, unless the last check is less than ten seconds old. Claude Code waits for it | — |
+| Bring an edit in | Right after the check at session start. Otherwise, once a check has found it: at the next prompt, or before Claude reads or writes that file. It is merged into the live file before Claude uses it, and a session that already read the old text gets a notice | — |
 
 ## When something looks wrong
 
@@ -727,7 +686,7 @@ More: [`docs/architecture.md`](docs/architecture.md).
 | `memsaga repo` | The data repository's path and nothing else, for commands such as `cd "$(memsaga repo)"` or `open "$(memsaga repo)"`; fails before `init` |
 | `memsaga companions [repo]` | List companion documents (status, path, source); `/companions` in a session prints the same |
 | `memsaga install [--skills] [--skill <name>] [--root <dir>] [--no-hooks]` | Register the hooks in each config directory (or only the `--root` ones); `--skills` also writes the bundled skills (`memsaga-history`, `companion-docs`, `companions`), `--skill` one of them; `--no-hooks` leaves `settings.json` alone |
-| `memsaga uninstall [--root <dir>]` | Remove the hooks (from each config directory, or only the `--root` ones) |
+| `memsaga uninstall [--root <dir>]` | Remove the hooks (from each config directory, or only the `--root` ones): every hook entry whose command contains `memsaga`, including one of your own |
 | `memsaga backfill` | Replay session transcripts into dated commits; `init` does this once |
 
 Paths for `restore` can be repository-relative (`claude/memory/<name>/x.md`)
@@ -775,11 +734,7 @@ home keeps Claude Code's name.
 
 One exception: if another directory on the machine encodes like a path under
 home (`/Users/me-old` next to `/Users/me`), memsaga cannot tell them apart and
-keeps Claude Code's names on that machine. Names from before this rule are
-renamed by the next sweep, as one commit of renames, and older revisions stay
-restorable by the new name. Before 2026-09-18 memory was stored at
-`<label>/projects/<slug>/memory/`; the first sweep after upgrading moves it in
-one commit, and `restore --at` still reads older revisions from the old path.
+keeps Claude Code's names on that machine.
 
 ### Configuration
 
@@ -794,7 +749,8 @@ dirs = [
   "skills", "commands", "agents", "agent-memory", "rules",
   "output-styles", "themes", "workflows", "hooks", "scripts",
 ]
-memory = true
+memory = true                    # each project's memory/ folder
+# file names never copied; *.codev-* are CodeV's backup and temporary files
 exclude = ["*.codev-bak*", "*.codev-tmp-*", ".DS_Store", "__pycache__"]
 # left out of the mirrored settings.json: Claude Code rewrites them on
 # every /model and /effort
@@ -815,17 +771,64 @@ path = "~/.claude"
 label = "claude"
 ```
 
-Without `[[roots]]`, memsaga reads CodeV's `~/.config/codev/accounts.json` if
-present, else uses `~/.claude`. That search does not read
-`CLAUDE_CONFIG_DIR`; `init` adds the folder it names and writes the roots into
-the file (memsaga 0.1.1 does not; list the folder yourself). Without `repo`,
-it uses an existing memsaga
-repository called `memories` in one of the folders the quick start names, else
-the place `init` would choose. If the config file disappears while the
-repository still holds its mirrored copy, memsaga runs on its defaults: fewer
-files are mirrored, and copies of files that drop out of scope are left in the
-repository. The reporter prints a warning with the restore command after every
-turn until the file is back.
+#### Where the data repository goes
+
+`init` creates a folder named `memories` inside the first of `~/git`,
+`~/code`, `~/src`, `~/Projects` and `~/dev` that exists (for example
+`~/git/memories`); when none of them exists, it creates `~/memories`. An
+existing memsaga repository named `memories` in one of those places is used
+first. It records the choice as `repo` in the config file, so it never moves.
+`memsaga init --repo <path>` puts it anywhere else, and `init --dry-run` shows
+the choice first. A folder of that name that already holds something else is
+never taken over: `init` stops and asks for `--repo`. A git repository you
+name yourself, such as a fresh clone of an empty GitHub repository, is used as
+it is. Until `init` has run, the hooks and every other command leave all
+folders alone. `memsaga repo` prints the path, and the commands in this README
+use it, so they work wherever yours is.
+
+#### Which config directories
+
+memsaga mirrors each Claude Code config directory it knows (a root). Without
+`[[roots]]` in the config file, it takes the account list of
+[CodeV](#8-two-claude-code-accounts) (`~/.config/codev/accounts.json`) if
+you use it (that list includes `~/.claude`), and otherwise `~/.claude`.
+
+That search does not read `CLAUDE_CONFIG_DIR`, since hooks run in every
+account's sessions and each would see different roots. If you run Claude Code
+with `CLAUDE_CONFIG_DIR` set, run `init` where it is set (a terminal that
+exports it, or a Claude Code session using it): `init` adds that folder and
+records all roots as `[[roots]]` in the config file, so every session sees the
+same ones. It does so only when the folder exists, is not already a root, and
+the config file has no `roots` key (not even `roots = []`). The `root …` lines
+of `init --dry-run` show the result.
+
+To list roots yourself, write them before `init`. Listing roots turns off the
+automatic search, so list `~/.claude` too if you also use it:
+
+```toml
+[[roots]]
+path = "~/my-claude-config"   # the folder CLAUDE_CONFIG_DIR points to
+label = "claude"
+
+# only if you also use ~/.claude; each root needs its own label
+[[roots]]
+path = "~/.claude"
+label = "claude-default"
+```
+
+`memsaga install`, `memsaga status` and `memsaga config` warn when
+`CLAUDE_CONFIG_DIR` names a folder that is not a root, and print the lines to
+add. A second account set up without `CLAUDE_CONFIG_DIR` in the shell where
+you run `init` (for example `~/.claude-work`) is not found either: list it as
+in [Two Claude Code accounts](#8-two-claude-code-accounts).
+
+#### If the config file disappears
+
+If the config file disappears while the data repository still holds its
+mirrored copy, memsaga runs on its defaults: fewer files are mirrored, and
+copies of files that drop out of scope are left in the repository. The
+reporter prints a warning with the restore command after every turn until the
+file is back.
 
 ### Two-way sync
 
@@ -834,19 +837,22 @@ machine, or by hand in the local clone) is not overwritten by the next sweep.
 It waits on a list (`memsaga status` shows it) until it is brought to the live
 file. When only the repository changed, its version is written; when both
 sides changed different lines (or made the same change), the texts are merged;
-conflicting edits to the same lines are left alone and reported, and
-`memsaga sync --take live|repo <path>` settles one by picking a side. A file
+conflicting edits to the same lines are left alone and reported
+([when something looks wrong](#when-something-looks-wrong) says how to settle
+one). A file
 deleted in the repository is deleted live when the live file was unchanged.
 The other way round, a live file counts as deleted only on a machine that has
 had it: a file the repository has but this machine never had (a fresh clone, a
 folder another machine added to the config) is kept, and `memsaga status`
 lists it.
 
-The three hooks of use case 10 ask origin at most once a minute per
-machine, and before a Write or Edit at most every ten seconds. Only a session
-start and a Write or Edit wait for the answer; a prompt or a Read starts the
-check in the background and uses the last answer. Design and
-measurements: [`docs/two-way-sync.md`](docs/two-way-sync.md).
+Inside Claude Code sessions, the hooks of [use case 10](#10-edit-from-anywhere)
+do this on their own, at the moments in [timing](#timing). Before a Write or
+Edit, a change they find is brought in first: a Write that would replace text
+that just arrived is refused, and Claude is told to read the file again; a
+change that cannot be merged is refused and left to you.
+
+Design and measurements: [`docs/two-way-sync.md`](docs/two-way-sync.md).
 
 ### Commit messages
 
@@ -891,17 +897,20 @@ For the usual setup (one config directory, `~/.claude`, and the install
 script), these steps remove everything memsaga added. Run them one at a time.
 
 1. Remove the hooks from every config directory; Claude Code stops
-   committing:
+   committing. This removes every hook whose command contains the word
+   `memsaga`, so rename a hook of your own that does first:
 
    ```sh
    memsaga uninstall
    ```
 
-2. Remove the binary, the config file and the install script's receipt:
+2. Remove the binary, the config file with the install script's receipt, and
+   the file the install script wrote for the fish shell:
 
    ```sh
    rm ~/.cargo/bin/memsaga
    rm -r ~/.config/memsaga
+   rm -f ~/.config/fish/conf.d/memsaga.env.fish
    ```
 
 3. If you ran `memsaga install --skills`, remove the bundled skills. If you
@@ -931,7 +940,7 @@ script), these steps remove everything memsaga added. Run them one at a time.
   `cargo install` tools), remove that line and the folder:
 
   ```sh
-  for f in ~/.zshenv ~/.zshrc ~/.profile ~/.bashrc ~/.bash_profile; do
+  for f in ~/.zshenv ~/.zshrc ~/.profile ~/.bashrc ~/.bash_profile ~/.bash_login; do
     [ -f "$f" ] && sed -i.bak '/\.cargo\/env/d' "$f"
   done
   rm -r ~/.cargo
@@ -1002,10 +1011,8 @@ sync would remove it on every machine.
 
 ## Tests
 
-`cargo test` runs behaviour tests that drive the real binary against fake
-config directories in a temporary directory (`crates/memsaga/tests/e2e.rs`),
-plus unit tests for pure logic. CI runs them on Ubuntu and macOS with
-`cargo fmt --check` and `cargo clippy -D warnings`.
+`cargo test`. What the tests cover, and how the code is organised:
+[`docs/architecture.md`](docs/architecture.md#tests).
 
 ## Roadmap
 

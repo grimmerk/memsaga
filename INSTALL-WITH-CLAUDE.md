@@ -10,7 +10,7 @@ and ask me before each step that changes my machine.
 ```
 
 Claude reads this file, checks what you have, and walks you through the same
-steps as [Install by hand](README.md#install-by-hand). It asks before each step,
+steps as [Install by hand](https://github.com/grimmerk/memsaga#install-by-hand). It asks before each step,
 and you can stop at any point. Some steps also show a permission prompt from
 Claude Code itself; [What to expect](#what-to-expect-from-permission-prompts)
 says which ones.
@@ -263,11 +263,13 @@ let the user choose:
    (skip a config directory whose `skills` is a link to another one's).
    The README's "Uninstalling" section has the commands.
 3. The binary (`~/.cargo/bin/memsaga`, or wherever `command -v memsaga`
-   points; `cargo uninstall memsaga` if it was built with cargo), and
-   `~/.config/memsaga/` (the config file and the installer's receipt).
+   points; `cargo uninstall memsaga` if it was built with cargo),
+   `~/.config/memsaga/` (the config file and the installer's receipt), and
+   `~/.config/fish/conf.d/memsaga.env.fish`, which the install script writes
+   for the fish shell.
 4. The line `. "$HOME/.cargo/env"` that the install script added to the
    shell startup files (on macOS usually `~/.zshenv` and `~/.profile`; check
-   `~/.zshrc`, `~/.bashrc` and `~/.bash_profile` too), and `~/.cargo`: only if
+   `~/.zshrc`, `~/.bashrc`, `~/.bash_profile` and `~/.bash_login` too), and `~/.cargo`: only if
    nothing else the user has is installed in `~/.cargo`.
 5. The data repository (`memsaga repo` prints where), and the GitHub
    repository if there is one. Suggest keeping both.
