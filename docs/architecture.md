@@ -87,6 +87,21 @@ Claude Code ─────────┬────────────�
 Anything that keeps this contract can be dropped in for the binary and the
 behaviour tests will still pass.
 
+## Layout changes before 0.1.0
+
+Two changes predate the first release (0.1.0, 2026-10-23), so no released
+version writes the old forms, but the code still reads them:
+
+- Before 2026-09-18, memory was stored at `<label>/projects/<slug>/memory/`.
+  The first sweep after upgrading moves it in one commit, and `restore --at`
+  still reads older revisions from the old path.
+- Before 2026-10-07, memory directories in the repository kept Claude Code's
+  names. The next sweep renames those of projects under the home directory to
+  the `HOME-…` names (README, "Memory directory names") in one commit of
+  renames, and older revisions stay restorable by the new name. Projects
+  outside the home directory, and every project on a machine whose home prefix
+  is ambiguous, keep Claude Code's names.
+
 ## Tests
 
 `crates/memsaga/tests/e2e.rs` builds fake roots in a temp dir, runs the real

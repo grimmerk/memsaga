@@ -163,7 +163,8 @@ it, does one check and exits.
   `memsaga sync` and named in a notice. Without an `origin` remote, memsaga
   uses no network at all.
 
-The numbers were measured on a busy machine;
+When each of these runs, in one table: [Timing](../README.md#timing) in the
+README. The numbers were measured on a busy machine;
 [`docs/architecture.md`](architecture.md#measured-again-2026-10-15-and-how-to-repeat-it)
 says how to repeat them.
 
