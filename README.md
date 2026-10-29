@@ -637,8 +637,8 @@ Claude reads or writes that file.
 | What | When | How to change it |
 |---|---|---|
 | Commit | At the end of each turn that changed a file in scope, in the background | `granularity = "edit"`: one commit per Write or Edit instead |
-| Push | At the end of a turn, at most once every ten minutes. A push that falls inside those ten minutes is not dropped: it runs when they are up. When a session ends, it pushes right away | `push_min_interval_secs` (default `600`; `0` turns the end-of-turn push off), `push_on_session_end` (default `true`); `memsaga push` pushes now |
-| Check GitHub for edits made elsewhere | When a session starts (Claude Code waits for the answer, about half a second). At each prompt, and when Claude reads a file memsaga keeps, the check runs in the background and its answer is used from the next prompt on. At most once a minute for the whole machine | `memsaga sync` or `memsaga pull` checks now |
+| Push | At the end of a turn, at most once every ten minutes. A push that falls inside those ten minutes is not dropped: it runs when they are up. When a session ends, it pushes right away, unless `push_on_session_end` is off | `push_min_interval_secs` (default `600`; `0` turns the end-of-turn push off), `push_on_session_end` (default `true`); `memsaga push` pushes now |
+| Check GitHub for edits made elsewhere | When a session starts (Claude Code waits for the answer, about half a second). At each prompt, and when Claude reads a file memsaga keeps, the check runs in the background and its answer is used from the next prompt on. At most once a minute for the whole machine | `memsaga sync` or `memsaga pull` checks and brings edits in now |
 | Check again before a write | Before Claude writes or edits a file memsaga keeps, unless the last check is less than ten seconds old. Claude Code waits for it | — |
 | Bring an edit in | Right after the check at session start. Otherwise, once a check has found it: at the next prompt, or before Claude reads or writes that file. It is merged into the live file before Claude uses it, and a session that already read the old text gets a notice | — |
 

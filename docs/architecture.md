@@ -96,9 +96,11 @@ version writes the old forms, but the code still reads them:
   The first sweep after upgrading moves it in one commit, and `restore --at`
   still reads older revisions from the old path.
 - Before 2026-10-07, memory directories in the repository kept Claude Code's
-  names. The next sweep renames them to the `HOME-…` names (README, "Memory
-  directory names") in one commit of renames, and older revisions stay
-  restorable by the new name.
+  names. The next sweep renames those of projects under the home directory to
+  the `HOME-…` names (README, "Memory directory names") in one commit of
+  renames, and older revisions stay restorable by the new name. Projects
+  outside the home directory, and every project on a machine whose home prefix
+  is ambiguous, keep Claude Code's names.
 
 ## Tests
 
