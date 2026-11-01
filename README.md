@@ -6,7 +6,8 @@ you choose.
 
 **Website:** [memsaga.grimmer.io](https://memsaga.grimmer.io) ·
 [Try it first](#try-it-first) · Install ([with Claude Code](#install-with-claude-code) or
-[by hand](#install-by-hand)) · [Do you need it?](#do-you-need-memsaga) ·
+[by hand](#install-by-hand)) · [Update](#updating) ·
+[Do you need it?](#do-you-need-memsaga) ·
 [FAQ](docs/faq.md) ·
 [Discussions](https://github.com/grimmerk/memsaga/discussions)
 
@@ -80,7 +81,7 @@ at.
 
 - [What goes into the data repository](#what-goes-into-the-data-repository)
 - [Do you need memsaga?](#do-you-need-memsaga)
-- [Quick start](#quick-start): [try it first](#try-it-first), [with Claude Code](#install-with-claude-code) or [by hand](#install-by-hand)
+- [Quick start](#quick-start): [try it first](#try-it-first), install [with Claude Code](#install-with-claude-code) or [by hand](#install-by-hand), [update](#updating)
 - [What you can do with it](#what-you-can-do-with-it)
   - Claude Code's config directory
     1. [See what Claude remembered, and when it changed](#1-see-what-claude-remembered-and-when-it-changed)
@@ -100,7 +101,7 @@ at.
 - [What memsaga does not cover, and what to use instead](#what-memsaga-does-not-cover-and-what-to-use-instead)
 - [How it works](#how-it-works), and [timing](#timing): when it commits, pushes and checks for edits
 - [When something looks wrong](#when-something-looks-wrong)
-- [Reference](#reference): [commands](#commands), [what is mirrored](#what-is-mirrored), [memory directory names](#memory-directory-names), [configuration](#configuration), [two-way sync](#two-way-sync), [commit messages](#commit-messages), [updating](#updating), [uninstalling](#uninstalling), [setting up another machine](#setting-up-another-machine)
+- [Reference](#reference): [commands](#commands), [what is mirrored](#what-is-mirrored), [memory directory names](#memory-directory-names), [configuration](#configuration), [two-way sync](#two-way-sync), [commit messages](#commit-messages), [uninstalling](#uninstalling), [setting up another machine](#setting-up-another-machine)
 - [Tests](#tests) · [Roadmap](#roadmap) · [The name](#the-name)
 
 More documents: [FAQ](docs/faq.md) (other ways to keep this history,
@@ -207,6 +208,10 @@ the file it follows. It also lists the permission prompts seen in a test run:
 none in auto mode, 11 in manual mode. To read each command before anything
 runs, install by hand instead.
 
+The same prompt updates or removes memsaga: start it with "Update memsaga
+for me" or "Uninstall memsaga for me" instead
+([Updating](#updating), [Uninstalling](#uninstalling)).
+
 ### Install by hand
 
 Run the steps one at a time; each block below is one step.
@@ -250,9 +255,10 @@ Run the steps one at a time; each block below is one step.
 3. Create the data repository, replay the history and import the current
    state, then register the hooks in each Claude Code config directory.
    `--skills` also adds the bundled skills that use cases 3 and 7 use; leave
-   it out if you do not want them. It writes the folders `memsaga-history`,
-   `companion-docs` and `companions` under `skills/`, replacing any folder of
-   the same name, so rename one first if you already have it:
+   it out if you do not want them. It writes a `SKILL.md` into the folders
+   `memsaga-history`, `companion-docs` and `companions` under `skills/`,
+   replacing the `SKILL.md` of a folder of the same name, so rename one first
+   if you already have it:
 
    ```sh
    memsaga init
@@ -304,6 +310,32 @@ new commits but does not remove what is already in the history.
   and put `memsaga` on your `PATH`. On macOS a browser marks the download as
   quarantined, and the binary is not notarized, so clear the mark once:
   `xattr -d com.apple.quarantine memsaga`.
+
+### Updating
+
+To update memsaga to a new release:
+
+1. Run step 1 of [Install by hand](#install-by-hand) again: it
+   downloads the latest release and replaces `~/.cargo/bin/memsaga`. If you
+   built from source, add `--force` to the `cargo install` line. If you
+   installed an archive from the Releases page, replace that binary with the
+   new release's.
+2. `memsaga install`, with `--skills` if you installed the bundled skills.
+   It is safe to run again: it updates memsaga's own hook entries in place and
+   adds any hook the new version needs. `--skills` overwrites the bundled
+   skills' `SKILL.md` without committing first. If you edited one by hand
+   since Claude's last reply, run `memsaga sweep` before this step, so your
+   version is in the history and `memsaga restore` can bring it back.
+
+To let Claude Code do both steps, paste the prompt from
+[Install with Claude Code](#install-with-claude-code) with
+"Update memsaga for me" in place of "Install memsaga for me".
+
+`memsaga --version` shows what is installed. Running sessions need no restart:
+every hook starts a new process, so the next one uses the new binary. If
+several machines share one data repository, update them together.
+
+To remove memsaga instead: [Uninstalling](#uninstalling).
 
 ## What you can do with it
 
@@ -870,26 +902,6 @@ or `manual:`. A commit made by a command you run yourself, such as
 `memsaga sync`, belongs to no session, so `Session:` and `Cwd:` read `none`;
 the merge memsaga makes when origin moved is just
 `sync: merge origin/<branch>`.
-
-### Updating
-
-1. Run step 1 of [Install by hand](#install-by-hand) again: it
-   downloads the latest release and replaces `~/.cargo/bin/memsaga`. If you
-   built from source, add `--force` to the `cargo install` line. If you
-   installed an archive from the Releases page, replace that binary with the
-   new release's.
-2. `memsaga install`, with `--skills` if you installed the bundled skills.
-   It is safe to run again: it updates memsaga's own hook entries in place and
-   adds any hook the new version needs. `--skills` overwrites the bundled
-   skills; if you edited one, the old text is in the history.
-
-To let Claude Code do both steps, paste the prompt from
-[Install with Claude Code](#install-with-claude-code) with
-"Update memsaga for me" in place of "Install memsaga for me".
-
-`memsaga --version` shows what is installed. Running sessions need no restart:
-every hook starts a new process, so the next one uses the new binary. If
-several machines share one data repository, update them together.
 
 ### Uninstalling
 

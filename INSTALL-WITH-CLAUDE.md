@@ -168,9 +168,10 @@ Ask first. Explain that this adds memsaga's hooks to Claude Code's
 `settings.json` in each config directory (usually only `~/.claude`), so that
 every turn which changes Claude Code's memory or configuration ends with a
 commit. Ask whether they also want the bundled skills, which let Claude answer
-questions about the history (`--skills`). `--skills` writes the folders
-`memsaga-history`, `companion-docs` and `companions` under `skills/`; if one of
-them already exists and memsaga did not write it, ask before overwriting it.
+questions about the history (`--skills`). `--skills` writes a `SKILL.md` into
+the folders `memsaga-history`, `companion-docs` and `companions` under
+`skills/`; if one of them already exists and memsaga did not write it, ask
+before overwriting it.
 Then run one of:
 
 ```sh
@@ -241,8 +242,10 @@ Ask first, then:
 2. Run `~/.cargo/bin/memsaga install` again, with `--skills` if the folder
    `memsaga-history` exists under `skills/` in the config directory. This
    updates memsaga's hook entries and adds any the new version needs;
-   `--skills` overwrites the bundled skills (an edited one keeps its old text
-   in the history).
+   `--skills` overwrites the bundled skills' `SKILL.md` without committing
+   first, so run `~/.cargo/bin/memsaga sweep` before it: a bundled skill the
+   user edited by hand is then in the history, and `memsaga restore` can bring
+   it back.
 3. Show `~/.cargo/bin/memsaga --version`. Running Claude Code sessions need no
    restart. If several machines share the data repository, tell the user to
    update them all.
