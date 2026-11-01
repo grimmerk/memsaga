@@ -276,8 +276,10 @@ let the user choose:
    `cargo uninstall memsaga` if it was built with cargo),
    `~/.config/memsaga/` (the config file and the installer's receipt), and
    `~/.config/fish/conf.d/memsaga.env.fish`, which the install script writes
-   for the fish shell.
-4. The line `. "$HOME/.cargo/env"` that the install script added to the
+   for the fish shell (not after a Homebrew install, which writes no such
+   file).
+4. Only after an install with the install script, not with Homebrew: the
+   line `. "$HOME/.cargo/env"` that the install script added to the
    shell startup files (on macOS usually `~/.zshenv` and `~/.profile`; check
    `~/.zshrc`, `~/.bashrc`, `~/.bash_profile` and `~/.bash_login` too), and `~/.cargo`: only if
    nothing else the user has is installed in `~/.cargo`.
