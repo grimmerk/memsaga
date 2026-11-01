@@ -1,0 +1,49 @@
+# Publishes memsaga-core, then memsaga, to crates.io after a release.
+#
+# Called by release.yml (a dist "custom publish job", see dist-workspace.toml).
+# Authentication is crates.io trusted publishing: no stored token. crates.io
+# matches the workflow filename of the top-level workflow in the OIDC token's
+# workflow_ref, which is release.yml, so each crate's trusted publisher on
+# crates.io names release.yml, not this file.
+#
+# A version that crates.io already has is skipped, so a re-run after a partial
+# failure publishes only what is missing.
+name: Publish to crates.io
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          set -euo pipefail
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "memsaga") | .version')
+          for crate in memsaga-core memsaga; do
+            status=$(curl -s -o /dev/null -w '%{http_code}' \
+              -H 'User-Agent: memsaga-release (github.com/grimmerk/memsaga)' \
+              "https://crates.io/api/v1/crates/$crate/$version")
+            if [ "$status" = 200 ]; then
+              echo "$crate $version is already on crates.io; skipped"
+              continue
+            fi
+            cargo publish -p "$crate" --locked
+          done
