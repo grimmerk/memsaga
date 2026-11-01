@@ -217,16 +217,25 @@ for me" or "Uninstall memsaga for me" instead
 Run the steps one at a time; each block below is one step.
 
 1. Install the prebuilt binary (Apple silicon and Intel Macs, Linux on x86_64
-   and arm64) into `~/.cargo/bin`. Other ways to install are
-   [further down](#other-ways-to-install).
+   and arm64), with the install script or with Homebrew. Other ways to
+   install are [further down](#other-ways-to-install).
+
+   The install script puts it in `~/.cargo/bin`:
 
    ```sh
    curl --proto '=https' --tlsv1.2 -LsSf \
      https://github.com/grimmerk/memsaga/releases/latest/download/memsaga-installer.sh | sh
    ```
 
-   The installer adds `~/.cargo/bin` to your `PATH` for new terminals only.
-   Open a new terminal, or run `source ~/.cargo/env`, before the next step.
+   It adds `~/.cargo/bin` to your `PATH` for new terminals only. Open a new
+   terminal, or run `source ~/.cargo/env`, before the next step.
+
+   Or with [Homebrew](https://brew.sh) (macOS or Linux), which puts `memsaga`
+   on your `PATH` at once:
+
+   ```sh
+   brew install grimmerk/tap/memsaga
+   ```
 
 2. See where the data repository would go, what would be imported, and how
    much history can be replayed. Nothing is written:
@@ -315,11 +324,12 @@ new commits but does not remove what is already in the history.
 
 To update memsaga to a new release:
 
-1. Run step 1 of [Install by hand](#install-by-hand) again: it
-   downloads the latest release and replaces `~/.cargo/bin/memsaga`. If you
-   built from source, add `--force` to the `cargo install` line. If you
-   installed an archive from the Releases page, replace that binary with the
-   new release's.
+1. Get the new binary the way you installed it. With Homebrew:
+   `brew upgrade memsaga`. With the install script: run step 1 of
+   [Install by hand](#install-by-hand) again; it downloads the latest release
+   and replaces `~/.cargo/bin/memsaga`. Built from source: add `--force` to
+   the `cargo install` line. An archive from the Releases page: replace that
+   binary with the new release's.
 2. `memsaga install`, with `--skills` if you installed the bundled skills.
    It is safe to run again: it updates memsaga's own hook entries in place and
    adds any hook the new version needs. `--skills` overwrites the bundled
@@ -944,6 +954,10 @@ script), these steps remove everything memsaga added. Run them one at a time.
 - Another config directory (a second account such as `~/.claude-work`, or
   a folder `CLAUDE_CONFIG_DIR` points to): repeat steps 3 and 4 with its path.
   Skip the skills when its `skills` is a link to `~/.claude/skills`.
+- Installed with Homebrew: in step 2, run `brew uninstall memsaga` instead
+  of `rm ~/.cargo/bin/memsaga`, and skip the fish file and the `~/.cargo`
+  clean-up below; Homebrew wrote neither. `brew untap grimmerk/tap` also
+  removes the tap if nothing else of yours comes from it.
 - A binary from a downloaded archive: delete the copy you put on your
   `PATH`. Built with cargo: `cargo uninstall memsaga`.
 - The install script also added the line `. "$HOME/.cargo/env"` to the shell
