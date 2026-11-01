@@ -96,7 +96,8 @@ fn portable_bin_in(bin: &str, home: Option<&Path>) -> String {
 /// On Linux `current_exe` resolves that link, and an upgrade removes the
 /// versioned folder, so hooks registered with it would run nothing. When
 /// `exe` is not itself on `path_var` but a `PATH` entry of the same name is
-/// the same file, that entry is returned; otherwise `exe` as it is.
+/// the same file, that entry is returned; otherwise `exe` as it is. Relative
+/// `PATH` entries are skipped: hooks run from any folder.
 pub fn stable_exe(exe: &Path, path_var: Option<&OsStr>) -> PathBuf {
     let (Some(name), Some(path_var)) = (exe.file_name(), path_var) else {
         return exe.to_path_buf();
@@ -110,7 +111,12 @@ pub fn stable_exe(exe: &Path, path_var: Option<&OsStr>) -> PathBuf {
         if candidate == exe {
             return exe.to_path_buf();
         }
-        if same_file.is_none() && std::fs::canonicalize(&candidate).ok().as_ref() == Some(&target) {
+        // The hook command is text: a path that is not UTF-8 would be
+        // written with replacement characters and name another file.
+        if same_file.is_none()
+            && candidate.to_str().is_some()
+            && std::fs::canonicalize(&candidate).ok().as_ref() == Some(&target)
+        {
             same_file = Some(candidate);
         }
     }
