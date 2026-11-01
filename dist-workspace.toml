@@ -8,7 +8,17 @@ cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
 # The installers to generate for each app
-installers = ["shell"]
+installers = ["shell", "homebrew"]
+# The Homebrew tap the formula is pushed to (`brew install grimmerk/tap/memsaga`);
+# needs the HOMEBREW_TAP_TOKEN secret (write access to that repository)
+tap = "grimmerk/homebrew-tap"
+# Jobs that run after the GitHub Release: the formula to the tap, and the two
+# crates to crates.io through trusted publishing (no token; see
+# .github/workflows/publish-crates.yml)
+publish-jobs = ["homebrew", "./publish-crates"]
+# The reusable workflow is called from release.yml, so it gets an OIDC token
+# only if the calling job grants it
+github-custom-job-permissions = { "publish-crates" = { id-token = "write", contents = "read" } }
 # Target platforms to build apps for (Rust target-triple syntax)
 # No Windows: memsaga uses flock(2) and Unix file APIs.
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]
