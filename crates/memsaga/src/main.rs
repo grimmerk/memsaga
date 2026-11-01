@@ -337,7 +337,11 @@ fn run(cli: Cli) -> Result<()> {
             let cfg = Config::load()?;
             let bin = match bin {
                 Some(b) => b,
-                None => install::portable_bin(&std::env::current_exe()?.to_string_lossy()),
+                None => {
+                    let exe = std::env::current_exe()?;
+                    let exe = install::stable_exe(&exe, std::env::var_os("PATH").as_deref());
+                    install::portable_bin(&exe.to_string_lossy())
+                }
             };
             for w in memsaga_core::status::roots_warnings(&cfg) {
                 println!("{w}");

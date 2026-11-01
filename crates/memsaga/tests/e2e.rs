@@ -650,6 +650,66 @@ fn install_and_uninstall_preserve_foreign_hooks() {
 }
 
 #[test]
+fn install_registers_the_stable_path_link_not_a_versioned_folder() {
+    // Homebrew runs the binary from Cellar/memsaga/<version>/bin behind a
+    // link in <prefix>/bin. On Linux current_exe resolves the link, and an
+    // upgrade removes the versioned folder, so hooks registered with that
+    // path would run nothing after `brew upgrade`.
+    let fx = fixture("turn", "");
+    let brew = fx._tmp.path().join("brew");
+    let cellar = brew.join("Cellar/memsaga/0.1.3/bin/memsaga");
+    fs::create_dir_all(cellar.parent().unwrap()).unwrap();
+    fs::copy(assert_cmd::cargo::cargo_bin("memsaga"), &cellar).unwrap();
+    let link = brew.join("bin/memsaga");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink("../Cellar/memsaga/0.1.3/bin/memsaga", &link).unwrap();
+    let elsewhere = fx._tmp.path().join("elsewhere");
+    fs::create_dir_all(&elsewhere).unwrap();
+
+    let settings = fx.claude.join("settings.json");
+    let registered = |exe: &Path, path: &str| -> String {
+        let out = Command::new(exe)
+            .env("MEMSAGA_CONFIG", &fx.cfg)
+            .env("PATH", path)
+            .args(["install", "--root"])
+            .arg(&fx.claude)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+        v["hooks"]["Stop"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let path = |first: &Path| format!("{}:/usr/bin:/bin", first.display());
+
+    // Run from the versioned folder (what Linux reports): the link on PATH is
+    // the same file, so the link is registered.
+    let cmd = registered(&cellar, &path(&brew.join("bin")));
+    assert_eq!(cmd, format!("{} hook", link.display()), "{cmd}");
+
+    // No PATH entry is the same file: the path it ran from stays.
+    let cmd = registered(&cellar, &path(&elsewhere));
+    assert_eq!(cmd, format!("{} hook", cellar.display()), "{cmd}");
+
+    // Run from a folder that is itself on PATH: unchanged, even when another
+    // PATH entry links to the same file.
+    let p = format!(
+        "{}:{}",
+        brew.join("bin").display(),
+        path(cellar.parent().unwrap())
+    );
+    let cmd = registered(&cellar, &p);
+    assert_eq!(cmd, format!("{} hook", cellar.display()), "{cmd}");
+}
+
+#[test]
 fn backfill_replays_transcripts_into_dated_commits() {
     let fx = fixture("turn", "");
     let mem = fx.claude.join("projects/-h-git-a/memory/one.md");

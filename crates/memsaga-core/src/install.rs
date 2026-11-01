@@ -5,7 +5,8 @@
 
 use anyhow::{Context, Result};
 use serde_json::{json, Map, Value};
-use std::path::Path;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 
 /// (event, matcher, command suffix, async). The synchronous ones are two-way
 /// sync's step 3 (docs/two-way-sync.md §7): they must finish before the
@@ -87,6 +88,39 @@ fn portable_bin_in(bin: &str, home: Option<&Path>) -> String {
     } else {
         format!("'{}'", bin.replace('\'', r"'\''"))
     }
+}
+
+/// The path of the running binary to register in the hooks. A package
+/// manager can run it from a versioned folder behind a stable link on `PATH`
+/// (Homebrew: `<prefix>/bin/memsaga` → `Cellar/memsaga/<version>/bin/memsaga`).
+/// On Linux `current_exe` resolves that link, and an upgrade removes the
+/// versioned folder, so hooks registered with it would run nothing. When
+/// `exe` is not itself on `path_var` but a `PATH` entry of the same name is
+/// the same file, that entry is returned; otherwise `exe` as it is. Relative
+/// `PATH` entries are skipped: hooks run from any folder.
+pub fn stable_exe(exe: &Path, path_var: Option<&OsStr>) -> PathBuf {
+    let (Some(name), Some(path_var)) = (exe.file_name(), path_var) else {
+        return exe.to_path_buf();
+    };
+    let Ok(target) = std::fs::canonicalize(exe) else {
+        return exe.to_path_buf();
+    };
+    let mut same_file = None;
+    for dir in std::env::split_paths(path_var).filter(|d| d.is_absolute()) {
+        let candidate = dir.join(name);
+        if candidate == exe {
+            return exe.to_path_buf();
+        }
+        // The hook command is text: a path that is not UTF-8 would be
+        // written with replacement characters and name another file.
+        if same_file.is_none()
+            && candidate.to_str().is_some()
+            && std::fs::canonicalize(&candidate).ok().as_ref() == Some(&target)
+        {
+            same_file = Some(candidate);
+        }
+    }
+    same_file.unwrap_or_else(|| exe.to_path_buf())
 }
 
 /// `memsaga hook` or `memsaga report`: which of memsaga's commands an entry runs.
