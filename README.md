@@ -255,9 +255,10 @@ Run the steps one at a time; each block below is one step.
 3. Create the data repository, replay the history and import the current
    state, then register the hooks in each Claude Code config directory.
    `--skills` also adds the bundled skills that use cases 3 and 7 use; leave
-   it out if you do not want them. It writes the folders `memsaga-history`,
-   `companion-docs` and `companions` under `skills/`, replacing any folder of
-   the same name, so rename one first if you already have it:
+   it out if you do not want them. It writes a `SKILL.md` into the folders
+   `memsaga-history`, `companion-docs` and `companions` under `skills/`,
+   replacing the `SKILL.md` of a folder of the same name, so rename one first
+   if you already have it:
 
    ```sh
    memsaga init
@@ -322,7 +323,9 @@ To update memsaga to a new release:
 2. `memsaga install`, with `--skills` if you installed the bundled skills.
    It is safe to run again: it updates memsaga's own hook entries in place and
    adds any hook the new version needs. `--skills` overwrites the bundled
-   skills; if you edited one, the old text is in the history.
+   skills' `SKILL.md` without committing first. If you edited one by hand
+   since Claude's last reply, run `memsaga sweep` before this step, so your
+   version is in the history and `memsaga restore` can bring it back.
 
 To let Claude Code do both steps, paste the prompt from
 [Install with Claude Code](#install-with-claude-code) with
