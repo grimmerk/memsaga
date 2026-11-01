@@ -56,6 +56,7 @@ uname -sm
 git --version
 command -v memsaga && memsaga --version || echo "memsaga: not installed"
 command -v gh && gh auth status || echo "gh: not installed or not logged in"
+command -v brew || echo "brew: not installed"
 ```
 
 The `|| echo` keeps a missing tool from showing up as a failed command; tell
@@ -70,6 +71,7 @@ the user that "not installed" is an expected answer on a new machine.
   with the steps below. A data repository alone does not mean the hooks,
   the skills or the GitHub backup are set up; step 3 checks for one.
 - `gh` is optional. It only makes step 5 shorter.
+- `brew` is optional. With it, step 2 can install through Homebrew.
 
 ### Step 2: install the binary
 
@@ -81,16 +83,18 @@ curl --proto '=https' --tlsv1.2 -LsSf \
 ```
 
 Tell the user that this runs an install script from the memsaga GitHub
-releases page, and offer the alternatives from the Quick start if they would
-rather not: `cargo install memsaga --locked` (needs Rust 1.88 or later), or
-downloading the archive from the Releases page themselves.
+releases page, and offer the alternatives if they would rather not: Homebrew
+when `brew` is installed (`brew install grimmerk/tap/memsaga`, the same
+prebuilt binary, on the `PATH` at once), `cargo install memsaga --locked`
+(needs Rust 1.88 or later), or downloading the archive from the Releases page
+themselves.
 
 The installer may add `~/.cargo/bin` to the shell's startup file, but the
 shell that Claude Code runs commands in does not pick that up. Until the user
 opens a new terminal, call the binary by its full path, `~/.cargo/bin/memsaga`,
 in every step below. Check with `~/.cargo/bin/memsaga --version`. If the
-binary is somewhere else (an install from before, or an archive the user
-unpacked), use the path `command -v memsaga` printed, or the one the user
+binary is somewhere else (Homebrew, an install from before, or an archive the
+user unpacked), use the path `command -v memsaga` printed, or the one the user
 gives, wherever this file writes `~/.cargo/bin/memsaga`.
 
 ### Step 3: create the data repository
@@ -235,8 +239,10 @@ Then tell the user, in a few lines:
 
 Ask first, then:
 
-1. Run the install script of step 2 again; it replaces `~/.cargo/bin/memsaga`
-   with the latest release. If memsaga was built with cargo, add `--force` to
+1. If memsaga came from Homebrew (`command -v memsaga` is under
+   `brew --prefix`), run `brew upgrade memsaga`. Otherwise run the install
+   script of step 2 again; it replaces `~/.cargo/bin/memsaga` with the latest
+   release. If memsaga was built with cargo, add `--force` to
    the `cargo install` line instead. If the user installed an archive by
    hand, ask them to replace that binary with the new release's.
 2. Run `~/.cargo/bin/memsaga install` again, with `--skills` if the folder
@@ -266,11 +272,14 @@ let the user choose:
    (skip a config directory whose `skills` is a link to another one's).
    The README's "Uninstalling" section has the commands.
 3. The binary (`~/.cargo/bin/memsaga`, or wherever `command -v memsaga`
-   points; `cargo uninstall memsaga` if it was built with cargo),
+   points; `brew uninstall memsaga` if it came from Homebrew;
+   `cargo uninstall memsaga` if it was built with cargo),
    `~/.config/memsaga/` (the config file and the installer's receipt), and
    `~/.config/fish/conf.d/memsaga.env.fish`, which the install script writes
-   for the fish shell.
-4. The line `. "$HOME/.cargo/env"` that the install script added to the
+   for the fish shell (not after a Homebrew install, which writes no such
+   file).
+4. Only after an install with the install script, not with Homebrew: the
+   line `. "$HOME/.cargo/env"` that the install script added to the
    shell startup files (on macOS usually `~/.zshenv` and `~/.profile`; check
    `~/.zshrc`, `~/.bashrc`, `~/.bash_profile` and `~/.bash_login` too), and `~/.cargo`: only if
    nothing else the user has is installed in `~/.cargo`.
