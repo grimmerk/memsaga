@@ -6,8 +6,9 @@
 # workflow_ref, which is release.yml, so each crate's trusted publisher on
 # crates.io names release.yml, not this file.
 #
-# A version that crates.io already has is skipped, so a re-run after a partial
-# failure publishes only what is missing.
+# A version that crates.io already has (200) is skipped and a missing one (404)
+# is published, so a re-run after a partial failure publishes only what is
+# missing; any other answer (an outage, a rate limit) stops the job.
 name: Publish to crates.io
 
 on:
@@ -41,9 +42,16 @@ jobs:
             status=$(curl -s -o /dev/null -w '%{http_code}' \
               -H 'User-Agent: memsaga-release (github.com/grimmerk/memsaga)' \
               "https://crates.io/api/v1/crates/$crate/$version")
-            if [ "$status" = 200 ]; then
-              echo "$crate $version is already on crates.io; skipped"
-              continue
-            fi
+            case "$status" in
+              200)
+                echo "$crate $version is already on crates.io; skipped"
+                continue
+                ;;
+              404) ;;
+              *)
+                echo "crates.io answered HTTP $status for $crate $version; not publishing" >&2
+                exit 1
+                ;;
+            esac
             cargo publish -p "$crate" --locked
           done
