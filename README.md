@@ -349,12 +349,11 @@ To let Claude Code do both steps, paste the prompt from
 every hook starts a new process, so the next one uses the new binary. If
 several machines share one data repository, update them together.
 
-Moving a machine to Homebrew, or using Homebrew on any machine, while
-`settings.json` is synced with another machine: link and register the same
-path as in
-[Setting up another machine](#setting-up-another-machine), steps 3 and 6,
-or the other machine's hooks stop running
-([#55](https://github.com/grimmerk/memsaga/issues/55)).
+Moving a machine to another install method (to Homebrew, say) needs nothing
+more: each machine keeps the hook path it registered, even with
+`settings.json` synced. Only while another machine that shares it still runs
+memsaga 0.1.3 or earlier, link and register one path as in
+[Setting up another machine](#setting-up-another-machine), step 3.
 
 To remove memsaga instead: [Uninstalling](#uninstalling).
 
@@ -756,7 +755,11 @@ non-empty `projects/<slug>/memory/`. Also `hooks/` and `scripts/`, which Claude
 Code does not read itself but which hold what `settings.json` points at by
 convention. A folder you add yourself, such as `drafts/` or hand-written
 `mods/`, goes in `dirs`. `settings.json` is opt-in
-(`files = ["CLAUDE.md", "keybindings.json", "settings.json"]`). Never:
+(`files = ["CLAUDE.md", "keybindings.json", "settings.json"]`); the repository
+stores it without the keys Claude Code rewrites all the time
+(`settings_ignore_keys`) and with memsaga's own hook commands in one form,
+and each machine keeps its own values of both. With `settings_ignore_keys =
+[]` the file is stored as it is, hook paths included. Never:
 transcripts, `~/.claude.json`, caches, `file-history`, plugins, and Claude
 Code's own synced skills under `skills/synced/` and `skills/.trash/`.
 
@@ -1009,15 +1012,16 @@ Tested with the same user name and the same folder layout on both machines:
    git clone git@github.com:<you>/memories.git "$D"   # or: gh repo clone <you>/memories "$D"
    mkdir -p ~/.config/memsaga && cp "$D/memsaga/config.toml" ~/.config/memsaga/config.toml
    ```
-3. Install memsaga (step 1 of [Install by hand](#install-by-hand)). With
-   `settings.json` in your `files`, memsaga's hook command is synced with
-   it, and it names the binary's path, so every machine must register the
-   same one: a path one machine lacks stops the hooks there
-   ([#55](https://github.com/grimmerk/memsaga/issues/55)). The install
-   script's `$HOME/.cargo/bin/memsaga` can be the same everywhere; Homebrew's
-   path is not (`/opt/homebrew` on Apple silicon, `/usr/local` on Intel Macs,
-   `/home/linuxbrew/.linuxbrew` on Linux). So on every machine that uses
-   Homebrew, link its binary to that path, and register that path in step 6:
+3. Install memsaga (step 1 of [Install by hand](#install-by-hand)), any
+   way: each machine keeps the path of its own binary in its hook commands,
+   even with `settings.json` synced (the repository stores memsaga's hook
+   commands in one form, and each machine's path is put back when the file
+   arrives). memsaga 0.1.3 and earlier synced the path itself, so a machine
+   pulling another machine's path ran hooks pointing at nothing
+   ([#55](https://github.com/grimmerk/memsaga/issues/55)). While a machine
+   on 0.1.3 or earlier shares the repository, give every Homebrew machine the
+   install script's path, and register it in step 6 with
+   `--bin '$HOME/.cargo/bin/memsaga'`:
 
    ```sh
    mkdir -p ~/.cargo/bin && ln -sf "$(brew --prefix)/bin/memsaga" ~/.cargo/bin/memsaga
@@ -1037,10 +1041,10 @@ Tested with the same user name and the same folder layout on both machines:
    paragraph.
 6. Register the hooks, with `--skills` if you use the bundled skills:
    `memsaga install --skills`. On a Homebrew machine linked as in step 3,
-   name the path: `memsaga install --skills --bin '$HOME/.cargo/bin/memsaga'`
-   (the single quotes keep `$HOME` for the shell that runs the hook). If the
-   first machine uses Homebrew, link and run the same command there too. From
-   here on, Claude Code sessions on this machine commit and push.
+   because a machine on 0.1.3 or earlier shares the repository:
+   `memsaga install --skills --bin '$HOME/.cargo/bin/memsaga'` (the single
+   quotes keep `$HOME` for the shell that runs the hook). From here on,
+   Claude Code sessions on this machine commit and push.
 
 **A machine that ran memsaga before** (an older data repository or config):
 move the old data repository aside rather than deleting it, then do steps 2
