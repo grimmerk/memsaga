@@ -758,7 +758,8 @@ convention. A folder you add yourself, such as `drafts/` or hand-written
 (`files = ["CLAUDE.md", "keybindings.json", "settings.json"]`); the repository
 stores it without the keys Claude Code rewrites all the time
 (`settings_ignore_keys`) and with memsaga's own hook commands in one form,
-and each machine keeps its own values of both. Never:
+and each machine keeps its own values of both. With `settings_ignore_keys =
+[]` the file is stored as it is, hook paths included. Never:
 transcripts, `~/.claude.json`, caches, `file-history`, plugins, and Claude
 Code's own synced skills under `skills/synced/` and `skills/.trash/`.
 
@@ -1039,8 +1040,11 @@ Tested with the same user name and the same folder layout on both machines:
    `git -C "$(memsaga repo)" show --stat` before you go on, and see the next
    paragraph.
 6. Register the hooks, with `--skills` if you use the bundled skills:
-   `memsaga install --skills`. From here on, Claude Code sessions on this
-   machine commit and push.
+   `memsaga install --skills`. On a Homebrew machine linked as in step 3,
+   because a machine on 0.1.3 or earlier shares the repository:
+   `memsaga install --skills --bin '$HOME/.cargo/bin/memsaga'` (the single
+   quotes keep `$HOME` for the shell that runs the hook). From here on,
+   Claude Code sessions on this machine commit and push.
 
 **A machine that ran memsaga before** (an older data repository or config):
 move the old data repository aside rather than deleting it, then do steps 2

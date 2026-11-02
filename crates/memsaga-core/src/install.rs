@@ -144,11 +144,16 @@ fn command_kind(command: &str) -> Option<&'static str> {
 pub const MIRRORED_BIN: &str = "$HOME/.cargo/bin/memsaga";
 
 /// The binary part of a hook command that runs memsaga (`<bin> hook` or
-/// `<bin> report`), the same commands `install` and `uninstall` treat as
-/// memsaga's own.
+/// `<bin> report`). Stricter than `command_kind`, which `install` and
+/// `uninstall` use: the executable itself must be named `memsaga` (a quoted
+/// path included), so another tool's `memsaga-wrapper hook` is never
+/// rewritten to point at memsaga.
 fn memsaga_bin(command: &str) -> Option<&str> {
     let kind = command_kind(command)?;
-    command.strip_suffix(&format!(" {kind}"))
+    let bin = command.strip_suffix(&format!(" {kind}"))?;
+    let path = bin.trim_matches(|c| c == '\'' || c == '"');
+    let name = path.rsplit('/').next().unwrap_or(path);
+    (name == "memsaga").then_some(bin)
 }
 
 /// Every hook command in a `settings.json` value that runs memsaga.

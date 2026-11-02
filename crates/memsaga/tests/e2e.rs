@@ -2033,7 +2033,7 @@ fn each_machine_keeps_its_own_memsaga_hook_path_in_a_synced_settings_json() {
     let fx = fixture("turn", "files = [\"CLAUDE.md\", \"settings.json\"]\n");
     let settings = |bin: &str, a: u32| {
         format!(
-            r#"{{"a":{a},"hooks":{{"Stop":[{{"hooks":[{{"type":"command","command":"{bin} hook"}},{{"type":"command","command":"{bin} report"}}]}},{{"hooks":[{{"type":"command","command":"/other/status.sh"}}]}}]}}}}"#
+            r#"{{"a":{a},"hooks":{{"Stop":[{{"hooks":[{{"type":"command","command":"{bin} hook"}},{{"type":"command","command":"{bin} report"}}]}},{{"hooks":[{{"type":"command","command":"/other/status.sh"}},{{"type":"command","command":"/usr/local/bin/memsaga-wrapper hook"}}]}}]}}}}"#
         )
     };
     let commands = |text: &str| -> Vec<String> {
@@ -2050,14 +2050,16 @@ fn each_machine_keeps_its_own_memsaga_hook_path_in_a_synced_settings_json() {
     write(&live, &settings("/opt/homebrew/bin/memsaga", 1));
     run(&fx, &["init", "--no-backfill"]);
 
-    // The mirror holds one form; another tool's hook is left as it is.
+    // The mirror holds one form; other tools' hooks are left as they are,
+    // one whose name merely contains `memsaga` included.
     let mirrored = fs::read_to_string(fx.repo.join("claude/settings.json")).unwrap();
     assert_eq!(
         commands(&mirrored),
         [
             "$HOME/.cargo/bin/memsaga hook",
             "$HOME/.cargo/bin/memsaga report",
-            "/other/status.sh"
+            "/other/status.sh",
+            "/usr/local/bin/memsaga-wrapper hook"
         ],
         "{mirrored}"
     );
@@ -2091,7 +2093,8 @@ fn each_machine_keeps_its_own_memsaga_hook_path_in_a_synced_settings_json() {
         [
             "/usr/local/bin/memsaga hook",
             "/usr/local/bin/memsaga report",
-            "/other/status.sh"
+            "/other/status.sh",
+            "/usr/local/bin/memsaga-wrapper hook"
         ],
         "{text}"
     );

@@ -44,7 +44,7 @@ than the live file (the *incoming list*). Steps 2 and 3 only read that list.
 |---|---|
 | Live file | The file Claude Code reads, under a root such as `~/.claude`. |
 | Repository file | Its copy in the data repository, for example `claude/CLAUDE.md` in `~/git/memories`. |
-| Mirror form | What the live file looks like in the repository. Equal to the live file, except `settings.json`, whose volatile keys (`settings_ignore_keys`) are removed and whose memsaga hook commands run `$HOME/.cargo/bin/memsaga` whatever path this machine registered (grimmerk/memsaga#55). |
+| Mirror form | What the live file looks like in the repository. Equal to the live file, except `settings.json`, whose volatile keys (`settings_ignore_keys`) are removed and whose memsaga hook commands run `$HOME/.cargo/bin/memsaga` whatever path this machine registered (grimmerk/memsaga#55). With `settings_ignore_keys = []`, neither: the file is stored as it is. |
 | Base | The version of a file that the live side and the repository side last agreed on. A three-way decision compares the live file and the repository file with the base. |
 | Incoming list | `.git/memsaga/incoming.json`: each repository file that is newer than its live file, with its base. Defined in §5. |
 | Sweep | memsaga's copy-and-commit pass at the end of each turn (the Stop hook). |

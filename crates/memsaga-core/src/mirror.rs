@@ -369,15 +369,19 @@ fn copy_settings_stripped(src: &Path, dst: &Path, ignore: &[String]) -> Result<C
 
 /// `settings.json` as the mirror stores it: the `ignore` keys removed,
 /// memsaga's own hook commands written with one binary path for every machine
-/// (`install::MIRRORED_BIN`; each machine registers its own, grimmerk/memsaga#55),
-/// pretty-printed. None when the text is not a JSON object.
+/// (`install::MIRRORED_BIN`; each machine registers its own, grimmerk/memsaga#55)
+/// unless `ignore` is empty, pretty-printed. None when the text is not a JSON object.
 pub fn strip_settings(text: &str, ignore: &[String]) -> Option<String> {
     let mut value: serde_json::Value = serde_json::from_str(text).ok()?;
     let obj = value.as_object_mut()?;
     for k in ignore {
         obj.remove(k);
     }
-    crate::install::set_memsaga_bin(&mut value, crate::install::MIRRORED_BIN);
+    // Same gate as the live direction (`restore::with_live_ignored_keys`):
+    // `settings_ignore_keys = []` keeps settings.json as it is.
+    if !ignore.is_empty() {
+        crate::install::set_memsaga_bin(&mut value, crate::install::MIRRORED_BIN);
+    }
     Some(serde_json::to_string_pretty(&value).ok()? + "\n")
 }
 
