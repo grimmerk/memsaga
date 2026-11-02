@@ -137,6 +137,61 @@ fn command_kind(command: &str) -> Option<&'static str> {
     }
 }
 
+/// How the mirror stores the binary of memsaga's own hook commands, whatever
+/// path a machine registered: the install script's path, which is the same on
+/// every machine. Each machine's own path is put back when the file is written
+/// to its live side (grimmerk/memsaga#55).
+pub const MIRRORED_BIN: &str = "$HOME/.cargo/bin/memsaga";
+
+/// The binary part of a hook command that runs memsaga (`<bin> hook` or
+/// `<bin> report`), the same commands `install` and `uninstall` treat as
+/// memsaga's own.
+fn memsaga_bin(command: &str) -> Option<&str> {
+    let kind = command_kind(command)?;
+    command.strip_suffix(&format!(" {kind}"))
+}
+
+/// Every hook command in a `settings.json` value that runs memsaga.
+fn memsaga_commands(settings: &mut Value) -> Vec<&mut Value> {
+    let Some(events) = settings.get_mut("hooks").and_then(Value::as_object_mut) else {
+        return Vec::new();
+    };
+    events
+        .values_mut()
+        .filter_map(Value::as_array_mut)
+        .flatten()
+        .filter_map(|group| group.get_mut("hooks").and_then(Value::as_array_mut))
+        .flatten()
+        .filter_map(|hook| hook.get_mut("command"))
+        .filter(|c| c.as_str().is_some_and(|s| memsaga_bin(s).is_some()))
+        .collect()
+}
+
+/// Point every memsaga hook command in `settings` at `bin`. Returns whether
+/// anything changed.
+pub fn set_memsaga_bin(settings: &mut Value, bin: &str) -> bool {
+    let mut changed = false;
+    for command in memsaga_commands(settings) {
+        let old = command.as_str().unwrap_or_default();
+        let kind = command_kind(old).unwrap_or("hook");
+        let new = format!("{bin} {kind}");
+        if old != new {
+            *command = Value::String(new);
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// The binary this machine's memsaga hook commands run, from its live
+/// `settings.json` value: the first one found.
+pub fn registered_bin(settings: &Value) -> Option<String> {
+    let mut copy = settings.clone();
+    let commands = memsaga_commands(&mut copy);
+    let first = commands.first()?.as_str()?;
+    memsaga_bin(first).map(str::to_string)
+}
+
 /// Returns true when the file changed.
 pub fn install(settings: &Path, bin: &str, reporter: bool) -> Result<bool> {
     let mut root = read_settings(settings)?;

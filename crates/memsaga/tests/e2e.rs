@@ -2025,6 +2025,94 @@ fn sync_keeps_a_hand_added_file_settings_keys_and_executable_scripts() {
 }
 
 #[test]
+fn each_machine_keeps_its_own_memsaga_hook_path_in_a_synced_settings_json() {
+    // grimmerk/memsaga#55: with settings.json mirrored, a machine on Homebrew
+    // (/opt/homebrew/bin/memsaga) and one on the install script
+    // ($HOME/.cargo/bin/memsaga) overwrote each other's hook command, and the
+    // hooks of the machine that pulled the other path stopped running.
+    let fx = fixture("turn", "files = [\"CLAUDE.md\", \"settings.json\"]\n");
+    let settings = |bin: &str, a: u32| {
+        format!(
+            r#"{{"a":{a},"hooks":{{"Stop":[{{"hooks":[{{"type":"command","command":"{bin} hook"}},{{"type":"command","command":"{bin} report"}}]}},{{"hooks":[{{"type":"command","command":"/other/status.sh"}}]}}]}}}}"#
+        )
+    };
+    let commands = |text: &str| -> Vec<String> {
+        let v: serde_json::Value = serde_json::from_str(text).unwrap();
+        v["hooks"]["Stop"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|g| g["hooks"].as_array().unwrap().clone())
+            .map(|h| h["command"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let live = fx.claude.join("settings.json");
+    write(&live, &settings("/opt/homebrew/bin/memsaga", 1));
+    run(&fx, &["init", "--no-backfill"]);
+
+    // The mirror holds one form; another tool's hook is left as it is.
+    let mirrored = fs::read_to_string(fx.repo.join("claude/settings.json")).unwrap();
+    assert_eq!(
+        commands(&mirrored),
+        [
+            "$HOME/.cargo/bin/memsaga hook",
+            "$HOME/.cargo/bin/memsaga report",
+            "/other/status.sh"
+        ],
+        "{mirrored}"
+    );
+    assert!(
+        fs::read_to_string(&live)
+            .unwrap()
+            .contains("/opt/homebrew/bin/memsaga hook"),
+        "the live file keeps this machine's path"
+    );
+
+    // Registering another path on this machine is not a change to commit.
+    let before = commits(&fx);
+    write(&live, &settings("/usr/local/bin/memsaga", 1));
+    hook(&fx, &stop("s1"));
+    assert_eq!(commits(&fx), before, "a different binary path committed");
+
+    // A change made on another machine arrives with that machine's form of
+    // the commands; this machine keeps its own binary.
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(
+        &other,
+        "claude/settings.json",
+        Some(&settings("$HOME/.cargo/bin/memsaga", 2)),
+    );
+    run(&fx, &["sync"]);
+    let text = fs::read_to_string(&live).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["a"], 2, "{text}");
+    assert_eq!(
+        commands(&text),
+        [
+            "/usr/local/bin/memsaga hook",
+            "/usr/local/bin/memsaga report",
+            "/other/status.sh"
+        ],
+        "{text}"
+    );
+
+    // A restore keeps it too.
+    let first = git(&fx, &["rev-list", "--max-parents=0", "HEAD"])
+        .lines()
+        .last()
+        .unwrap()
+        .to_string();
+    run(
+        &fx,
+        &["restore", "claude/settings.json", "--at", &first, "--yes"],
+    );
+    let text = fs::read_to_string(&live).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["a"], 1, "{text}");
+    assert_eq!(commands(&text)[0], "/usr/local/bin/memsaga hook", "{text}");
+}
+
+#[test]
 fn a_file_this_machine_never_had_is_kept_not_deleted_and_a_deletion_still_counts_once_seen() {
     // grimmerk/memsaga#22: a committed file in scope whose live copy was never
     // on this machine (here: committed straight into the clone, as a merge

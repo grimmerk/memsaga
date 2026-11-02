@@ -366,8 +366,10 @@ fn executable_at(cfg: &Config, repo_rel: &Path, rev: &str) -> bool {
 }
 
 /// The mirror stores `settings.json` without `settings_ignore_keys`
-/// (`model`, `effortLevel`, ...). Restoring it must not delete those from
-/// the live file: carry the live values of the ignored keys into the
+/// (`model`, `effortLevel`, ...) and with memsaga's own hook commands in one
+/// form. Restoring it must not delete those keys from the live file, nor
+/// point the hooks at another machine's binary: carry the live values of the
+/// ignored keys, and the live binary of memsaga's hook commands, into the
 /// candidate. Anything that is not a JSON object is returned unchanged.
 pub fn with_live_ignored_keys(cfg: &Config, loc: &Located, candidate: Vec<u8>) -> Vec<u8> {
     let is_settings = loc
@@ -396,6 +398,11 @@ pub fn with_live_ignored_keys(cfg: &Config, loc: &Located, candidate: Vec<u8>) -
         if let Some(v) = live_obj.get(k) {
             cand_obj.insert(k.clone(), v.clone());
         }
+    }
+    // memsaga's own hook commands keep the binary this machine registered;
+    // the mirror holds one form for all machines (grimmerk/memsaga#55).
+    if let Some(bin) = crate::install::registered_bin(&live) {
+        crate::install::set_memsaga_bin(&mut cand, &bin);
     }
     match serde_json::to_string_pretty(&cand) {
         Ok(s) => (s + "\n").into_bytes(),
