@@ -237,6 +237,10 @@ Run the steps one at a time; each block below is one step.
    brew install grimmerk/tap/memsaga
    ```
 
+   If Homebrew stops with a message about Xcode or the Command Line Tools,
+   that is its own check before it installs anything: update them as it
+   says, or use the install script above, which needs neither.
+
 2. See where the data repository would go, what would be imported, and how
    much history can be replayed. Nothing is written:
 
@@ -344,6 +348,13 @@ To let Claude Code do both steps, paste the prompt from
 `memsaga --version` shows what is installed. Running sessions need no restart:
 every hook starts a new process, so the next one uses the new binary. If
 several machines share one data repository, update them together.
+
+Moving a machine to another install method (the install script to
+Homebrew, say) while `settings.json` is synced with another machine: link
+and register the same path as in
+[Setting up another machine](#setting-up-another-machine), steps 3 and 6,
+or the other machine's hooks stop running
+([#55](https://github.com/grimmerk/memsaga/issues/55)).
 
 To remove memsaga instead: [Uninstalling](#uninstalling).
 
@@ -997,7 +1008,19 @@ Tested with the same user name and the same folder layout on both machines:
    git clone git@github.com:<you>/memories.git "$D"   # or: gh repo clone <you>/memories "$D"
    mkdir -p ~/.config/memsaga && cp "$D/memsaga/config.toml" ~/.config/memsaga/config.toml
    ```
-3. Install memsaga (step 1 of [Install by hand](#install-by-hand)).
+3. Install memsaga (step 1 of [Install by hand](#install-by-hand)) the
+   same way as on the first machine. With `settings.json` in your `files`,
+   memsaga's hook command is synced with it, and it names the binary's path:
+   a machine that installed differently would write a path the other machine
+   lacks, and the hooks there would stop running
+   ([#55](https://github.com/grimmerk/memsaga/issues/55)). To use Homebrew on
+   one machine and the install script on another, link the Homebrew binary
+   to the install script's path on the Homebrew machine, and register that
+   path in step 6:
+
+   ```sh
+   mkdir -p ~/.cargo/bin && ln -sf "$(brew --prefix)/bin/memsaga" ~/.cargo/bin/memsaga
+   ```
 4. `memsaga restore --all --at HEAD`: read the list and the diffs, answer
    `n`; then run it again with `--yes`. Files get their content, executable
    bits and commit time back; links that share files between accounts are
@@ -1012,8 +1035,10 @@ Tested with the same user name and the same folder layout on both machines:
    `git -C "$(memsaga repo)" show --stat` before you go on, and see the next
    paragraph.
 6. Register the hooks, with `--skills` if you use the bundled skills:
-   `memsaga install --skills`. From here on, Claude Code sessions on this
-   machine commit and push.
+   `memsaga install --skills`. On a Homebrew machine linked as in step 3,
+   name the path: `memsaga install --skills --bin '$HOME/.cargo/bin/memsaga'`
+   (the single quotes keep `$HOME` for the shell that runs the hook). From
+   here on, Claude Code sessions on this machine commit and push.
 
 **A machine that ran memsaga before** (an older data repository or config):
 move the old data repository aside rather than deleting it, then do steps 2
