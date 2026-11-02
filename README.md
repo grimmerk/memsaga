@@ -237,6 +237,10 @@ Run the steps one at a time; each block below is one step.
    brew install grimmerk/tap/memsaga
    ```
 
+   If Homebrew stops with a message about Xcode or the Command Line Tools,
+   that is its own check before it installs anything: update them as it
+   says, or use the install script above, which needs neither.
+
 2. See where the data repository would go, what would be imported, and how
    much history can be replayed. Nothing is written:
 
@@ -344,6 +348,13 @@ To let Claude Code do both steps, paste the prompt from
 `memsaga --version` shows what is installed. Running sessions need no restart:
 every hook starts a new process, so the next one uses the new binary. If
 several machines share one data repository, update them together.
+
+Moving a machine to Homebrew, or using Homebrew on any machine, while
+`settings.json` is synced with another machine: link and register the same
+path as in
+[Setting up another machine](#setting-up-another-machine), steps 3 and 6,
+or the other machine's hooks stop running
+([#55](https://github.com/grimmerk/memsaga/issues/55)).
 
 To remove memsaga instead: [Uninstalling](#uninstalling).
 
@@ -954,9 +965,10 @@ script), these steps remove everything memsaga added. Run them one at a time.
 - Another config directory (a second account such as `~/.claude-work`, or
   a folder `CLAUDE_CONFIG_DIR` points to): repeat steps 3 and 4 with its path.
   Skip the skills when its `skills` is a link to `~/.claude/skills`.
-- Installed with Homebrew: in step 2, run `brew uninstall memsaga` instead
-  of `rm ~/.cargo/bin/memsaga`, and skip the fish file and the `~/.cargo`
-  clean-up below; Homebrew wrote neither. `brew untap grimmerk/tap` also
+- Installed with Homebrew: in step 2, run `brew uninstall memsaga`, and
+  remove `~/.cargo/bin/memsaga` only if you linked it there (Setting up
+  another machine, step 3). Skip the fish file and the `~/.cargo` clean-up
+  below; Homebrew wrote neither. `brew untap grimmerk/tap` also
   removes the tap if nothing else of yours comes from it.
 - A binary from a downloaded archive: delete the copy you put on your
   `PATH`. Built with cargo: `cargo uninstall memsaga`.
@@ -997,7 +1009,19 @@ Tested with the same user name and the same folder layout on both machines:
    git clone git@github.com:<you>/memories.git "$D"   # or: gh repo clone <you>/memories "$D"
    mkdir -p ~/.config/memsaga && cp "$D/memsaga/config.toml" ~/.config/memsaga/config.toml
    ```
-3. Install memsaga (step 1 of [Install by hand](#install-by-hand)).
+3. Install memsaga (step 1 of [Install by hand](#install-by-hand)). With
+   `settings.json` in your `files`, memsaga's hook command is synced with
+   it, and it names the binary's path, so every machine must register the
+   same one: a path one machine lacks stops the hooks there
+   ([#55](https://github.com/grimmerk/memsaga/issues/55)). The install
+   script's `$HOME/.cargo/bin/memsaga` can be the same everywhere; Homebrew's
+   path is not (`/opt/homebrew` on Apple silicon, `/usr/local` on Intel Macs,
+   `/home/linuxbrew/.linuxbrew` on Linux). So on every machine that uses
+   Homebrew, link its binary to that path, and register that path in step 6:
+
+   ```sh
+   mkdir -p ~/.cargo/bin && ln -sf "$(brew --prefix)/bin/memsaga" ~/.cargo/bin/memsaga
+   ```
 4. `memsaga restore --all --at HEAD`: read the list and the diffs, answer
    `n`; then run it again with `--yes`. Files get their content, executable
    bits and commit time back; links that share files between accounts are
@@ -1012,8 +1036,11 @@ Tested with the same user name and the same folder layout on both machines:
    `git -C "$(memsaga repo)" show --stat` before you go on, and see the next
    paragraph.
 6. Register the hooks, with `--skills` if you use the bundled skills:
-   `memsaga install --skills`. From here on, Claude Code sessions on this
-   machine commit and push.
+   `memsaga install --skills`. On a Homebrew machine linked as in step 3,
+   name the path: `memsaga install --skills --bin '$HOME/.cargo/bin/memsaga'`
+   (the single quotes keep `$HOME` for the shell that runs the hook). If the
+   first machine uses Homebrew, link and run the same command there too. From
+   here on, Claude Code sessions on this machine commit and push.
 
 **A machine that ran memsaga before** (an older data repository or config):
 move the old data repository aside rather than deleting it, then do steps 2
