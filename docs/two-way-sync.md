@@ -44,7 +44,7 @@ than the live file (the *incoming list*). Steps 2 and 3 only read that list.
 |---|---|
 | Live file | The file Claude Code reads, under a root such as `~/.claude`. |
 | Repository file | Its copy in the data repository, for example `claude/CLAUDE.md` in `~/git/memories`. |
-| Mirror form | What the live file looks like in the repository. Equal to the live file, except `settings.json`, whose volatile keys (`settings_ignore_keys`) are removed. |
+| Mirror form | What the live file looks like in the repository. Equal to the live file, except `settings.json`, whose volatile keys (`settings_ignore_keys`) are removed and whose memsaga hook commands run `$HOME/.cargo/bin/memsaga` whatever path this machine registered (grimmerk/memsaga#55). |
 | Base | The version of a file that the live side and the repository side last agreed on. A three-way decision compares the live file and the repository file with the base. |
 | Incoming list | `.git/memsaga/incoming.json`: each repository file that is newer than its live file, with its base. Defined in §5. |
 | Sweep | memsaga's copy-and-commit pass at the end of each turn (the Stop hook). |
@@ -253,7 +253,8 @@ B = base, R = repository file.
 How it writes:
 
 - Through the same code as `restore`: atomic replace, executable bit from the
-  repository, the live `settings_ignore_keys` put back into `settings.json`,
+  repository, the live `settings_ignore_keys` and this machine's memsaga
+  hook binary put back into `settings.json`,
   the destination checked against the roots.
 - A conflict is resolved by the user editing the live file (or the repository
   file) and running `memsaga sync` again; once L equals R, the entry is
