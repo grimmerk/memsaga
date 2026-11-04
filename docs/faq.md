@@ -173,9 +173,11 @@ says how to repeat them.
 ## Is there something like this for Windows?
 
 memsaga runs on macOS and Linux only. On Windows 11,
-[Engram](https://github.com/Sen-CaPoo/engram) (MIT, Node.js) syncs Claude
-Code's memory between your computers through a private GitHub repository of
-your own. It works differently from memsaga:
+[Engram by Sen-CaPoo](https://github.com/Sen-CaPoo/engram) (MIT, Node.js;
+several other tools share the name) syncs Claude Code's built-in memory
+between your computers through a private GitHub repository of your own. The
+author of memsaga has not used it; this is what its README and code say. It
+works differently from memsaga:
 
 - It points Claude Code's memory folder at its own vault (Claude Code's
   `autoMemoryDirectory` setting), instead of copying the files from where
@@ -185,7 +187,10 @@ your own. It works differently from memsaga:
 - It is about memory, with commands to tidy it, rather than about the whole
   Claude Code config (`CLAUDE.md`, skills, hooks and so on).
 
-Its README is in Traditional Chinese, with an English version.
+Its README is in Traditional Chinese, with an English version. Tools that
+replace the built-in memory with their own, the other approach, are covered in
+[the first question](#why-not-skip-claude-codes-memory-and-keep-my-own-in-a-repository);
+some of them run on Windows too.
 
 ## Questions and bugs
 
