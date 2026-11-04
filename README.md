@@ -164,8 +164,10 @@ Other ways to do this, compared, and the do-it-yourself setup step by step:
 
 ## Quick start
 
-You need macOS or Linux, git and Claude Code. `gh` (the GitHub command-line
-tool) is optional, for creating the GitHub repository.
+You need macOS or Linux (for Windows, see the
+[FAQ](docs/faq.md#is-there-something-like-this-for-windows)), git and Claude
+Code. `gh` (the GitHub command-line tool) is optional, for creating the GitHub
+repository.
 
 | Way | What happens |
 |---|---|
