@@ -189,8 +189,7 @@ works differently from memsaga:
 
 Its README is in Traditional Chinese, with an English version. Tools that
 replace the built-in memory with their own, the other approach, are covered in
-[the first question](#why-not-skip-claude-codes-memory-and-keep-my-own-in-a-repository);
-some of them run on Windows too.
+[the first question](#why-not-skip-claude-codes-memory-and-keep-my-own-in-a-repository).
 
 ## Questions and bugs
 
