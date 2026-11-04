@@ -10,6 +10,8 @@ it. For what memsaga adds over the simplest setup, see
   Keeping the built-in memory and versioning it, without memsaga.
 - [Does it slow Claude Code down?](#does-it-slow-claude-code-down)
   What each hook costs, measured.
+- [Is there something like this for Windows?](#is-there-something-like-this-for-windows)
+  Engram, a memory sync tool for Windows 11.
 
 ## Why not skip Claude Code's memory and keep my own in a repository?
 
@@ -167,6 +169,27 @@ When each of these runs, in one table: [Timing](../README.md#timing) in the
 README. The numbers were measured on a busy machine;
 [`docs/architecture.md`](architecture.md#measured-again-2026-10-15-and-how-to-repeat-it)
 says how to repeat them.
+
+## Is there something like this for Windows?
+
+memsaga runs on macOS and Linux only. On Windows 11,
+[Engram by Sen-CaPoo](https://github.com/Sen-CaPoo/engram) (MIT, Node.js;
+several other tools share the name) syncs Claude Code's built-in memory
+between your computers through a private GitHub repository of your own. The
+author of memsaga has not used it; this is what its README and code say. It
+works differently from memsaga:
+
+- It points Claude Code's memory folder at its own vault (Claude Code's
+  `autoMemoryDirectory` setting), instead of copying the files from where
+  Claude Code keeps them.
+- It syncs in the background, every ten minutes by default, instead of from
+  Claude Code's hooks after each reply.
+- It is about memory, with commands to tidy it, rather than about the whole
+  Claude Code config (`CLAUDE.md`, skills, hooks and so on).
+
+Its README is in Traditional Chinese, with an English version. Tools that
+replace the built-in memory with their own, the other approach, are covered in
+[the first question](#why-not-skip-claude-codes-memory-and-keep-my-own-in-a-repository).
 
 ## Questions and bugs
 
