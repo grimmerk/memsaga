@@ -4561,3 +4561,21 @@ fn an_explicit_backfill_never_touches_the_users_uncommitted_file() {
     assert_eq!(fs::read_to_string(&note).unwrap(), body);
     assert_key_in_no_commit(&fx, &key);
 }
+
+/// A file name that is not UTF-8 is mangled in the diff text, so the
+/// unstage may miss it; the commit must then stop rather than take the key.
+/// Linux only: macOS file systems refuse such names.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_held_file_whose_name_is_not_utf8_is_never_committed() {
+    use std::os::unix::ffi::OsStrExt;
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let key = fake_key();
+    let name = std::ffi::OsStr::from_bytes(b"note-\xff.md");
+    let p = fx.repo.join("manual").join(name);
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
+    fs::write(&p, format!("{key}\n")).unwrap();
+    hook(&fx, &stop("s1"));
+    assert_key_in_no_commit(&fx, &key);
+}

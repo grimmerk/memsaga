@@ -495,18 +495,17 @@ pub fn unstage_held(run: &dyn Fn(&[&str]) -> Result<Output>, allow: &[String]) -
             );
         }
     }
-    // Do not trust exit codes alone (`git reset` exits 1 when files stay
-    // modified): check that no held path is still staged, or stop the commit.
+    // Fail closed: scan the index again and stop the commit if anything still
+    // matches. This does not depend on the paths above being right (a name
+    // that is not UTF-8 is mangled by the lossy decoding of the diff, so the
+    // unstage could miss it), nor on exit codes (`git reset` exits 1 when
+    // files stay modified).
     if !hits.is_empty() {
-        let specs: Vec<String> = hits
-            .iter()
-            .map(|h| format!(":(literal){}", h.path))
-            .collect();
-        let mut args = vec!["diff", "--cached", "--name-only", base.as_str(), "--"];
-        args.extend(specs.iter().map(String::as_str));
-        let left = run(&args)?;
-        if !left.status.success() || !left.stdout.is_empty() {
-            bail!("a held file is still staged; not committing");
+        let again = run(&diff_args(&base))?;
+        if !again.status.success()
+            || !scan_diff(&String::from_utf8_lossy(&again.stdout), allow).is_empty()
+        {
+            bail!("a file that looks like it holds a secret is still staged; not committing");
         }
     }
     Ok(hits)
@@ -599,6 +598,36 @@ mod tests {
     fn quoted_paths_are_decoded() {
         assert_eq!(unquote(r"a\tb"), "a\tb");
         assert_eq!(unquote(r#"a\001b\\c\"d"#), "a\u{1}b\\c\"d");
+    }
+
+    /// A git runner that answers every diff with `diff` and every other
+    /// command with success, as if the unstage had worked when it did not.
+    fn fake_git(diff: String) -> impl Fn(&[&str]) -> Result<Output> {
+        use std::os::unix::process::ExitStatusExt;
+        move |args: &[&str]| {
+            let stdout = if args.contains(&"diff") {
+                diff.clone().into_bytes()
+            } else {
+                Vec::new()
+            };
+            Ok(Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout,
+                stderr: Vec::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn a_held_file_still_staged_after_the_unstage_stops_the_commit() {
+        let k = key("gh", "p_") + B36;
+        let run = fake_git(diff_with("a.md", &[], &[&format!("t={k}")]));
+        let err = unstage_held(&run, &[]).unwrap_err().to_string();
+        assert!(err.contains("still staged"), "{err}");
+        assert!(!err.contains(&k));
+        // Nothing held: no second scan, no error.
+        let clean = fake_git(diff_with("a.md", &[], &["ok"]));
+        assert!(unstage_held(&clean, &[]).unwrap().is_empty());
     }
 
     #[test]
