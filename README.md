@@ -907,9 +907,13 @@ Before a commit, memsaga reads the lines the change adds (not the whole file,
 and not lines already in the history) and looks for key shapes with a fixed
 prefix: Anthropic and OpenAI API keys, GitHub, GitLab, npm, Slack and Hugging
 Face tokens, AWS access key IDs, Google API keys, Stripe live keys, and
-`-----BEGIN … PRIVATE KEY-----` lines. The list is a subset of
-[gitleaks](https://github.com/gitleaks/gitleaks)' rules, chosen for few false
-alarms; generic patterns such as `password=` or JSON Web Tokens are left out.
+private keys (a `-----BEGIN … PRIVATE KEY-----` line followed by the key
+itself; the line alone, as a constant in code, does not count). The list is a
+subset of [gitleaks](https://github.com/gitleaks/gitleaks)' rules, chosen for
+few false alarms; generic patterns such as `password=` or JSON Web Tokens are
+left out. Test keys in code (`xoxb-1234…` in a test file) look the same as
+real ones, so a file of copied code or data can be held too; mark it with
+`allow_secrets` as below.
 
 A file with a match is held back. What happens then:
 
