@@ -28,3 +28,9 @@ install-path = "CARGO_HOME"
 hosting = "github"
 # Whether to install an updater program
 install-updater = false
+
+# GitHub retired the macos-14 runner on 2026-11-02, and cargo-dist 0.32.0
+# still picks it for Apple Silicon builds: the job is cancelled at once and
+# nothing is released. macos-15 is Apple Silicon too.
+[dist.github-custom-runners]
+aarch64-apple-darwin = "macos-15"
