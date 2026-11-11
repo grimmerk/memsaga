@@ -35,6 +35,8 @@ pub struct Outcome {
     pub duration_ms: u64,
     pub copied: usize,
     pub deleted: usize,
+    /// Files left out of this commit because a new line looks like a secret.
+    pub held: Vec<crate::secrets::Hit>,
 }
 
 /// Would a sweep find anything? Cheap: stat calls plus one `git status`.
@@ -185,8 +187,13 @@ pub fn refresh_mirror(cfg: &Config, scope: &Scope, stats: &mut mirror::Stats) ->
 }
 
 /// Refresh the mirror and return git's view of what a sweep would commit:
-/// `(status --short, diff)`; `stat_only` asks for `--stat` instead of a full diff.
-pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
+/// `(status --short, diff, held)`; `stat_only` asks for `--stat` instead of a
+/// full diff. A file the secret check would hold is left out of the diff, so
+/// the preview never prints the key either.
+pub fn pending(
+    cfg: &Config,
+    stat_only: bool,
+) -> Result<(String, String, Vec<crate::secrets::Hit>)> {
     let git = Git::new(&cfg.repo);
     if !git.is_repo() {
         anyhow::bail!(
@@ -258,6 +265,19 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
             );
         }
     }
+    let held = if cfg.scan_secrets {
+        let run_out =
+            |args: &[&str]| -> Result<std::process::Output> { Ok(git_cmd().args(args).output()?) };
+        match crate::secrets::unstage_held(&run_out, &cfg.allow_secrets) {
+            Ok(h) => h,
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(e);
+            }
+        }
+    } else {
+        Vec::new()
+    };
     let status = run(&["status", "--short"])?;
     let diff = if stat_only {
         run(&["diff", "--cached", "--stat"])?
@@ -265,7 +285,7 @@ pub fn pending(cfg: &Config, stat_only: bool) -> Result<(String, String)> {
         run(&["diff", "--cached"])?
     };
     let _ = std::fs::remove_file(&tmp);
-    Ok((status, diff))
+    Ok((status, diff, held))
 }
 
 /// Mirror, index, commit. Returns what happened. Never writes into a root.
@@ -324,12 +344,38 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     }
     crate::sync::save_link_over_folder(&state, &scope.take_link_over_folder())?;
     git.add_renormalize(&stats.restat)?;
-    let changed = git.add_all_and_check()?;
+    let mut changed = git.add_all_and_check()?;
     let mut out = Outcome {
         copied: stats.copied + stats.linked,
         deleted: stats.deleted,
         ..Default::default()
     };
+    if changed && cfg.scan_secrets {
+        match hold_secrets(cfg, &git, &stats.written) {
+            Ok(held) => out.held = held,
+            Err(e) => {
+                // Failed closed: nothing is committed. A hook's error only
+                // reaches the log, so leave the reason where the reporter and
+                // `status` read it; it names files, never the key.
+                let reason = format!("{e:#}");
+                let _ = state.write_marker(HELD_ERROR, &reason);
+                let _ = state.append_event(&Event {
+                    ts: state::now_rfc3339(),
+                    kind: "error".into(),
+                    event: attrib.event.clone(),
+                    session: attrib.session.clone(),
+                    message: reason,
+                    ..Default::default()
+                });
+                return Err(e);
+            }
+        }
+        if !out.held.is_empty() {
+            changed = git.has_staged_changes()?;
+        }
+    }
+    state.remove(HELD_ERROR);
+    record_held(&state, attrib, &out.held)?;
     if changed {
         let name_status = git.staged_name_status()?;
         let files: Vec<String> = name_status
@@ -339,7 +385,12 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
             .filter_map(|l| l.split('\t').next_back().map(|s| s.to_string()))
             .collect();
         let shortstat = git.staged_shortstat()?;
-        let title = session_title(Path::new(&attrib.transcript));
+        let mut title = session_title(Path::new(&attrib.transcript));
+        // The title goes into the commit message: one that holds a key
+        // shape is left out rather than committed.
+        if cfg.scan_secrets && crate::secrets::text_has_secret(&title) {
+            title.clear();
+        }
         let mut msg = commit_message(cfg, attrib, &title, &files, &name_status, &shortstat);
         if renames > 0 {
             // The one-time rename gets a subject that says what it is.
@@ -383,6 +434,93 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         state.log(&format!("events.jsonl rotation failed: {e:#}"));
     }
     Ok(out)
+}
+
+/// The secret check on the real index (grimmerk/memsaga#60): take every
+/// held file out of the commit, and put memsaga's own copy of it back to its
+/// committed version, so the working tree keeps matching `HEAD` there.
+///
+/// Why the copy must not stay: once the sweep ends, nothing records it as
+/// memsaga's own, so two-way sync would read the difference as a hand edit in
+/// the repository, and after the user removed the key from the live file it
+/// would write the repository copy, key included, back into the live file.
+/// The next sweep copies the live file again and holds it again.
+/// A file the user wrote in the repository (`manual/`, `companion/`, a hand
+/// edit that differs from the live file) is only unstaged, never touched.
+/// memsaga's own copy is one this sweep's mirror wrote (`written`), or one
+/// equal to what the mirror would write now (an earlier preview's copy); the
+/// first holds even when the live file changed again since the copy.
+pub fn hold_secrets(
+    cfg: &Config,
+    git: &Git,
+    written: &[std::path::PathBuf],
+) -> Result<Vec<crate::secrets::Hit>> {
+    let run = |a: &[&str]| git.run(a);
+    let held = crate::secrets::unstage_held(&run, &cfg.allow_secrets)?;
+    for h in &held {
+        let path = cfg.repo.join(&h.path);
+        let own = written.contains(&path)
+            || crate::sync::live_target(cfg, &h.path)
+                .and_then(|t| crate::sync::mirror_form(cfg, &t))
+                .is_some_and(|live| std::fs::read(&path).ok().as_deref() == Some(live.as_slice()));
+        if !own {
+            continue;
+        }
+        let spec = format!(":(literal){}", h.path);
+        if git.object_type(&format!("HEAD:{}", h.path))?.is_some() {
+            git.run_ok(&["checkout", "-q", "HEAD", "--", &spec])?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    Ok(held)
+}
+
+/// Save the held set for `status` and the reporter, and log an event when it
+/// changed, so a file held turn after turn is one event, not one per sweep.
+fn record_held(state: &State, attrib: &Attribution, held: &[crate::secrets::Hit]) -> Result<()> {
+    let before = load_held(state);
+    if before == held {
+        return Ok(());
+    }
+    if held.is_empty() {
+        state.remove(HELD);
+    } else {
+        state.write_marker(HELD, &serde_json::to_string(held)?)?;
+    }
+    state.append_event(&Event {
+        ts: state::now_rfc3339(),
+        kind: "held".into(),
+        event: attrib.event.clone(),
+        account: attrib.account.clone(),
+        session: attrib.session.clone(),
+        cwd: attrib.cwd.clone(),
+        files: held.iter().map(|h| h.path.clone()).collect(),
+        message: held
+            .iter()
+            .map(|h| format!("{}:{} {} {}", h.path, h.line, h.rule, h.fingerprint))
+            .collect::<Vec<_>>()
+            .join("; "),
+        ..Default::default()
+    })
+}
+
+/// Files the last sweep held back, under `.git/memsaga/`.
+const HELD: &str = "held.json";
+
+/// Why the last sweep committed nothing because the secret check failed
+/// closed; removed by the next sweep that gets past the check.
+const HELD_ERROR: &str = "held-error";
+
+pub fn load_held_error(state: &State) -> Option<String> {
+    state.read_marker(HELD_ERROR).filter(|s| !s.is_empty())
+}
+
+pub fn load_held(state: &State) -> Vec<crate::secrets::Hit> {
+    std::fs::read_to_string(state.marker(HELD))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
 }
 
 fn set_marker(state: &State, at: SystemTime) -> Result<()> {

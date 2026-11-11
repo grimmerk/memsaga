@@ -18,6 +18,7 @@
 //! - `state`    small files under `.git/memsaga/`: lock, markers, events log
 //! - `status`   the read-only state report behind `status` and `status --json`
 //! - `differences` where this machine differs from the repository (status, restore)
+//! - `secrets`  holding back a file whose new lines look like a key
 //! - `sweep`    the orchestration: lock, mirror, index, commit, events
 //! - `sync`     repository-side edits back to the live files (two-way sync)
 //! - `hook`     parsing a hook event and deciding what to do
@@ -38,6 +39,7 @@ pub mod install;
 pub mod mirror;
 pub mod restore;
 pub mod roots;
+pub mod secrets;
 pub mod skills;
 pub mod slug;
 pub mod state;

@@ -106,6 +106,13 @@ pub struct Config {
     pub push_min_interval_secs: u64,
     /// Push on `SessionEnd` when a remote named `origin` exists.
     pub push_on_session_end: bool,
+    /// Hold back a file whose new lines look like a secret (an API key, a
+    /// token, a private key) instead of committing it (grimmerk/memsaga#60).
+    pub scan_secrets: bool,
+    /// Matches the secret check should let through: a fingerprint printed
+    /// in the notice and in `memsaga status`, or a repository path
+    /// (`claude/settings.json`) never to check.
+    pub allow_secrets: Vec<String>,
 }
 
 impl Default for Config {
@@ -159,6 +166,8 @@ impl Default for Config {
             reporter: true,
             push_min_interval_secs: 600,
             push_on_session_end: true,
+            scan_secrets: true,
+            allow_secrets: Vec::new(),
         }
     }
 }

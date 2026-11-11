@@ -53,6 +53,10 @@ pub struct Report {
     pub known_versions: usize,
     pub unknown_versions: usize,
     pub commits: usize,
+    /// Versions left out because a new line looked like a secret
+    /// (grimmerk/memsaga#60): a key pasted once and removed long ago would
+    /// otherwise enter history through the replay.
+    pub held: usize,
     pub first_ts: String,
     pub last_ts: String,
 }
@@ -107,6 +111,10 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
             }
         }
         let mut wrote = false;
+        // What this group wrote: the only files a held version may be put
+        // back for. Anything else staged (the user's own uncommitted file in
+        // an existing repository) is left exactly as it is.
+        let mut written_now: HashSet<PathBuf> = HashSet::new();
         for (rel, content) in versions {
             if latest.get(&rel) == Some(&content) {
                 continue;
@@ -116,10 +124,44 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
                 std::fs::create_dir_all(p)?;
             }
             std::fs::write(&dst, &content)?;
+            written_now.insert(rel.clone());
             latest.insert(rel, content);
             wrote = true;
         }
-        if wrote && git.add_all_and_check()? {
+        let mut changed = wrote && git.add_all_and_check()?;
+        if changed && cfg.scan_secrets {
+            let run = |a: &[&str]| git.run(a);
+            let held = crate::secrets::unstage_held(&run, &cfg.allow_secrets)?;
+            // Every file here is a version the replay wrote: put back the
+            // last committed one, and remember that as the latest version.
+            for h in &held {
+                let rel = PathBuf::from(&h.path);
+                if !written_now.contains(&rel) {
+                    continue;
+                }
+                let dst = cfg.repo.join(&rel);
+                let spec = format!(":(literal){}", h.path);
+                if git.object_type(&format!("HEAD:{}", h.path))?.is_some() {
+                    git.run_ok(&["checkout", "-q", "HEAD", "--", &spec])?;
+                    match std::fs::read_to_string(&dst) {
+                        Ok(c) => {
+                            latest.insert(rel, c);
+                        }
+                        Err(_) => {
+                            latest.remove(&rel);
+                        }
+                    }
+                } else {
+                    std::fs::remove_file(&dst)?;
+                    latest.remove(&rel);
+                }
+            }
+            report.held += held.len();
+            if !held.is_empty() {
+                changed = git.has_staged_changes()?;
+            }
+        }
+        if changed {
             let last = &ops[end - 1];
             let name_status = git.staged_name_status()?;
             let files: Vec<String> = name_status
@@ -147,9 +189,10 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
         kind: "backfill".into(),
         event: "init".into(),
         message: format!(
-            "ops={} commits={} known={} unknown={} dropped={} range={}..{}",
+            "ops={} commits={} held={} known={} unknown={} dropped={} range={}..{}",
             report.ops,
             report.commits,
+            report.held,
             report.known_versions,
             report.unknown_versions,
             report.failed_dropped,

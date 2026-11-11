@@ -420,10 +420,60 @@ pub fn report(cfg: &Config) -> Option<String> {
             shas.join(", ")
         )
     });
-    let lines: Vec<String> = [warning, notice, incoming_notice(&state)]
-        .into_iter()
-        .flatten()
+    let lines: Vec<String> = [
+        warning,
+        notice,
+        held_notice(&state),
+        incoming_notice(&state),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+/// One line when the set of held files (grimmerk/memsaga#60) changed since
+/// the last report: a file held turn after turn is announced once, and again
+/// only when another file or another key joins it.
+/// The same for a sweep that committed nothing because the check failed
+/// closed (`held-error`), and one line naming the files that were held at
+/// the last report and are no longer (the line removed, the file deleted or
+/// allowed). The marker `held-reported` is that last report, as JSON
+/// (`[[[fingerprint, path], …], error]`), so any file name survives it.
+fn held_notice(state: &State) -> Option<String> {
+    type Reported = (Vec<(String, String)>, Option<String>);
+    let held = sweep::load_held(state);
+    let error = sweep::load_held_error(state);
+    let now: Reported = (
+        held.iter()
+            .map(|h| (h.fingerprint.clone(), h.path.clone()))
+            .collect(),
+        error.clone(),
+    );
+    let key = serde_json::to_string(&now).unwrap_or_default();
+    let before_text = state.read_marker("held-reported").unwrap_or_default();
+    if before_text == key {
+        return None;
+    }
+    let _ = state.write_marker("held-reported", &key);
+    let before: Reported = serde_json::from_str(&before_text).unwrap_or_default();
+    let released: Vec<&str> = before
+        .0
+        .iter()
+        .map(|(_, path)| path.as_str())
+        .filter(|p| !held.iter().any(|h| h.path == *p))
         .collect();
+    let lines: Vec<String> = [
+        error.map(|e| {
+            format!("memsaga: nothing was committed: {e}; see `memsaga status` and memsaga.log")
+        }),
+        crate::secrets::notice(&held),
+        (!released.is_empty())
+            .then(|| format!("memsaga: no longer held back: {}", released.join(", "))),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
 

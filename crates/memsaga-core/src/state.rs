@@ -36,7 +36,7 @@ pub struct LockGuard {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Event {
     pub ts: String,
-    /// "commit" | "noop" | "push" | "push-failed" | "error" | "backfill" | "import"
+    /// "commit" | "noop" | "held" | "push" | "push-failed" | "error" | "backfill" | "import"
     pub kind: String,
     /// Hook event name, or "manual" / "init".
     pub event: String,

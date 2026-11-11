@@ -269,6 +269,7 @@ fn run(cli: Cli) -> Result<()> {
                 ..Default::default()
             };
             let o = sweep::sweep(&cfg, &attrib)?;
+            print_held(&o.held);
             if o.committed {
                 println!(
                     "committed {} ({}; copied {}, deleted {}, {} ms)",
@@ -290,7 +291,8 @@ fn run(cli: Cli) -> Result<()> {
         } => cmd_init(no_backfill, dry_run, group_window, repo.as_deref()),
         Cmd::Diff { stat } => {
             let cfg = Config::load()?;
-            let (status, diff) = sweep::pending(&cfg, stat)?;
+            let (status, diff, held) = sweep::pending(&cfg, stat)?;
+            print_held(&held);
             if status.trim().is_empty() {
                 println!("no changes since the last commit");
             } else {
@@ -443,7 +445,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Backfill { group_window } => {
             let cfg = Config::load()?;
             let r = backfill::backfill(&cfg, group_window)?;
-            println!("backfill: {} ops, {} commits, {} versions known / {} unknown, {} failed calls dropped, {} .. {}", r.ops, r.commits, r.known_versions, r.unknown_versions, r.failed_dropped, r.first_ts, r.last_ts);
+            println!("backfill: {} ops, {} commits, {} versions known / {} unknown, {} failed calls dropped, {} held back, {} .. {}", r.ops, r.commits, r.known_versions, r.unknown_versions, r.failed_dropped, r.held, r.first_ts, r.last_ts);
             Ok(())
         }
         Cmd::Companions { repo } => {
@@ -664,6 +666,13 @@ fn cmd_init(
     if !no_backfill && !git.has_head() {
         let r = backfill::backfill(&cfg, group_window).context("backfill")?;
         println!("backfill: {} ops -> {} commits ({} versions known, {} unknown, {} failed calls dropped)", r.ops, r.commits, r.known_versions, r.unknown_versions, r.failed_dropped);
+        if r.held > 0 {
+            println!(
+                "backfill: {} old version{} left out because a new line looked like a secret",
+                r.held,
+                if r.held == 1 { "" } else { "s" }
+            );
+        }
     } else if !no_backfill {
         println!("repo already has commits; skipping backfill (run `memsaga backfill` explicitly to append)");
     }
@@ -672,6 +681,7 @@ fn cmd_init(
         ..Default::default()
     };
     let o = sweep::sweep(&cfg, &attrib)?;
+    print_held(&o.held);
     if o.committed {
         println!("import: committed {} ({})", o.sha, o.shortstat);
     } else {
@@ -914,6 +924,7 @@ fn cmd_sync(take: &[String]) -> Result<()> {
     };
     // 1. Commit what changed live, so the merge base matches the live files.
     let first = sweep::sweep(&cfg, &attrib)?;
+    print_held(&first.held);
     if first.committed {
         println!("committed live changes {}", first.sha);
     }
@@ -929,6 +940,14 @@ fn cmd_sync(take: &[String]) -> Result<()> {
     print_settled(&settled);
     // 4. Commit merged results; 5. push.
     let second = sweep::sweep(&cfg, &attrib)?;
+    // The first sweep already named what it held; name only what is new.
+    let new_held: Vec<_> = second
+        .held
+        .iter()
+        .filter(|h| !first.held.contains(h))
+        .cloned()
+        .collect();
+    print_held(&new_held);
     if second.committed {
         println!("committed {}", second.sha);
     }
@@ -952,7 +971,15 @@ fn cmd_sync(take: &[String]) -> Result<()> {
             let late = sync::settle(&cfg, None)?;
             print_settled(&late);
             conflicts += late.conflicts.len();
-            if sweep::sweep(&cfg, &attrib)?.committed {
+            let last = sweep::sweep(&cfg, &attrib)?;
+            let late_held: Vec<_> = last
+                .held
+                .iter()
+                .filter(|h| !first.held.contains(h) && !second.held.contains(h))
+                .cloned()
+                .collect();
+            print_held(&late_held);
+            if last.committed {
                 if !hook::push_now(&cfg, &state, &attrib)? {
                     anyhow::bail!(
                         "push failed: {}",
@@ -1106,6 +1133,22 @@ fn cmd_status(n: usize, json: bool) -> Result<()> {
             println!("  {f}  ({})", e.from);
         }
     }
+    if let Some(e) = &st.held_error {
+        println!("nothing committed by the last sweep: {e}");
+    }
+    if !st.held.is_empty() {
+        println!(
+            "held back, not committed: a new line looks like a secret ({} file(s)); remove it, add `{}` to the line, or add the fingerprint to `allow_secrets`:",
+            st.held.len(),
+            memsaga_core::secrets::ALLOW_MARKER
+        );
+        for h in &st.held {
+            println!(
+                "  {}  line {}, {}, fingerprint {}",
+                h.path, h.line, h.rule, h.fingerprint
+            );
+        }
+    }
     if !st.absent.is_empty() {
         println!(
             "not on this machine, kept in the repository ({} file(s); `memsaga restore <path>` brings one here):",
@@ -1152,5 +1195,20 @@ fn fmt_stamp(s: &Option<memsaga_core::status::Stamp>) -> String {
     match s {
         Some(s) => format!("{} ({}s ago)", s.at, s.age_secs),
         None => "never".into(),
+    }
+}
+
+/// One line per file the secret check held back: path, line, rule and
+/// fingerprint, never the matched text (grimmerk/memsaga#60).
+fn print_held(held: &[memsaga_core::secrets::Hit]) {
+    for h in held {
+        println!(
+            "held back {}: line {} looks like a {} (fingerprint {}); not committed. Remove it, or add `{}` to that line or the fingerprint to `allow_secrets`",
+            h.path,
+            h.line,
+            h.rule,
+            h.fingerprint,
+            memsaga_core::secrets::ALLOW_MARKER
+        );
     }
 }

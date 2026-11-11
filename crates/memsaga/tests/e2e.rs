@@ -4205,3 +4205,484 @@ fn init_records_through_a_symlinked_config_and_keeps_its_mode() {
     // Another spelling of the recorded path is the same path, not a conflict.
     u.run(&["init", "--no-backfill", "--repo", "~/code/../code/memories"]);
 }
+
+// ---- grimmerk/memsaga#60: hold back a file whose new lines look like a secret
+
+/// A string of a GitHub token's shape, built so that this file holds none.
+fn fake_key() -> String {
+    format!("{}{}{}", "gh", "p_", "Zq8xW2vR5tY7uI1oP3aS6dF9gH4jK0lMnB2c")
+}
+
+/// The key appears in no commit reachable from any ref.
+fn assert_key_in_no_commit(fx: &Fx, key: &str) {
+    let log = git(fx, &["log", "--all", "-p", "--format=%B"]);
+    assert!(!log.contains(key), "the key reached history");
+}
+
+#[test]
+fn a_file_with_a_new_secret_line_is_held_and_the_rest_commits() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let key = fake_key();
+    let mem = fx.claude.join("projects/-h-git-a/memory/one.md");
+    write(&mem, &format!("fact\ntoken {key}\n"));
+    write(&fx.claude.join("CLAUDE.md"), "# global, edited\n");
+    hook(&fx, &stop("s1"));
+    assert_eq!(commits(&fx), 2, "CLAUDE.md still commits");
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/CLAUDE.md"]),
+        "# global, edited\n"
+    );
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "fact\n"
+    );
+    assert_key_in_no_commit(&fx, &key);
+    // memsaga's own copy is back at its committed version, not left modified.
+    assert_eq!(
+        fs::read_to_string(fx.repo.join("claude/memory/-h-git-a/one.md")).unwrap(),
+        "fact\n"
+    );
+    assert!(git(&fx, &["status", "--porcelain"]).trim().is_empty());
+    // The live file is never touched.
+    assert!(fs::read_to_string(&mem).unwrap().contains(&key));
+    // status names the file and line, the reporter says it once.
+    let v = status_json(&fx);
+    assert_eq!(v["held"][0]["path"], "claude/memory/-h-git-a/one.md", "{v}");
+    assert_eq!(v["held"][0]["line"], 2);
+    assert_eq!(v["held"][0]["rule"], "github-token");
+    let r = run(&fx, &["report"]);
+    assert!(r.contains("held back claude/memory/-h-git-a/one.md"), "{r}");
+    assert!(!run(&fx, &["report"]).contains("held back"));
+    // Another turn that changes something else: still held, no new notice.
+    write(&fx.claude.join("CLAUDE.md"), "# global, edited twice\n");
+    hook(&fx, &stop("s2"));
+    assert_eq!(commits(&fx), 3);
+    assert!(!run(&fx, &["report"]).contains("held back"));
+    // The key never shows up in what memsaga prints or stores.
+    let text = run(&fx, &["status"]);
+    assert!(text.contains("held back") && !text.contains(&key), "{text}");
+    for f in ["events.jsonl", "held.json"] {
+        let p = fx.repo.join(".git/memsaga").join(f);
+        assert!(!fs::read_to_string(&p).unwrap().contains(&key), "{f}");
+    }
+    let held_events = fs::read_to_string(fx.repo.join(".git/memsaga/events.jsonl"))
+        .unwrap()
+        .matches("\"kind\":\"held\"")
+        .count();
+    assert_eq!(held_events, 1, "one event while the set does not change");
+    // Once the line is gone, the file commits and nothing is held; the
+    // reporter says so once.
+    write(&mem, "fact\nno token here\n");
+    hook(&fx, &stop("s3"));
+    let r = run(&fx, &["report"]);
+    assert!(
+        r.contains("no longer held back: claude/memory/-h-git-a/one.md"),
+        "{r}"
+    );
+    assert!(!run(&fx, &["report"]).contains("no longer held"));
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "fact\nno token here\n"
+    );
+    assert!(status_json(&fx)["held"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn a_held_settings_key_removed_live_is_not_written_back_by_two_way_sync() {
+    let fx = fixture("turn", "files = [\"CLAUDE.md\", \"settings.json\"]\n");
+    let settings = fx.claude.join("settings.json");
+    write(&settings, "{\"a\":1}\n");
+    run(&fx, &["init", "--no-backfill"]);
+    let key = fake_key();
+    write(
+        &settings,
+        &format!("{{\"a\":1,\"env\":{{\"T\":\"{key}\"}}}}\n"),
+    );
+    hook(&fx, &stop("s1"));
+    assert_eq!(status_json(&fx)["held"][0]["path"], "claude/settings.json");
+    // The user takes the key out again; later hooks and a sync run.
+    write(&settings, "{\"a\":2}\n");
+    hook(&fx, &pre_tool("Edit", &settings, "s2"));
+    hook(&fx, &stop("s2"));
+    run(&fx, &["sync"]);
+    let live = fs::read_to_string(&settings).unwrap();
+    assert!(!live.contains(&key), "the key came back: {live}");
+    assert!(live.contains("\"a\":2"), "{live}");
+    assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
+    assert!(status_json(&fx)["held"].as_array().unwrap().is_empty());
+    assert_key_in_no_commit(&fx, &key);
+}
+
+#[test]
+fn a_new_file_with_a_secret_is_held_and_its_live_file_survives_sync() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let key = fake_key();
+    let two = fx.claude.join("projects/-h-git-a/memory/two.md");
+    write(&two, &format!("{key}\n"));
+    hook(&fx, &stop("s1"));
+    assert!(!head_files(&fx).iter().any(|f| f.ends_with("/two.md")));
+    assert!(!fx.repo.join("claude/memory/-h-git-a/two.md").exists());
+    hook(&fx, &pre_tool("Edit", &two, "s2"));
+    run(&fx, &["sync"]);
+    assert_eq!(fs::read_to_string(&two).unwrap(), format!("{key}\n"));
+    assert_key_in_no_commit(&fx, &key);
+    write(&two, "clean\n");
+    hook(&fx, &stop("s3"));
+    assert!(head_files(&fx).iter().any(|f| f.ends_with("/two.md")));
+}
+
+#[test]
+fn a_users_own_file_in_the_repository_is_held_but_never_touched() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let key = fake_key();
+    let note = fx.repo.join("manual/note.md");
+    let body = format!("mine\n{key}\n");
+    write(&note, &body);
+    write(&fx.claude.join("CLAUDE.md"), "# global, edited\n");
+    hook(&fx, &stop("s1"));
+    assert!(!head_files(&fx).iter().any(|f| f == "manual/note.md"));
+    assert_eq!(fs::read_to_string(&note).unwrap(), body);
+    assert_key_in_no_commit(&fx, &key);
+    // A hand edit of a mirrored file that differs from the live file: unstaged
+    // only, the edit stays.
+    let hand = fx.repo.join("claude/CLAUDE.md");
+    let edited = format!("# hand edit\n{key}\n");
+    write(&hand, &edited);
+    hook(&fx, &stop("s2"));
+    assert_eq!(fs::read_to_string(&hand).unwrap(), edited);
+    assert_key_in_no_commit(&fx, &key);
+}
+
+#[test]
+fn the_allow_marker_a_fingerprint_or_the_switch_let_a_match_commit() {
+    let key = fake_key();
+    // The marker on the line.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let mem = fx.claude.join("projects/-h-git-a/memory/one.md");
+    write(&mem, &format!("{key} memsaga:allow-secret\n"));
+    hook(&fx, &stop("s1"));
+    assert!(git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]).contains(&key));
+    // The fingerprint the notice printed, in allow_secrets.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let mem = fx.claude.join("projects/-h-git-a/memory/one.md");
+    write(&mem, &format!("{key}\n"));
+    hook(&fx, &stop("s1"));
+    let fp = status_json(&fx)["held"][0]["fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let cfg = fs::read_to_string(&fx.cfg).unwrap();
+    fs::write(&fx.cfg, format!("allow_secrets = [\"{fp}\"]\n{cfg}")).unwrap();
+    hook(&fx, &stop("s2"));
+    assert!(git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]).contains(&key));
+    // The switch.
+    let fx = fixture("turn", "scan_secrets = false\n");
+    run(&fx, &["init", "--no-backfill"]);
+    let mem = fx.claude.join("projects/-h-git-a/memory/one.md");
+    write(&mem, &format!("{key}\n"));
+    hook(&fx, &stop("s1"));
+    assert!(git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]).contains(&key));
+}
+
+#[test]
+fn a_renamed_file_with_an_old_committed_key_is_not_held() {
+    let key = fake_key();
+    let fx = fixture("turn", "scan_secrets = false\n");
+    let mem = fx.claude.join("projects/-h-git-a/memory/one.md");
+    write(&mem, &format!("fact\n{key}\n"));
+    run(&fx, &["init", "--no-backfill"]);
+    let cfg = fs::read_to_string(&fx.cfg).unwrap();
+    fs::write(
+        &fx.cfg,
+        cfg.replace("scan_secrets = false", "scan_secrets = true"),
+    )
+    .unwrap();
+    fs::rename(&mem, fx.claude.join("projects/-h-git-a/memory/three.md")).unwrap();
+    hook(&fx, &stop("s1"));
+    let files = head_files(&fx);
+    assert!(files.iter().any(|f| f == "claude/memory/-h-git-a/three.md"));
+    assert!(!files.iter().any(|f| f == "claude/memory/-h-git-a/one.md"));
+    assert!(status_json(&fx)["held"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn diff_leaves_a_held_file_out_of_the_patch() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let key = fake_key();
+    write(
+        &fx.claude.join("projects/-h-git-a/memory/one.md"),
+        &format!("fact\n{key}\n"),
+    );
+    let out = run(&fx, &["diff"]);
+    assert!(
+        out.contains("held back claude/memory/-h-git-a/one.md"),
+        "{out}"
+    );
+    assert!(!out.contains(&key), "{out}");
+}
+
+#[test]
+fn backfill_leaves_out_a_version_with_a_key_that_was_later_removed() {
+    let fx = fixture("turn", "");
+    let mem = fx.claude.join("projects/-h-git-a/memory/one.md");
+    let key = fake_key();
+    let transcript = format!(
+        concat!(
+            "{{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:00.000Z\",\"sessionId\":\"s-old\",\"cwd\":\"/h/git/a\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Write\",\"input\":{{\"file_path\":\"{p}\",\"content\":\"v1 fact\\n\"}}}}]}}}}\n",
+            "{{\"type\":\"assistant\",\"timestamp\":\"2026-08-02T11:00:00.000Z\",\"sessionId\":\"s-old\",\"cwd\":\"/h/git/a\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t2\",\"name\":\"Write\",\"input\":{{\"file_path\":\"{p}\",\"content\":\"v2 {k}\\n\"}}}}]}}}}\n",
+            "{{\"type\":\"assistant\",\"timestamp\":\"2026-08-03T12:00:00.000Z\",\"sessionId\":\"s-old\",\"cwd\":\"/h/git/a\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t3\",\"name\":\"Write\",\"input\":{{\"file_path\":\"{p}\",\"content\":\"v3 fact\\n\"}}}}]}}}}\n",
+        ),
+        p = mem.display(),
+        k = key
+    );
+    write(
+        &fx.claude.join("projects/-h-git-a/0000-session.jsonl"),
+        &transcript,
+    );
+    let out = run(&fx, &["init"]);
+    assert!(out.contains("1 old version left out"), "{out}");
+    assert_key_in_no_commit(&fx, &key);
+    let all = git(&fx, &["log", "--all", "-p"]);
+    assert!(all.contains("v1 fact") && all.contains("v3 fact"), "{all}");
+}
+
+#[test]
+fn a_held_file_does_not_block_merging_an_origin_change_to_it() {
+    let fx = fixture("turn", "");
+    let mem = fx.claude.join("projects/-h-git-a/memory/one.md");
+    write(&mem, "a\nb\nc\nd\n");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(
+        &other,
+        "claude/memory/-h-git-a/one.md",
+        Some("A\nb\nc\nd\n"),
+    );
+    let key = fake_key();
+    write(&mem, &format!("a\nb\nc\nd\n{key}\n"));
+    hook(&fx, &stop("s1"));
+    run(&fx, &["sync"]);
+    let live = fs::read_to_string(&mem).unwrap();
+    assert_eq!(live, format!("A\nb\nc\nd\n{key}\n"));
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "A\nb\nc\nd\n"
+    );
+    assert_eq!(
+        status_json(&fx)["held"][0]["path"],
+        "claude/memory/-h-git-a/one.md"
+    );
+    assert_key_in_no_commit(&fx, &key);
+    git_at(&other, &["pull", "-q"]);
+    assert!(!git_at(&other, &["log", "--all", "-p"]).contains(&key));
+}
+
+#[test]
+fn a_session_title_with_a_key_shape_is_left_out_of_the_commit() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let key = fake_key();
+    let transcript = fx.repo.parent().unwrap().join("t.jsonl");
+    write(
+        &transcript,
+        &format!("{{\"type\":\"custom-title\",\"customTitle\":\"use {key}\"}}\n"),
+    );
+    write(&fx.claude.join("CLAUDE.md"), "# changed\n");
+    hook(
+        &fx,
+        &format!(
+            "{{\"hook_event_name\":\"Stop\",\"session_id\":\"s1\",\"cwd\":\"/h/git/a\",\"transcript_path\":\"{}\"}}",
+            transcript.display()
+        ),
+    );
+    let msg = git(&fx, &["log", "-1", "--format=%B"]);
+    assert!(msg.starts_with("Stop: claude:CLAUDE.md\n"), "{msg}");
+    assert_key_in_no_commit(&fx, &key);
+}
+
+#[test]
+fn the_first_import_holds_a_live_file_that_already_has_a_key() {
+    let fx = fixture("turn", "");
+    let key = fake_key();
+    let mem = fx.claude.join("projects/-h-git-a/memory/one.md");
+    write(&mem, &format!("fact\n{key}\n"));
+    let out = run(&fx, &["init", "--no-backfill"]);
+    assert!(
+        out.contains("held back claude/memory/-h-git-a/one.md"),
+        "{out}"
+    );
+    assert!(!out.contains(&key), "{out}");
+    let files = head_files(&fx);
+    assert!(files.iter().any(|f| f == "claude/CLAUDE.md"));
+    assert!(!files.iter().any(|f| f == "claude/memory/-h-git-a/one.md"));
+    assert!(!fx.repo.join("claude/memory/-h-git-a/one.md").exists());
+    assert_key_in_no_commit(&fx, &key);
+    assert!(fs::read_to_string(&mem).unwrap().contains(&key));
+}
+
+#[test]
+fn a_text_file_marked_minus_diff_is_still_checked() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let ga = fx.repo.join(".gitattributes");
+    let mut text = fs::read_to_string(&ga).unwrap_or_default();
+    text.push_str("*.md -diff\n");
+    write(&ga, &text);
+    let key = fake_key();
+    write(
+        &fx.claude.join("projects/-h-git-a/memory/one.md"),
+        &format!("fact\n{key}\n"),
+    );
+    hook(&fx, &stop("s1"));
+    assert_eq!(
+        status_json(&fx)["held"][0]["path"],
+        "claude/memory/-h-git-a/one.md"
+    );
+    assert_key_in_no_commit(&fx, &key);
+}
+
+#[test]
+fn an_explicit_backfill_never_touches_the_users_uncommitted_file() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let key = fake_key();
+    let note = fx.repo.join("manual/note.md");
+    let body = format!("mine\n{key}\n");
+    write(&note, &body);
+    let mem = fx.claude.join("projects/-h-git-a/memory/one.md");
+    let transcript = format!(
+        "{{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:00.000Z\",\"sessionId\":\"s-old\",\"cwd\":\"/h/git/a\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Write\",\"input\":{{\"file_path\":\"{}\",\"content\":\"v1 fact\\n\"}}}}]}}}}\n",
+        mem.display()
+    );
+    write(
+        &fx.claude.join("projects/-h-git-a/0000-session.jsonl"),
+        &transcript,
+    );
+    run(&fx, &["backfill"]);
+    assert_eq!(fs::read_to_string(&note).unwrap(), body);
+    assert_key_in_no_commit(&fx, &key);
+}
+
+/// A file name that is not UTF-8 is mangled in the diff text, so the
+/// unstage may miss it; the commit must then stop rather than take the key.
+/// Linux only: macOS file systems refuse such names.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_held_file_whose_name_is_not_utf8_is_never_committed() {
+    use std::os::unix::ffi::OsStrExt;
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let key = fake_key();
+    let name = std::ffi::OsStr::from_bytes(b"note-\xff.md");
+    let p = fx.repo.join("manual").join(name);
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
+    fs::write(&p, format!("{key}\n")).unwrap();
+    write(&fx.claude.join("CLAUDE.md"), "# global, edited\n");
+    hook(&fx, &stop("s1"));
+    assert_key_in_no_commit(&fx, &key);
+    // Failed closed: nothing committed, and the user is told so.
+    assert_eq!(commits(&fx), 1);
+    let v = status_json(&fx);
+    assert!(
+        v["held_error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("still staged"),
+        "{v}"
+    );
+    let r = run(&fx, &["report"]);
+    assert!(r.contains("nothing was committed"), "{r}");
+    assert!(!r.contains(&key));
+    assert!(!run(&fx, &["report"]).contains("nothing was committed"));
+}
+
+/// The user's git config cannot change what the check reads: merged hunks
+/// with unchanged lines between them (`diff.interHunkContext`), other path
+/// prefixes (`diff.mnemonicPrefix`), and a name with a space (git ends it
+/// with a tab in the diff header).
+#[test]
+fn the_check_holds_whatever_the_users_git_diff_config_says() {
+    let fx = fixture("turn", "");
+    let mem = fx.claude.join("projects/-h-git-a/memory/my notes.md");
+    write(&mem, "one\ntwo\nthree\nfour\n");
+    run(&fx, &["init", "--no-backfill"]);
+    git(&fx, &["config", "diff.interHunkContext", "10"]);
+    git(&fx, &["config", "diff.mnemonicPrefix", "true"]);
+    let key = fake_key();
+    write(&mem, &format!("ONE\ntwo\nthree\nfour {key}\n"));
+    write(&fx.claude.join("CLAUDE.md"), "# global, edited\n");
+    hook(&fx, &stop("s1"));
+    let v = status_json(&fx);
+    assert_eq!(
+        v["held"][0]["path"], "claude/memory/-h-git-a/my notes.md",
+        "{v}"
+    );
+    assert_eq!(v["held"][0]["line"], 4);
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/CLAUDE.md"]),
+        "# global, edited\n",
+        "the other file still commits"
+    );
+    assert_key_in_no_commit(&fx, &key);
+}
+
+/// A private key rotated in place: only its base64 lines change, so its
+/// BEGIN line is not in the diff at all.
+#[test]
+fn a_private_key_rotated_in_place_is_held() {
+    let head = format!("{}{}", "-----BEGIN RSA ", "PRIVATE KEY-----");
+    let end = format!("{}{}", "-----END RSA ", "PRIVATE KEY-----");
+    let old = "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gunVTLw";
+    let new = "MIIEpAIBAAKCAQEA7bq98fdV3Kq3Y9mR0nQ2sX1zW4vB8cH6jL0pT5uE2iO9aD3fG7kM";
+    let fx = fixture("turn", "scan_secrets = false\n");
+    let mem = fx.claude.join("projects/-h-git-a/memory/one.md");
+    write(&mem, &format!("fact\n{head}\n{old}\n{end}\n"));
+    run(&fx, &["init", "--no-backfill"]);
+    let cfg = fs::read_to_string(&fx.cfg).unwrap();
+    fs::write(
+        &fx.cfg,
+        cfg.replace("scan_secrets = false", "scan_secrets = true"),
+    )
+    .unwrap();
+    write(&mem, &format!("fact\n{head}\n{new}\n{end}\n"));
+    hook(&fx, &stop("s1"));
+    let v = status_json(&fx);
+    assert_eq!(v["held"][0]["path"], "claude/memory/-h-git-a/one.md", "{v}");
+    assert_eq!(v["held"][0]["line"], 3);
+    assert!(!git(&fx, &["log", "--all", "-p"]).contains(new));
+}
+
+/// A file name holding a newline: held under its real name, announced once,
+/// and released once.
+#[test]
+fn a_held_file_named_with_a_newline_is_reported_once() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let key = fake_key();
+    let mem = fx.claude.join("projects/-h-git-a/memory/a\nb.md");
+    write(&mem, &format!("{key}\n"));
+    hook(&fx, &stop("s1"));
+    assert_eq!(
+        status_json(&fx)["held"][0]["path"],
+        "claude/memory/-h-git-a/a\nb.md"
+    );
+    assert!(run(&fx, &["report"]).contains("held back"));
+    assert!(!run(&fx, &["report"]).contains("held back"));
+    write(&mem, "clean\n");
+    hook(&fx, &stop("s2"));
+    let out = run(&fx, &["report"]);
+    let v: serde_json::Value = serde_json::from_str(out.trim()).expect(&out);
+    let msg = v["systemMessage"].as_str().unwrap();
+    assert!(
+        msg.ends_with("no longer held back: claude/memory/-h-git-a/a\nb.md"),
+        "{msg:?}"
+    );
+    assert!(!run(&fx, &["report"]).contains("held back"));
+    assert_key_in_no_commit(&fx, &key);
+}
