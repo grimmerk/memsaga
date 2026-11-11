@@ -111,6 +111,10 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
             }
         }
         let mut wrote = false;
+        // What this group wrote: the only files a held version may be put
+        // back for. Anything else staged (the user's own uncommitted file in
+        // an existing repository) is left exactly as it is.
+        let mut written_now: HashSet<PathBuf> = HashSet::new();
         for (rel, content) in versions {
             if latest.get(&rel) == Some(&content) {
                 continue;
@@ -120,6 +124,7 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
                 std::fs::create_dir_all(p)?;
             }
             std::fs::write(&dst, &content)?;
+            written_now.insert(rel.clone());
             latest.insert(rel, content);
             wrote = true;
         }
@@ -131,6 +136,9 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
             // last committed one, and remember that as the latest version.
             for h in &held {
                 let rel = PathBuf::from(&h.path);
+                if !written_now.contains(&rel) {
+                    continue;
+                }
                 let dst = cfg.repo.join(&rel);
                 let spec = format!(":(literal){}", h.path);
                 if git.object_type(&format!("HEAD:{}", h.path))?.is_some() {

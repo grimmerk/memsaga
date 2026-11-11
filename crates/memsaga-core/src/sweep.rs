@@ -351,7 +351,7 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         ..Default::default()
     };
     if changed && cfg.scan_secrets {
-        out.held = hold_secrets(cfg, &git)?;
+        out.held = hold_secrets(cfg, &git, &stats.written)?;
         if !out.held.is_empty() {
             changed = git.has_staged_changes()?;
         }
@@ -428,14 +428,22 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
 /// The next sweep copies the live file again and holds it again.
 /// A file the user wrote in the repository (`manual/`, `companion/`, a hand
 /// edit that differs from the live file) is only unstaged, never touched.
-pub fn hold_secrets(cfg: &Config, git: &Git) -> Result<Vec<crate::secrets::Hit>> {
+/// memsaga's own copy is one this sweep's mirror wrote (`written`), or one
+/// equal to what the mirror would write now (an earlier preview's copy); the
+/// first holds even when the live file changed again since the copy.
+pub fn hold_secrets(
+    cfg: &Config,
+    git: &Git,
+    written: &[std::path::PathBuf],
+) -> Result<Vec<crate::secrets::Hit>> {
     let run = |a: &[&str]| git.run(a);
     let held = crate::secrets::unstage_held(&run, &cfg.allow_secrets)?;
     for h in &held {
         let path = cfg.repo.join(&h.path);
-        let own = crate::sync::live_target(cfg, &h.path)
-            .and_then(|t| crate::sync::mirror_form(cfg, &t))
-            .is_some_and(|live| std::fs::read(&path).ok().as_deref() == Some(live.as_slice()));
+        let own = written.contains(&path)
+            || crate::sync::live_target(cfg, &h.path)
+                .and_then(|t| crate::sync::mirror_form(cfg, &t))
+                .is_some_and(|live| std::fs::read(&path).ok().as_deref() == Some(live.as_slice()));
         if !own {
             continue;
         }

@@ -4518,3 +4518,46 @@ fn the_first_import_holds_a_live_file_that_already_has_a_key() {
     assert_key_in_no_commit(&fx, &key);
     assert!(fs::read_to_string(&mem).unwrap().contains(&key));
 }
+
+#[test]
+fn a_text_file_marked_minus_diff_is_still_checked() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let ga = fx.repo.join(".gitattributes");
+    let mut text = fs::read_to_string(&ga).unwrap_or_default();
+    text.push_str("*.md -diff\n");
+    write(&ga, &text);
+    let key = fake_key();
+    write(
+        &fx.claude.join("projects/-h-git-a/memory/one.md"),
+        &format!("fact\n{key}\n"),
+    );
+    hook(&fx, &stop("s1"));
+    assert_eq!(
+        status_json(&fx)["held"][0]["path"],
+        "claude/memory/-h-git-a/one.md"
+    );
+    assert_key_in_no_commit(&fx, &key);
+}
+
+#[test]
+fn an_explicit_backfill_never_touches_the_users_uncommitted_file() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let key = fake_key();
+    let note = fx.repo.join("manual/note.md");
+    let body = format!("mine\n{key}\n");
+    write(&note, &body);
+    let mem = fx.claude.join("projects/-h-git-a/memory/one.md");
+    let transcript = format!(
+        "{{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:00.000Z\",\"sessionId\":\"s-old\",\"cwd\":\"/h/git/a\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Write\",\"input\":{{\"file_path\":\"{}\",\"content\":\"v1 fact\\n\"}}}}]}}}}\n",
+        mem.display()
+    );
+    write(
+        &fx.claude.join("projects/-h-git-a/0000-session.jsonl"),
+        &transcript,
+    );
+    run(&fx, &["backfill"]);
+    assert_eq!(fs::read_to_string(&note).unwrap(), body);
+    assert_key_in_no_commit(&fx, &key);
+}

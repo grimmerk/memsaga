@@ -270,10 +270,10 @@ pub struct Hit {
     pub fingerprint: String,
 }
 
-/// Does `text` (a commit message, a title) hold a key shape?
+/// Does `text` (a session title bound for a commit message) hold a key
+/// shape? The allow marker does not apply here: it is for a line in a file.
 pub fn text_has_secret(text: &str) -> bool {
-    text.lines()
-        .any(|l| !l.contains(ALLOW_MARKER) && !find(l).is_empty())
+    text.lines().any(|l| !find(l).is_empty())
 }
 
 /// Read a `git diff -U0` and return the files whose added lines hold a key
@@ -331,6 +331,7 @@ pub fn scan_diff(diff: &str, allow: &[String]) -> Vec<Hit> {
     let mut hits: Vec<Hit> = Vec::new();
     for a in added {
         if a.path.is_empty()
+            || a.text.contains('\0')
             || a.text.contains(ALLOW_MARKER)
             || allow.iter().any(|x| x == &a.path)
             || hits.iter().any(|h| h.path == a.path)
@@ -421,6 +422,10 @@ pub fn diff_args(base: &str) -> Vec<&str> {
         "--no-color",
         "--no-ext-diff",
         "--no-textconv",
+        // A text file marked `-diff` in .gitattributes would otherwise show
+        // as "Binary files differ" and go unchecked; lines of a real binary
+        // file holding a NUL are skipped by `scan_diff`.
+        "--text",
         base,
     ]
 }
@@ -467,13 +472,25 @@ pub fn unstage_held(run: &dyn Fn(&[&str]) -> Result<Output>, allow: &[String]) -
         } else {
             run(&["rm", "-q", "--cached", "--ignore-unmatch", "--", &spec])?
         };
-        // `git reset` exits 1 when files stay modified; only an error message
-        // is a failure.
         if !r.status.success() && !r.stderr.is_empty() {
             bail!(
                 "unstaging a held file failed: {}",
                 String::from_utf8_lossy(&r.stderr).trim()
             );
+        }
+    }
+    // Do not trust exit codes alone (`git reset` exits 1 when files stay
+    // modified): check that no held path is still staged, or stop the commit.
+    if !hits.is_empty() {
+        let specs: Vec<String> = hits
+            .iter()
+            .map(|h| format!(":(literal){}", h.path))
+            .collect();
+        let mut args = vec!["diff", "--cached", "--name-only", base.as_str(), "--"];
+        args.extend(specs.iter().map(String::as_str));
+        let left = run(&args)?;
+        if !left.status.success() || !left.stdout.is_empty() {
+            bail!("a held file is still staged; not committing");
         }
     }
     Ok(hits)
@@ -553,6 +570,13 @@ mod tests {
         ] {
             assert!(find(line).is_empty(), "{line}");
         }
+    }
+
+    #[test]
+    fn the_allow_marker_does_not_clear_a_title() {
+        let k = key("gh", "p_") + B36;
+        assert!(text_has_secret(&format!("{k} {ALLOW_MARKER}")));
+        assert!(!text_has_secret("an ordinary title"));
     }
 
     #[test]
