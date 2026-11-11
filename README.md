@@ -928,11 +928,14 @@ A file with a match is held back. What happens then:
    hold the file. `memsaga status` and `status --json` (`held`) list it as
    long as it is held. The key itself is
    never printed or logged.
-4. Each later turn checks again. Once the line is gone, the file is committed.
-5. If memsaga cannot take a held file out of the commit (a file name that is
+4. Each later turn checks again. Once the line is gone, the file is committed
+   and the notice says it is no longer held back.
+5. If a sweep cannot take a held file out of the commit (a file name that is
    not UTF-8, for example), it commits nothing that turn rather than risk the
    key; the notice says "nothing was committed" and `memsaga status` shows
-   why, until a later turn gets past the check.
+   why, until a later turn gets past the check. `init` and `memsaga backfill`
+   stop with that error instead; replay groups committed before it stay, and
+   each of those passed the check.
 
 When the match is not a secret, add `memsaga:allow-secret` anywhere on that
 line, or, in a file that cannot carry a comment (`settings.json`), add the

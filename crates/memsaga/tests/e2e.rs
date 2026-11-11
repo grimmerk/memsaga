@@ -4271,9 +4271,16 @@ fn a_file_with_a_new_secret_line_is_held_and_the_rest_commits() {
         .matches("\"kind\":\"held\"")
         .count();
     assert_eq!(held_events, 1, "one event while the set does not change");
-    // Once the line is gone, the file commits and nothing is held.
+    // Once the line is gone, the file commits and nothing is held; the
+    // reporter says so once.
     write(&mem, "fact\nno token here\n");
     hook(&fx, &stop("s3"));
+    let r = run(&fx, &["report"]);
+    assert!(
+        r.contains("no longer held back: claude/memory/-h-git-a/one.md"),
+        "{r}"
+    );
+    assert!(!run(&fx, &["report"]).contains("no longer held"));
     assert_eq!(
         git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
         "fact\nno token here\n"

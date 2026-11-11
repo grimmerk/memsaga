@@ -436,25 +436,41 @@ pub fn report(cfg: &Config) -> Option<String> {
 /// the last report: a file held turn after turn is announced once, and again
 /// only when another file or another key joins it.
 /// The same for a sweep that committed nothing because the check failed
-/// closed (`held-error`).
+/// closed (`held-error`), and one line naming the files that were held at
+/// the last report and are no longer (the line removed, the file deleted or
+/// allowed). The marker `held-reported` is that last report: one
+/// `held <fingerprint> <path>` or `error <reason>` per line.
 fn held_notice(state: &State) -> Option<String> {
     let held = sweep::load_held(state);
     let error = sweep::load_held_error(state);
     let key = held
         .iter()
-        .map(|h| format!("{} {}", h.path, h.fingerprint))
-        .chain(error.clone())
+        .map(|h| format!("held {} {}", h.fingerprint, h.path))
+        .chain(
+            error
+                .iter()
+                .map(|e| format!("error {}", e.replace('\n', " "))),
+        )
         .collect::<Vec<_>>()
         .join("\n");
-    if state.read_marker("held-reported").unwrap_or_default() == key {
+    let before = state.read_marker("held-reported").unwrap_or_default();
+    if before == key {
         return None;
     }
     let _ = state.write_marker("held-reported", &key);
+    let released: Vec<&str> = before
+        .lines()
+        .filter_map(|l| l.strip_prefix("held "))
+        .filter_map(|l| l.split_once(' ').map(|(_, path)| path))
+        .filter(|p| !held.iter().any(|h| h.path == *p))
+        .collect();
     let lines: Vec<String> = [
         error.map(|e| {
             format!("memsaga: nothing was committed: {e}; see `memsaga status` and memsaga.log")
         }),
         crate::secrets::notice(&held),
+        (!released.is_empty())
+            .then(|| format!("memsaga: no longer held back: {}", released.join(", "))),
     ]
     .into_iter()
     .flatten()
