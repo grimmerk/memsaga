@@ -4579,3 +4579,33 @@ fn a_held_file_whose_name_is_not_utf8_is_never_committed() {
     hook(&fx, &stop("s1"));
     assert_key_in_no_commit(&fx, &key);
 }
+
+/// The user's git config cannot change what the check reads: merged hunks
+/// with unchanged lines between them (`diff.interHunkContext`), other path
+/// prefixes (`diff.mnemonicPrefix`), and a name with a space (git ends it
+/// with a tab in the diff header).
+#[test]
+fn the_check_holds_whatever_the_users_git_diff_config_says() {
+    let fx = fixture("turn", "");
+    let mem = fx.claude.join("projects/-h-git-a/memory/my notes.md");
+    write(&mem, "one\ntwo\nthree\nfour\n");
+    run(&fx, &["init", "--no-backfill"]);
+    git(&fx, &["config", "diff.interHunkContext", "10"]);
+    git(&fx, &["config", "diff.mnemonicPrefix", "true"]);
+    let key = fake_key();
+    write(&mem, &format!("ONE\ntwo\nthree\nfour {key}\n"));
+    write(&fx.claude.join("CLAUDE.md"), "# global, edited\n");
+    hook(&fx, &stop("s1"));
+    let v = status_json(&fx);
+    assert_eq!(
+        v["held"][0]["path"], "claude/memory/-h-git-a/my notes.md",
+        "{v}"
+    );
+    assert_eq!(v["held"][0]["line"], 4);
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/CLAUDE.md"]),
+        "# global, edited\n",
+        "the other file still commits"
+    );
+    assert_key_in_no_commit(&fx, &key);
+}

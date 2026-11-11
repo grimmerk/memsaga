@@ -95,9 +95,18 @@ const RULES: &[Rule] = &[
         contains: None,
     },
     Rule {
+        // The older `A3T` form: one more character before the 16.
+        id: "aws-access-key-id",
+        prefixes: &["A3T"],
+        body: upper_digit,
+        min: 17,
+        max: 17,
+        contains: None,
+    },
+    Rule {
         id: "slack-token",
         prefixes: &[
-            "xoxb-", "xoxp-", "xoxa-", "xoxr-", "xoxs-", "xoxo-", "xoxe-",
+            "xoxb-", "xoxp-", "xoxa-", "xoxr-", "xoxs-", "xoxo-", "xoxe-", "xapp-",
         ],
         body: alnum_dash,
         min: 20,
@@ -130,10 +139,12 @@ const RULES: &[Rule] = &[
     },
     Rule {
         id: "gitlab-token",
+        // Classic tokens have 20 characters; routable ones (GitLab 17.x)
+        // 27 to 300, then a dot and a short suffix the body stops at.
         prefixes: &["glpat-"],
         body: alnum_dash_underscore,
         min: 20,
-        max: 60,
+        max: 300,
         contains: None,
     },
     Rule {
@@ -225,26 +236,29 @@ pub fn find(line: &str) -> Vec<Found> {
     out
 }
 
-/// `-----BEGIN [WORDS ]PRIVATE KEY-----`, the words being upper-case
-/// (`RSA`, `OPENSSH`, `EC`, `ENCRYPTED`), so prose such as
-/// `-----BEGIN ... PRIVATE KEY-----` is not one.
+/// `-----BEGIN [WORDS ]PRIVATE KEY-----`, or `… PRIVATE KEY BLOCK-----`
+/// (PGP), the words being upper-case (`RSA`, `OPENSSH`, `EC`, `ENCRYPTED`,
+/// `PGP`), so prose such as `-----BEGIN ... PRIVATE KEY-----` is not one.
 fn private_key_header(line: &str) -> Option<Found> {
     const HEAD: &str = "-----BEGIN ";
-    const TAIL: &str = "PRIVATE KEY-----";
+    const KEY: &str = "PRIVATE KEY";
     let start = line.find(HEAD)?;
     let rest = &line[start + HEAD.len()..];
-    let end = rest.find(TAIL)?;
+    let end = rest.find(KEY)?;
     let words = &rest[..end];
-    if !words
-        .bytes()
-        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b' ')
-    {
+    if !words.bytes().all(|b| {
+        b.is_ascii_uppercase() || b.is_ascii_digit() || b == b' ' || b == b'_' || b == b'-'
+    }) {
         return None;
     }
+    let after = &rest[end + KEY.len()..];
+    let tail = ["-----", " BLOCK-----"]
+        .into_iter()
+        .find(|t| after.starts_with(t))?;
     Some(Found {
         rule: "private-key",
         start,
-        end: start + HEAD.len() + end + TAIL.len(),
+        end: start + HEAD.len() + end + KEY.len() + tail.len(),
     })
 }
 
@@ -314,6 +328,16 @@ pub fn scan_diff(diff: &str, allow: &[String]) -> Vec<Hit> {
             if l.starts_with('\\') {
                 continue; // "\ No newline at end of file"
             }
+            // An unchanged line inside the hunk counts on both sides. `-U0`
+            // and `--inter-hunk-context=0` leave none, but a hunk must not end
+            // early if git prints one anyway: the lines after it would go
+            // unread. An empty line is one too (`diff.suppressBlankEmpty`).
+            if l.is_empty() || l.starts_with(' ') {
+                minus_left = minus_left.saturating_sub(1);
+                plus_left = plus_left.saturating_sub(1);
+                new_line += 1;
+                continue;
+            }
             // Anything else ends the hunk (a malformed count): fall through.
             minus_left = 0;
             plus_left = 0;
@@ -357,15 +381,22 @@ pub fn scan_diff(diff: &str, allow: &[String]) -> Vec<Hit> {
 }
 
 /// The path of a `+++ b/<path>` line; empty for `/dev/null` (a deletion).
+/// A quoted path ends at its closing quote; an unquoted one at the tab git
+/// adds after a name holding a space (`+++ b/my notes.md\t`).
 fn diff_path(p: &str) -> String {
     let p = p.trim_end_matches('\r');
     if p == "/dev/null" {
         return String::new();
     }
-    let unquoted = if p.starts_with('"') && p.ends_with('"') && p.len() >= 2 {
-        unquote(&p[1..p.len() - 1])
+    let unquoted = if let Some(inner) = p.strip_prefix('"') {
+        let b = inner.as_bytes();
+        let mut i = 0;
+        while i < b.len() && b[i] != b'"' {
+            i += if b[i] == b'\\' { 2 } else { 1 };
+        }
+        unquote(&inner[..i.min(inner.len())])
     } else {
-        p.to_string()
+        p.split('\t').next().unwrap_or(p).to_string()
     };
     unquoted
         .strip_prefix("b/")
@@ -438,6 +469,13 @@ pub fn diff_args(base: &str) -> Vec<&str> {
         "--no-color",
         "--no-ext-diff",
         "--no-textconv",
+        // The parser reads this exact shape, whatever the user's git config
+        // says: no unchanged lines between merged hunks
+        // (`diff.interHunkContext`), and `a/` / `b/` before every path
+        // (`diff.mnemonicPrefix`, `diff.noprefix`).
+        "--inter-hunk-context=0",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
         // A text file marked `-diff` in .gitattributes would otherwise show
         // as "Binary files differ" and go unchecked; lines of a real binary
         // file holding a NUL are skipped by `scan_diff`.
@@ -570,6 +608,67 @@ mod tests {
         }
     }
 
+    /// Keys at the lengths their issuers produce, as gitleaks' rules
+    /// describe them (config/gitleaks.toml, read 2026-11-11), not only at
+    /// this table's own minimums.
+    #[test]
+    fn finds_keys_at_their_real_lengths() {
+        let b = |n: usize| B36.repeat(4)[..n].to_string();
+        let cases = [
+            (
+                key("sk-ant-", "api03-") + &b(93) + "AA",
+                "anthropic-api-key",
+            ),
+            (
+                key("sk-ant-", "admin01-") + &b(93) + "AA",
+                "anthropic-api-key",
+            ),
+            (
+                key("sk-", "proj-") + &b(74) + "T3Blbk" + "FJ" + &b(74),
+                "openai-api-key",
+            ),
+            (
+                key("sk-", "") + &b(20) + "T3Blbk" + "FJ" + &b(20),
+                "openai-api-key",
+            ),
+            (
+                key("github", "_pat_") + &(b(22) + "_" + &b(59)),
+                "github-fine-grained-token",
+            ),
+            (key("gh", "s_") + &b(36), "github-token"),
+            (
+                key("A3", "T") + "A" + "Q3EGRQ7ZJXJ4TM5P",
+                "aws-access-key-id",
+            ),
+            (
+                key("xox", "p-") + "1234567890-1234567890-1234567890-" + &b(32),
+                "slack-token",
+            ),
+            (
+                key("xa", "pp-") + "1-A0B1C2D3E4F-1234567890-" + &b(40),
+                "slack-token",
+            ),
+            (key("glpat", "-") + &b(80) + ".01abcdefg", "gitlab-token"),
+            (
+                key("hf", "_") + "AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGh",
+                "huggingface-token",
+            ),
+            (key("rk_", "live_") + &b(99), "stripe-live-key"),
+            (
+                key("-----BEGIN PGP ", "PRIVATE KEY BLOCK-----"),
+                "private-key",
+            ),
+            (key("-----BEGIN RSA ", "PRIVATE KEY-----"), "private-key"),
+        ];
+        for (k, rule) in cases {
+            let line = format!("export TOKEN='{k}'");
+            let f = find(&line);
+            assert_eq!(f.len(), 1, "{rule}: {f:?}");
+            assert_eq!(f[0].rule, rule);
+            assert!(line[f[0].start..f[0].end].starts_with(&k[..8]), "{rule}");
+        }
+    }
+
     #[test]
     fn prose_and_placeholders_are_not_keys() {
         for line in [
@@ -592,6 +691,24 @@ mod tests {
         let k = key("gh", "p_") + B36;
         assert!(text_has_secret(&format!("{k} {ALLOW_MARKER}")));
         assert!(!text_has_secret("an ordinary title"));
+    }
+
+    #[test]
+    fn unchanged_lines_inside_a_hunk_do_not_end_it() {
+        let k = key("gh", "p_") + B36;
+        let d = format!(
+            "diff --git a/a.md b/a.md\n--- a/a.md\n+++ b/a.md\n@@ -1,3 +1,4 @@\n-x\n+y\n same\n\n+{k}\n"
+        );
+        let hits = scan_diff(&d, &[]);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].line, 4);
+    }
+
+    #[test]
+    fn header_paths_lose_git_s_trailing_tab_and_quotes() {
+        assert_eq!(diff_path("b/my notes.md\t"), "my notes.md");
+        assert_eq!(diff_path(r#""b/a\tb.md""#), "a\tb.md");
+        assert_eq!(diff_path("/dev/null"), "");
     }
 
     #[test]
