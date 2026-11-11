@@ -351,11 +351,30 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         ..Default::default()
     };
     if changed && cfg.scan_secrets {
-        out.held = hold_secrets(cfg, &git, &stats.written)?;
+        match hold_secrets(cfg, &git, &stats.written) {
+            Ok(held) => out.held = held,
+            Err(e) => {
+                // Failed closed: nothing is committed. A hook's error only
+                // reaches the log, so leave the reason where the reporter and
+                // `status` read it; it names files, never the key.
+                let reason = format!("{e:#}");
+                let _ = state.write_marker(HELD_ERROR, &reason);
+                let _ = state.append_event(&Event {
+                    ts: state::now_rfc3339(),
+                    kind: "error".into(),
+                    event: attrib.event.clone(),
+                    session: attrib.session.clone(),
+                    message: reason,
+                    ..Default::default()
+                });
+                return Err(e);
+            }
+        }
         if !out.held.is_empty() {
             changed = git.has_staged_changes()?;
         }
     }
+    state.remove(HELD_ERROR);
     record_held(&state, attrib, &out.held)?;
     if changed {
         let name_status = git.staged_name_status()?;
@@ -488,6 +507,14 @@ fn record_held(state: &State, attrib: &Attribution, held: &[crate::secrets::Hit]
 
 /// Files the last sweep held back, under `.git/memsaga/`.
 const HELD: &str = "held.json";
+
+/// Why the last sweep committed nothing because the secret check failed
+/// closed; removed by the next sweep that gets past the check.
+const HELD_ERROR: &str = "held-error";
+
+pub fn load_held_error(state: &State) -> Option<String> {
+    state.read_marker(HELD_ERROR).filter(|s| !s.is_empty())
+}
 
 pub fn load_held(state: &State) -> Vec<crate::secrets::Hit> {
     std::fs::read_to_string(state.marker(HELD))

@@ -1133,6 +1133,9 @@ fn cmd_status(n: usize, json: bool) -> Result<()> {
             println!("  {f}  ({})", e.from);
         }
     }
+    if let Some(e) = &st.held_error {
+        println!("nothing committed by the last sweep: {e}");
+    }
     if !st.held.is_empty() {
         println!(
             "held back, not committed: a new line looks like a secret ({} file(s)); remove it, add `{}` to the line, or add the fingerprint to `allow_secrets`:",

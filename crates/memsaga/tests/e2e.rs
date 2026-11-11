@@ -4576,8 +4576,23 @@ fn a_held_file_whose_name_is_not_utf8_is_never_committed() {
     let p = fx.repo.join("manual").join(name);
     fs::create_dir_all(p.parent().unwrap()).unwrap();
     fs::write(&p, format!("{key}\n")).unwrap();
+    write(&fx.claude.join("CLAUDE.md"), "# global, edited\n");
     hook(&fx, &stop("s1"));
     assert_key_in_no_commit(&fx, &key);
+    // Failed closed: nothing committed, and the user is told so.
+    assert_eq!(commits(&fx), 1);
+    let v = status_json(&fx);
+    assert!(
+        v["held_error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("nothing committed"),
+        "{v}"
+    );
+    let r = run(&fx, &["report"]);
+    assert!(r.contains("nothing was committed"), "{r}");
+    assert!(!r.contains(&key));
+    assert!(!run(&fx, &["report"]).contains("nothing was committed"));
 }
 
 /// The user's git config cannot change what the check reads: merged hunks
@@ -4608,4 +4623,30 @@ fn the_check_holds_whatever_the_users_git_diff_config_says() {
         "the other file still commits"
     );
     assert_key_in_no_commit(&fx, &key);
+}
+
+/// A private key rotated in place: only its base64 lines change, so its
+/// BEGIN line is not in the diff at all.
+#[test]
+fn a_private_key_rotated_in_place_is_held() {
+    let head = format!("{}{}", "-----BEGIN RSA ", "PRIVATE KEY-----");
+    let end = format!("{}{}", "-----END RSA ", "PRIVATE KEY-----");
+    let old = "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gunVTLw";
+    let new = "MIIEpAIBAAKCAQEA7bq98fdV3Kq3Y9mR0nQ2sX1zW4vB8cH6jL0pT5uE2iO9aD3fG7kM";
+    let fx = fixture("turn", "scan_secrets = false\n");
+    let mem = fx.claude.join("projects/-h-git-a/memory/one.md");
+    write(&mem, &format!("fact\n{head}\n{old}\n{end}\n"));
+    run(&fx, &["init", "--no-backfill"]);
+    let cfg = fs::read_to_string(&fx.cfg).unwrap();
+    fs::write(
+        &fx.cfg,
+        cfg.replace("scan_secrets = false", "scan_secrets = true"),
+    )
+    .unwrap();
+    write(&mem, &format!("fact\n{head}\n{new}\n{end}\n"));
+    hook(&fx, &stop("s1"));
+    let v = status_json(&fx);
+    assert_eq!(v["held"][0]["path"], "claude/memory/-h-git-a/one.md", "{v}");
+    assert_eq!(v["held"][0]["line"], 3);
+    assert!(!git(&fx, &["log", "--all", "-p"]).contains(new));
 }

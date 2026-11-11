@@ -288,7 +288,7 @@ pub struct Hit {
 /// shape? The allow marker does not apply here: it is for a line in a file.
 pub fn text_has_secret(text: &str) -> bool {
     text.lines()
-        .any(|l| find(l).iter().any(|f| identity(f, l, None).is_some()))
+        .any(|l| find(l).iter().any(|f| identity(f, l).is_some()))
 }
 
 /// Read a `git diff -U0` and return the files whose added lines hold a key
@@ -297,7 +297,17 @@ pub fn text_has_secret(text: &str) -> bool {
 /// edited line around an old key), and holding it would only block the rest
 /// of that change. `allow` holds fingerprints and repository paths never to
 /// report. Binary files have no lines in the diff and are skipped.
-pub fn scan_diff(diff: &str, allow: &[String]) -> Vec<Hit> {
+///
+/// A private key spans lines, so the diff alone cannot judge it: its BEGIN
+/// line may be unchanged (a key rotated in place), and armor headers or a
+/// blank line may sit before the base64 (PGP, encrypted PEM). For a file
+/// whose added lines include a BEGIN line or a base64 line, `content` gives
+/// the staged file and `pem_blocks` finds the whole blocks in it.
+pub fn scan_diff(
+    diff: &str,
+    allow: &[String],
+    content: &dyn Fn(&str) -> Option<String>,
+) -> Vec<Hit> {
     struct Added<'a> {
         path: String,
         line: usize,
@@ -352,7 +362,7 @@ pub fn scan_diff(diff: &str, allow: &[String]) -> Vec<Hit> {
         }
     }
     let mut hits: Vec<Hit> = Vec::new();
-    for (i, a) in added.iter().enumerate() {
+    for a in &added {
         if a.path.is_empty()
             || a.text.contains('\0')
             || a.text.contains(ALLOW_MARKER)
@@ -361,15 +371,11 @@ pub fn scan_diff(diff: &str, allow: &[String]) -> Vec<Hit> {
         {
             continue;
         }
-        let next = added
-            .get(i + 1)
-            .filter(|n| n.path == a.path && n.line == a.line + 1)
-            .map(|n| n.text);
         for f in find(a.text) {
             // What identifies the key: the match itself, or for a private key
-            // its base64 body (every RSA key has the same BEGIN line). No body
-            // means a header alone, such as a constant in code: not a key.
-            let Some(matched) = identity(&f, a.text, next) else {
+            // on one line (JSON's literal `\n`) its base64 body; a header
+            // without one is left to the block scan below.
+            let Some(matched) = identity(&f, a.text) else {
                 continue;
             };
             let fp = fingerprint(matched);
@@ -387,14 +393,140 @@ pub fn scan_diff(diff: &str, allow: &[String]) -> Vec<Hit> {
             break;
         }
     }
+    // Private keys over several lines, per candidate file.
+    let mut candidates: Vec<&str> = added
+        .iter()
+        .filter(|a| !a.path.is_empty() && !allow.iter().any(|x| x == &a.path))
+        .filter(|a| private_key_header(a.text).is_some() || base64_line(a.text).is_some())
+        .map(|a| a.path.as_str())
+        .collect();
+    candidates.dedup();
+    for path in candidates {
+        if hits.iter().any(|h| h.path == path) {
+            continue;
+        }
+        let new_lines: BTreeSet<usize> = added
+            .iter()
+            .filter(|a| a.path == path)
+            .map(|a| a.line)
+            .collect();
+        let Some(text) = content(path) else {
+            // The staged file cannot be read: hold it when a BEGIN line was
+            // added, rather than guess.
+            if let Some(a) = added
+                .iter()
+                .find(|a| a.path == path && private_key_header(a.text).is_some())
+            {
+                hits.push(Hit {
+                    path: path.to_string(),
+                    rule: "private-key".into(),
+                    line: a.line,
+                    fingerprint: fingerprint(a.text),
+                });
+            }
+            continue;
+        };
+        for block in pem_blocks(&text) {
+            if block.header.contains(ALLOW_MARKER) {
+                continue;
+            }
+            // New when a body line was added and is not a moved line.
+            let fresh = block
+                .body
+                .iter()
+                .find(|(n, t)| new_lines.contains(n) && !removed.iter().any(|r| r.contains(*t)));
+            if let Some((n, t)) = fresh {
+                let fp = fingerprint(t);
+                if allow.iter().any(|x| x == &fp) {
+                    continue;
+                }
+                hits.push(Hit {
+                    path: path.to_string(),
+                    rule: "private-key".into(),
+                    line: *n,
+                    fingerprint: fp,
+                });
+                break;
+            }
+        }
+    }
     hits
+}
+
+/// The base64 text of a line that is nothing but base64 (after indentation,
+/// quotes and a trailing comma), at least 40 characters, with both upper and
+/// lower case letters as a key body has (a hex hash has one case only).
+fn base64_line(line: &str) -> Option<&str> {
+    let t = line.trim_matches([' ', '\t', '"', '\'', ',', '\r'].as_slice());
+    let ok = t.len() >= 40
+        && t.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=')
+        && t.bytes().any(|b| b.is_ascii_uppercase())
+        && t.bytes().any(|b| b.is_ascii_lowercase());
+    ok.then_some(t)
+}
+
+/// One private key block in a file: its BEGIN line and its base64 lines,
+/// each with its 1-based line number.
+struct Block<'a> {
+    header: &'a str,
+    body: Vec<(usize, &'a str)>,
+}
+
+/// Every `BEGIN … PRIVATE KEY` block in `text` whose base64 body has at least
+/// 40 characters. Between the BEGIN line and the base64, armor headers
+/// (`Version: …`, `Proc-Type: …`, `DEK-Info: …`) and blank lines are skipped;
+/// the body runs until the END line or the first line that is not base64. A
+/// BEGIN line with no body, such as a constant in code, is no block.
+fn pem_blocks(text: &str) -> Vec<Block<'_>> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if private_key_header(lines[i]).is_none() {
+            i += 1;
+            continue;
+        }
+        let header = lines[i];
+        let mut j = i + 1;
+        let mut skipped = 0;
+        while j < lines.len() && skipped < 10 {
+            let t = lines[j].trim();
+            if t.is_empty() || (t.contains(": ") && !t.starts_with("-----")) {
+                j += 1;
+                skipped += 1;
+            } else {
+                break;
+            }
+        }
+        let mut body = Vec::new();
+        while j < lines.len() {
+            let t = lines[j].trim_matches([' ', '\t', '"', '\'', ',', '\r'].as_slice());
+            if t.starts_with("-----") || t.is_empty() {
+                break;
+            }
+            if !t
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=')
+            {
+                break;
+            }
+            body.push((j + 1, t));
+            j += 1;
+        }
+        if body.iter().map(|(_, t)| t.len()).sum::<usize>() >= 40 {
+            out.push(Block { header, body });
+        }
+        i = j.max(i + 1);
+    }
+    out
 }
 
 /// The text that identifies the key `f` found in `line`: the match itself,
 /// or, for a private key header, the base64 run that follows it on the same
-/// line (after a literal `\n`, as JSON stores it) or on the next added line.
-/// None for a header with no body after it.
-fn identity<'a>(f: &Found, line: &'a str, next: Option<&'a str>) -> Option<&'a str> {
+/// line (after a literal `\n`, as JSON stores it). None for a header with no
+/// body on its line: `pem_blocks` judges that one with the whole file.
+fn identity<'a>(f: &Found, line: &'a str) -> Option<&'a str> {
     if f.rule != "private-key" {
         return Some(&line[f.start..f.end]);
     }
@@ -410,7 +542,7 @@ fn identity<'a>(f: &Found, line: &'a str, next: Option<&'a str>) -> Option<&'a s
             .count();
         (n >= 40).then(|| &s[..n])
     };
-    body(&line[f.end..]).or_else(|| next.and_then(body))
+    body(&line[f.end..])
 }
 
 /// The path of a `+++ b/<path>` line; empty for `/dev/null` (a deletion).
@@ -551,7 +683,13 @@ pub fn unstage_held(run: &dyn Fn(&[&str]) -> Result<Output>, allow: &[String]) -
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
-    let hits = scan_diff(&String::from_utf8_lossy(&out.stdout), allow);
+    let content = |path: &str| -> Option<String> {
+        let o = run(&["show", &format!(":{path}")]).ok()?;
+        o.status
+            .success()
+            .then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+    };
+    let hits = scan_diff(&String::from_utf8_lossy(&out.stdout), allow, &content);
     for h in &hits {
         let spec = format!(":(literal){}", h.path);
         let r = if base == "HEAD" {
@@ -573,10 +711,16 @@ pub fn unstage_held(run: &dyn Fn(&[&str]) -> Result<Output>, allow: &[String]) -
     // files stay modified).
     if !hits.is_empty() {
         let again = run(&diff_args(&base))?;
-        if !again.status.success()
-            || !scan_diff(&String::from_utf8_lossy(&again.stdout), allow).is_empty()
-        {
-            bail!("a file that looks like it holds a secret is still staged; not committing");
+        if !again.status.success() {
+            bail!("the secret check could not read the index again; nothing committed");
+        }
+        let left = scan_diff(&String::from_utf8_lossy(&again.stdout), allow, &content);
+        if !left.is_empty() {
+            let names: Vec<&str> = left.iter().map(|h| h.path.as_str()).collect();
+            bail!(
+                "a file that looks like it holds a secret is still staged ({}); nothing committed",
+                names.join(", ")
+            );
         }
     }
     Ok(hits)
@@ -599,6 +743,10 @@ pub fn notice(held: &[Hit]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn none(_: &str) -> Option<String> {
+        None
+    }
 
     // Built by concatenation so this file holds no complete key shape.
     fn key(prefix: &str, body: &str) -> String {
@@ -729,24 +877,70 @@ mod tests {
     #[test]
     fn a_private_key_needs_its_body_and_is_known_by_it() {
         let head = key("-----BEGIN RSA ", "PRIVATE KEY-----");
+        let end = key("-----END RSA ", "PRIVATE KEY-----");
         let body1 = "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gunVTLw";
         let body2 = "MIIEpAIBAAKCAQEA7bq98fdV3Kq3Y9mR0nQ2sX1zW4vB8cH6jL0pT5uE2iO9aD3fG7kM";
+        // `diff_with` puts the added lines at line 3: the staged file is two
+        // lines, then `lines`.
+        let file = |lines: &[&str]| {
+            let text = format!("a\nb\n{}\n", lines.join("\n"));
+            move |_: &str| Some(text.clone())
+        };
         // A header alone (a constant in code, a strings dump): not a key.
-        assert!(scan_diff(&diff_with("a.txt", &[], &[&head]), &[]).is_empty());
-        assert!(scan_diff(&diff_with("a.txt", &[], &[&format!("x = \"{head}\"")]), &[]).is_empty());
-        // A PEM file: the body on the next line.
-        let pem = scan_diff(&diff_with("k.pem", &[], &[&head, body1]), &[]);
+        let d = diff_with("a.txt", &[], &[&head]);
+        assert!(scan_diff(&d, &[], &file(&[&head])).is_empty());
+        let q = format!("x = \"{head}\"");
+        assert!(scan_diff(&diff_with("a.txt", &[], &[&q]), &[], &file(&[&q])).is_empty());
+        // A base64 line with no BEGIN line around it: not a key.
+        assert!(scan_diff(&diff_with("b.txt", &[], &[body1]), &[], &file(&[body1])).is_empty());
+        // A PEM file.
+        let pem_lines = [head.as_str(), body1, end.as_str()];
+        let pem = scan_diff(&diff_with("k.pem", &[], &pem_lines), &[], &file(&pem_lines));
         assert_eq!(pem.len(), 1);
+        assert_eq!(pem[0].line, 4);
         assert_eq!(pem[0].fingerprint, fingerprint(body1));
         // JSON keeps it on one line after a literal \n.
         let json = format!("\"key\": \"{head}\\n{body1}\\n\"");
-        assert_eq!(scan_diff(&diff_with("s.json", &[], &[&json]), &[]).len(), 1);
-        // Replacing one key with another: same header, new body, still held.
+        assert_eq!(
+            scan_diff(&diff_with("s.json", &[], &[&json]), &[], &none).len(),
+            1
+        );
+        // Replacing one key with another: same header, new body.
         let swap = diff_with("k.pem", &[&head, body1], &[&head, body2]);
-        assert_eq!(scan_diff(&swap, &[]).len(), 1);
-        // The same key moved: not new.
+        assert_eq!(scan_diff(&swap, &[], &file(&[&head, body2, &end])).len(), 1);
+        // Rotated in place: only the body line changed, the BEGIN line is not
+        // in the diff at all.
+        let rotated = diff_with("k.pem", &[body1], &[body2]);
+        let staged_text = format!("a\n{head}\n{body2}\n{end}\n");
+        let staged = move |_: &str| Some(staged_text.clone());
+        assert_eq!(scan_diff(&rotated, &[], &staged).len(), 1);
+        // PGP and encrypted PEM: armor headers and a blank line first.
+        let pgp_head = key("-----BEGIN PGP ", "PRIVATE KEY BLOCK-----");
+        let pgp = [pgp_head.as_str(), "Version: GnuPG v2", "", body1, "=Ab3d"];
+        assert_eq!(
+            scan_diff(&diff_with("k.asc", &[], &pgp), &[], &file(&pgp)).len(),
+            1
+        );
+        let enc = [
+            head.as_str(),
+            "Proc-Type: 4,ENCRYPTED",
+            "DEK-Info: AES-128-CBC,3F17F5316E2BAC89",
+            "",
+            body1,
+        ];
+        assert_eq!(
+            scan_diff(&diff_with("k.pem", &[], &enc), &[], &file(&enc)).len(),
+            1
+        );
+        // The same key moved or re-indented: not new.
         let moved = diff_with("k.pem", &[&head, body1], &[&format!(" {head}"), body1]);
-        assert!(scan_diff(&moved, &[]).is_empty());
+        let moved_file = file(&[&format!(" {head}"), body1]);
+        assert!(scan_diff(&moved, &[], &moved_file).is_empty());
+        // The staged file cannot be read and a BEGIN line was added: held.
+        assert_eq!(
+            scan_diff(&diff_with("k.pem", &[], &[&head]), &[], &none).len(),
+            1
+        );
         // A title with a header alone is fine; with a body it is not.
         assert!(!text_has_secret(&head));
         assert!(text_has_secret(&format!("{head}\\n{body1}")));
@@ -758,7 +952,7 @@ mod tests {
         let d = format!(
             "diff --git a/a.md b/a.md\n--- a/a.md\n+++ b/a.md\n@@ -1,3 +1,4 @@\n-x\n+y\n same\n\n+{k}\n"
         );
-        let hits = scan_diff(&d, &[]);
+        let hits = scan_diff(&d, &[], &none);
         assert_eq!(hits.len(), 1, "{hits:?}");
         assert_eq!(hits[0].line, 4);
     }
@@ -832,22 +1026,22 @@ mod tests {
     fn scan_reports_path_line_and_skips_allowed_or_moved() {
         let k = key("gh", "p_") + B36;
         let d = diff_with("claude/CLAUDE.md", &[], &["ok", &format!("t={k}")]);
-        let hits = scan_diff(&d, &[]);
+        let hits = scan_diff(&d, &[], &none);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "claude/CLAUDE.md");
         assert_eq!(hits[0].line, 4);
         assert!(!format!("{hits:?}").contains(&k));
         // Inline marker.
         let d2 = diff_with("a.md", &[], &[&format!("t={k} {ALLOW_MARKER}")]);
-        assert!(scan_diff(&d2, &[]).is_empty());
+        assert!(scan_diff(&d2, &[], &none).is_empty());
         // Allowed by fingerprint, or by path.
-        assert!(scan_diff(&d, &[fingerprint(&k)]).is_empty());
-        assert!(scan_diff(&d, &["claude/CLAUDE.md".into()]).is_empty());
+        assert!(scan_diff(&d, &[fingerprint(&k)], &none).is_empty());
+        assert!(scan_diff(&d, &["claude/CLAUDE.md".into()], &none).is_empty());
         // Already in HEAD: the same key on a removed line.
         let d3 = diff_with("a.md", &[&format!("old {k}")], &[&format!("new {k}")]);
-        assert!(scan_diff(&d3, &[]).is_empty());
+        assert!(scan_diff(&d3, &[], &none).is_empty());
         // A `+++` inside a hunk is content, not a header.
         let d4 = diff_with("a.md", &[], &[&format!("++ {k}")]);
-        assert_eq!(scan_diff(&d4, &[])[0].path, "a.md");
+        assert_eq!(scan_diff(&d4, &[], &none)[0].path, "a.md");
     }
 }

@@ -435,18 +435,31 @@ pub fn report(cfg: &Config) -> Option<String> {
 /// One line when the set of held files (grimmerk/memsaga#60) changed since
 /// the last report: a file held turn after turn is announced once, and again
 /// only when another file or another key joins it.
+/// The same for a sweep that committed nothing because the check failed
+/// closed (`held-error`).
 fn held_notice(state: &State) -> Option<String> {
     let held = sweep::load_held(state);
+    let error = sweep::load_held_error(state);
     let key = held
         .iter()
         .map(|h| format!("{} {}", h.path, h.fingerprint))
+        .chain(error.clone())
         .collect::<Vec<_>>()
         .join("\n");
     if state.read_marker("held-reported").unwrap_or_default() == key {
         return None;
     }
     let _ = state.write_marker("held-reported", &key);
-    crate::secrets::notice(&held)
+    let lines: Vec<String> = [
+        error.map(|e| {
+            format!("memsaga: nothing was committed: {e}; see `memsaga status` and memsaga.log")
+        }),
+        crate::secrets::notice(&held),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
 /// One line when the set of files waiting for `memsaga sync` changed since

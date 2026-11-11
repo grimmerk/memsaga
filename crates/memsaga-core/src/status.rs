@@ -34,6 +34,9 @@ pub struct Status {
     /// Files the last sweep held back because a new line looks like a secret
     /// (grimmerk/memsaga#60): path, line, rule and fingerprint, never the text.
     pub held: Vec<crate::secrets::Hit>,
+    /// Set when the last sweep committed nothing because the secret check
+    /// failed closed (a held file it could not take out of the commit).
+    pub held_error: Option<String>,
     /// Repository files in scope that this machine never had live, kept by
     /// the last sweep instead of being deleted (grimmerk/memsaga#22).
     pub absent: Vec<String>,
@@ -217,6 +220,7 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
             roots,
             incoming: Default::default(),
             held: Vec::new(),
+            held_error: None,
             absent: Vec::new(),
             link_over_folder: Vec::new(),
             uncovered: Vec::new(),
@@ -257,6 +261,7 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
         roots,
         incoming: crate::sync::load_incoming(&state),
         held: crate::sweep::load_held(&state),
+        held_error: crate::sweep::load_held_error(&state),
         absent: crate::sync::load_absent(&state),
         link_over_folder: crate::sync::load_link_over_folder(&state),
         uncovered: crate::differences::uncovered(cfg, "HEAD"),
