@@ -4676,7 +4676,13 @@ fn a_held_file_named_with_a_newline_is_reported_once() {
     assert!(!run(&fx, &["report"]).contains("held back"));
     write(&mem, "clean\n");
     hook(&fx, &stop("s2"));
-    assert!(run(&fx, &["report"]).contains("no longer held back"));
+    let out = run(&fx, &["report"]);
+    let v: serde_json::Value = serde_json::from_str(out.trim()).expect(&out);
+    let msg = v["systemMessage"].as_str().unwrap();
+    assert!(
+        msg.ends_with("no longer held back: claude/memory/-h-git-a/a\nb.md"),
+        "{msg:?}"
+    );
     assert!(!run(&fx, &["report"]).contains("held back"));
     assert_key_in_no_commit(&fx, &key);
 }
