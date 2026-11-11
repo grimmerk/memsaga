@@ -287,7 +287,8 @@ pub struct Hit {
 /// Does `text` (a session title bound for a commit message) hold a key
 /// shape? The allow marker does not apply here: it is for a line in a file.
 pub fn text_has_secret(text: &str) -> bool {
-    text.lines().any(|l| !find(l).is_empty())
+    text.lines()
+        .any(|l| find(l).iter().any(|f| identity(f, l, None).is_some()))
 }
 
 /// Read a `git diff -U0` and return the files whose added lines hold a key
@@ -303,16 +304,14 @@ pub fn scan_diff(diff: &str, allow: &[String]) -> Vec<Hit> {
         text: &'a str,
     }
     let mut added: Vec<Added> = Vec::new();
-    let mut removed: BTreeSet<&str> = BTreeSet::new();
+    let mut removed: Vec<&str> = Vec::new();
     let mut path = String::new();
     let (mut minus_left, mut plus_left, mut new_line) = (0usize, 0usize, 0usize);
     for l in diff.split('\n') {
         if minus_left > 0 || plus_left > 0 {
             if let Some(t) = l.strip_prefix('-') {
                 minus_left = minus_left.saturating_sub(1);
-                for f in find(t) {
-                    removed.insert(&t[f.start..f.end]);
-                }
+                removed.push(t);
                 continue;
             }
             if let Some(t) = l.strip_prefix('+') {
@@ -353,7 +352,7 @@ pub fn scan_diff(diff: &str, allow: &[String]) -> Vec<Hit> {
         }
     }
     let mut hits: Vec<Hit> = Vec::new();
-    for a in added {
+    for (i, a) in added.iter().enumerate() {
         if a.path.is_empty()
             || a.text.contains('\0')
             || a.text.contains(ALLOW_MARKER)
@@ -362,10 +361,21 @@ pub fn scan_diff(diff: &str, allow: &[String]) -> Vec<Hit> {
         {
             continue;
         }
+        let next = added
+            .get(i + 1)
+            .filter(|n| n.path == a.path && n.line == a.line + 1)
+            .map(|n| n.text);
         for f in find(a.text) {
-            let matched = &a.text[f.start..f.end];
+            // What identifies the key: the match itself, or for a private key
+            // its base64 body (every RSA key has the same BEGIN line). No body
+            // means a header alone, such as a constant in code: not a key.
+            let Some(matched) = identity(&f, a.text, next) else {
+                continue;
+            };
             let fp = fingerprint(matched);
-            if removed.contains(matched) || allow.iter().any(|x| x == &fp) {
+            // Already in HEAD: the same text on a removed line (a moved line, a
+            // renamed file, an edit around an old key) is not new.
+            if removed.iter().any(|r| r.contains(matched)) || allow.iter().any(|x| x == &fp) {
                 continue;
             }
             hits.push(Hit {
@@ -378,6 +388,29 @@ pub fn scan_diff(diff: &str, allow: &[String]) -> Vec<Hit> {
         }
     }
     hits
+}
+
+/// The text that identifies the key `f` found in `line`: the match itself,
+/// or, for a private key header, the base64 run that follows it on the same
+/// line (after a literal `\n`, as JSON stores it) or on the next added line.
+/// None for a header with no body after it.
+fn identity<'a>(f: &Found, line: &'a str, next: Option<&'a str>) -> Option<&'a str> {
+    if f.rule != "private-key" {
+        return Some(&line[f.start..f.end]);
+    }
+    let body = |s: &'a str| -> Option<&'a str> {
+        let s = s.trim_start_matches([' ', '\t', '"', '\''].as_slice());
+        let s = s
+            .strip_prefix("\\r\\n")
+            .or_else(|| s.strip_prefix("\\n"))
+            .unwrap_or(s);
+        let n = s
+            .bytes()
+            .take_while(|b| b.is_ascii_alphanumeric() || *b == b'+' || *b == b'/' || *b == b'=')
+            .count();
+        (n >= 40).then(|| &s[..n])
+    };
+    body(&line[f.end..]).or_else(|| next.and_then(body))
 }
 
 /// The path of a `+++ b/<path>` line; empty for `/dev/null` (a deletion).
@@ -691,6 +724,32 @@ mod tests {
         let k = key("gh", "p_") + B36;
         assert!(text_has_secret(&format!("{k} {ALLOW_MARKER}")));
         assert!(!text_has_secret("an ordinary title"));
+    }
+
+    #[test]
+    fn a_private_key_needs_its_body_and_is_known_by_it() {
+        let head = key("-----BEGIN RSA ", "PRIVATE KEY-----");
+        let body1 = "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gunVTLw";
+        let body2 = "MIIEpAIBAAKCAQEA7bq98fdV3Kq3Y9mR0nQ2sX1zW4vB8cH6jL0pT5uE2iO9aD3fG7kM";
+        // A header alone (a constant in code, a strings dump): not a key.
+        assert!(scan_diff(&diff_with("a.txt", &[], &[&head]), &[]).is_empty());
+        assert!(scan_diff(&diff_with("a.txt", &[], &[&format!("x = \"{head}\"")]), &[]).is_empty());
+        // A PEM file: the body on the next line.
+        let pem = scan_diff(&diff_with("k.pem", &[], &[&head, body1]), &[]);
+        assert_eq!(pem.len(), 1);
+        assert_eq!(pem[0].fingerprint, fingerprint(body1));
+        // JSON keeps it on one line after a literal \n.
+        let json = format!("\"key\": \"{head}\\n{body1}\\n\"");
+        assert_eq!(scan_diff(&diff_with("s.json", &[], &[&json]), &[]).len(), 1);
+        // Replacing one key with another: same header, new body, still held.
+        let swap = diff_with("k.pem", &[&head, body1], &[&head, body2]);
+        assert_eq!(scan_diff(&swap, &[]).len(), 1);
+        // The same key moved: not new.
+        let moved = diff_with("k.pem", &[&head, body1], &[&format!(" {head}"), body1]);
+        assert!(scan_diff(&moved, &[]).is_empty());
+        // A title with a header alone is fine; with a body it is not.
+        assert!(!text_has_secret(&head));
+        assert!(text_has_secret(&format!("{head}\\n{body1}")));
     }
 
     #[test]
