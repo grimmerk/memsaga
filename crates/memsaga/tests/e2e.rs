@@ -4657,3 +4657,26 @@ fn a_private_key_rotated_in_place_is_held() {
     assert_eq!(v["held"][0]["line"], 3);
     assert!(!git(&fx, &["log", "--all", "-p"]).contains(new));
 }
+
+/// A file name holding a newline: held under its real name, announced once,
+/// and released once.
+#[test]
+fn a_held_file_named_with_a_newline_is_reported_once() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let key = fake_key();
+    let mem = fx.claude.join("projects/-h-git-a/memory/a\nb.md");
+    write(&mem, &format!("{key}\n"));
+    hook(&fx, &stop("s1"));
+    assert_eq!(
+        status_json(&fx)["held"][0]["path"],
+        "claude/memory/-h-git-a/a\nb.md"
+    );
+    assert!(run(&fx, &["report"]).contains("held back"));
+    assert!(!run(&fx, &["report"]).contains("held back"));
+    write(&mem, "clean\n");
+    hook(&fx, &stop("s2"));
+    assert!(run(&fx, &["report"]).contains("no longer held back"));
+    assert!(!run(&fx, &["report"]).contains("held back"));
+    assert_key_in_no_commit(&fx, &key);
+}
