@@ -201,9 +201,10 @@ not committed or pushed, the other files are, and the terminal names the file
 and the line. Once the line is gone, the file is committed. The check knows
 fixed key shapes (Anthropic, OpenAI, GitHub, AWS, Slack, Google and others), not
 every secret, so keep passwords and keys out of the files memsaga copies.
-Claude Code's own login is not copied either: it lives in the macOS Keychain,
-or in `~/.claude/.credentials.json` (Linux, and macOS when the Keychain cannot
-be written), which is not in memsaga's scope unless you add it.
+Claude Code's own login is not copied either: its account state is in
+`~/.claude.json`, and its credentials are in the macOS Keychain or in
+`~/.claude/.credentials.json` (Linux, and macOS when the Keychain cannot be
+written). Neither file is in memsaga's scope unless you add it.
 Details: [If a file is held back](../README.md#if-a-file-is-held-back).
 
 ## Questions and bugs

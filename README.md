@@ -919,8 +919,10 @@ A file with a match is held back. What happens then:
    done; a file you wrote in the repository yourself (`manual/`, a hand edit)
    is left exactly as it is.
 3. The terminal notice names the file, the line, the kind of key and a
-   fingerprint (a short hash of the match), once; `memsaga status` and
-   `status --json` (`held`) list it as long as it is held. The key itself is
+   fingerprint (a short hash of the match); the end-of-turn notice says this
+   once per held set, and `memsaga sweep` or `sync` print it each time they
+   hold the file. `memsaga status` and `status --json` (`held`) list it as
+   long as it is held. The key itself is
    never printed or logged.
 4. Each later turn checks again. Once the line is gone, the file is committed.
 

@@ -374,24 +374,40 @@ fn diff_path(p: &str) -> String {
 }
 
 /// Git's C-style quoting of a path with special characters (core.quotepath
-/// off leaves non-ASCII alone; tabs, newlines, quotes and backslashes are
-/// still escaped).
+/// off leaves non-ASCII alone; control characters, quotes and backslashes
+/// are still escaped, other control bytes as three octal digits).
 fn unquote(s: &str) -> String {
-    let mut out = String::new();
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
+    let b = s.as_bytes();
+    let mut out: Vec<u8> = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'\\' || i + 1 >= b.len() {
+            out.push(b[i]);
+            i += 1;
             continue;
         }
-        match chars.next() {
-            Some('t') => out.push('\t'),
-            Some('n') => out.push('\n'),
-            Some(o) => out.push(o),
-            None => {}
+        let e = b[i + 1];
+        let octal = b
+            .get(i + 1..i + 4)
+            .filter(|d| d.iter().all(|c| (b'0'..=b'7').contains(c)));
+        if let Some(d) = octal {
+            out.push((d[0] - b'0') * 64 + (d[1] - b'0') * 8 + (d[2] - b'0'));
+            i += 4;
+            continue;
         }
+        out.push(match e {
+            b't' => b'\t',
+            b'n' => b'\n',
+            b'r' => b'\r',
+            b'a' => 7,
+            b'b' => 8,
+            b'f' => 12,
+            b'v' => 11,
+            o => o,
+        });
+        i += 2;
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// `-a[,b] +c[,d] @@…` → (b, d, c); a missing count is 1.
@@ -577,6 +593,12 @@ mod tests {
         let k = key("gh", "p_") + B36;
         assert!(text_has_secret(&format!("{k} {ALLOW_MARKER}")));
         assert!(!text_has_secret("an ordinary title"));
+    }
+
+    #[test]
+    fn quoted_paths_are_decoded() {
+        assert_eq!(unquote(r"a\tb"), "a\tb");
+        assert_eq!(unquote(r#"a\001b\\c\"d"#), "a\u{1}b\\c\"d");
     }
 
     #[test]

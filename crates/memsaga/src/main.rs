@@ -924,6 +924,7 @@ fn cmd_sync(take: &[String]) -> Result<()> {
     };
     // 1. Commit what changed live, so the merge base matches the live files.
     let first = sweep::sweep(&cfg, &attrib)?;
+    print_held(&first.held);
     if first.committed {
         println!("committed live changes {}", first.sha);
     }
@@ -939,7 +940,14 @@ fn cmd_sync(take: &[String]) -> Result<()> {
     print_settled(&settled);
     // 4. Commit merged results; 5. push.
     let second = sweep::sweep(&cfg, &attrib)?;
-    print_held(&second.held);
+    // The first sweep already named what it held; name only what is new.
+    let new_held: Vec<_> = second
+        .held
+        .iter()
+        .filter(|h| !first.held.contains(h))
+        .cloned()
+        .collect();
+    print_held(&new_held);
     if second.committed {
         println!("committed {}", second.sha);
     }
@@ -963,7 +971,15 @@ fn cmd_sync(take: &[String]) -> Result<()> {
             let late = sync::settle(&cfg, None)?;
             print_settled(&late);
             conflicts += late.conflicts.len();
-            if sweep::sweep(&cfg, &attrib)?.committed {
+            let last = sweep::sweep(&cfg, &attrib)?;
+            let late_held: Vec<_> = last
+                .held
+                .iter()
+                .filter(|h| !first.held.contains(h) && !second.held.contains(h))
+                .cloned()
+                .collect();
+            print_held(&late_held);
+            if last.committed {
                 if !hook::push_now(&cfg, &state, &attrib)? {
                     anyhow::bail!(
                         "push failed: {}",
