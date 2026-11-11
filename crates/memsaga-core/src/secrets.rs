@@ -454,11 +454,14 @@ pub fn scan_diff(
 }
 
 /// The base64 text of a line that is nothing but base64 (after indentation,
-/// quotes and a trailing comma), at least 40 characters, with both upper and
-/// lower case letters as a key body has (a hex hash has one case only).
+/// quotes and a trailing comma), at least 16 characters, with both upper and
+/// lower case letters as a key body has (a hex hash has one case only). Only
+/// picks the files to read: a key wrapped narrower than the usual 64 columns
+/// must still make its file a candidate; `pem_blocks` then requires at least
+/// 40 base64 characters over the whole block.
 fn base64_line(line: &str) -> Option<&str> {
     let t = line.trim_matches([' ', '\t', '"', '\'', ',', '\r'].as_slice());
-    let ok = t.len() >= 40
+    let ok = t.len() >= 16
         && t.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=')
         && t.bytes().any(|b| b.is_ascii_uppercase())
@@ -914,6 +917,13 @@ mod tests {
         let staged_text = format!("a\n{head}\n{body2}\n{end}\n");
         let staged = move |_: &str| Some(staged_text.clone());
         assert_eq!(scan_diff(&rotated, &[], &staged).len(), 1);
+        // Rotated in place with narrow lines (32 columns): each line is short,
+        // the block is not.
+        let narrow = [&body2[..32], &body2[32..64]];
+        let rotated_narrow = diff_with("k.pem", &[&body1[..32], &body1[32..64]], &narrow);
+        let narrow_text = format!("a\n{head}\n{}\n{}\n{end}\n", narrow[0], narrow[1]);
+        let narrow_file = move |_: &str| Some(narrow_text.clone());
+        assert_eq!(scan_diff(&rotated_narrow, &[], &narrow_file).len(), 1);
         // PGP and encrypted PEM: armor headers and a blank line first.
         let pgp_head = key("-----BEGIN PGP ", "PRIVATE KEY BLOCK-----");
         let pgp = [pgp_head.as_str(), "Version: GnuPG v2", "", body1, "=Ab3d"];

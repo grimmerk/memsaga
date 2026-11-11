@@ -903,9 +903,9 @@ file is back.
 
 #### If a file is held back
 
-Before a commit, memsaga reads the lines the change adds (not the whole file,
-and not lines already in the history) and looks for key shapes with a fixed
-prefix: Anthropic and OpenAI API keys, GitHub, GitLab, npm, Slack and Hugging
+Before a commit, memsaga reads the lines the change adds (not lines already
+in the history; the whole file only when those lines may be part of a private
+key, which spans several lines) and looks for key shapes with a fixed prefix: Anthropic and OpenAI API keys, GitHub, GitLab, npm, Slack and Hugging
 Face tokens, AWS access key IDs, Google API keys, Stripe live keys, and
 private keys (a `-----BEGIN … PRIVATE KEY-----` line followed by the key
 itself; the line alone, as a constant in code, does not count). The list is a
@@ -926,8 +926,7 @@ A file with a match is held back. What happens then:
    fingerprint (a short hash of the match); the end-of-turn notice says this
    once per held set, and `memsaga sweep` or `sync` print it each time they
    hold the file. `memsaga status` and `status --json` (`held`) list it as
-   long as it is held. The key itself is
-   never printed or logged.
+   long as it is held. The key itself is never printed or logged.
 4. Each later turn checks again. Once the line is gone, the file is committed
    and the notice says it is no longer held back.
 5. If a sweep cannot take a held file out of the commit (a file name that is
@@ -938,8 +937,9 @@ A file with a match is held back. What happens then:
    each of those passed the check.
 
 When the match is not a secret, add `memsaga:allow-secret` anywhere on that
-line, or, in a file that cannot carry a comment (`settings.json`), add the
-fingerprint to `allow_secrets` in the config file. A repository path in
+line (for a private key, on its `-----BEGIN` line), or, in a file that cannot
+carry a comment (`settings.json`), add the fingerprint to `allow_secrets` in
+the config file. A repository path in
 `allow_secrets` (`"claude/notes.md"`) skips the check for that file, and
 `scan_secrets = false` turns it off. `memsaga diff` leaves held files out of
 the patch it prints, `init` leaves out any old version it replays from
