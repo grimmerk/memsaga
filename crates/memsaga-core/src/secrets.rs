@@ -712,13 +712,13 @@ pub fn unstage_held(run: &dyn Fn(&[&str]) -> Result<Output>, allow: &[String]) -
     if !hits.is_empty() {
         let again = run(&diff_args(&base))?;
         if !again.status.success() {
-            bail!("the secret check could not read the index again; nothing committed");
+            bail!("the secret check could not read the index again");
         }
         let left = scan_diff(&String::from_utf8_lossy(&again.stdout), allow, &content);
         if !left.is_empty() {
             let names: Vec<&str> = left.iter().map(|h| h.path.as_str()).collect();
             bail!(
-                "a file that looks like it holds a secret is still staged ({}); nothing committed",
+                "a file that looks like it holds a secret is still staged ({})",
                 names.join(", ")
             );
         }

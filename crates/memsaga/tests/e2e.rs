@@ -4593,7 +4593,7 @@ fn a_held_file_whose_name_is_not_utf8_is_never_committed() {
         v["held_error"]
             .as_str()
             .unwrap_or("")
-            .contains("nothing committed"),
+            .contains("still staged"),
         "{v}"
     );
     let r = run(&fx, &["report"]);
