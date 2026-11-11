@@ -420,11 +420,33 @@ pub fn report(cfg: &Config) -> Option<String> {
             shas.join(", ")
         )
     });
-    let lines: Vec<String> = [warning, notice, incoming_notice(&state)]
-        .into_iter()
-        .flatten()
-        .collect();
+    let lines: Vec<String> = [
+        warning,
+        notice,
+        held_notice(&state),
+        incoming_notice(&state),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+/// One line when the set of held files (grimmerk/memsaga#60) changed since
+/// the last report: a file held turn after turn is announced once, and again
+/// only when another file or another key joins it.
+fn held_notice(state: &State) -> Option<String> {
+    let held = sweep::load_held(state);
+    let key = held
+        .iter()
+        .map(|h| format!("{} {}", h.path, h.fingerprint))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if state.read_marker("held-reported").unwrap_or_default() == key {
+        return None;
+    }
+    let _ = state.write_marker("held-reported", &key);
+    crate::secrets::notice(&held)
 }
 
 /// One line when the set of files waiting for `memsaga sync` changed since

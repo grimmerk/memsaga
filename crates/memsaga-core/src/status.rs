@@ -31,6 +31,9 @@ pub struct Status {
     /// Repository files newer than their live file, waiting for
     /// `memsaga sync` (docs/two-way-sync.md): repo-relative path -> entry.
     pub incoming: crate::sync::Incoming,
+    /// Files the last sweep held back because a new line looks like a secret
+    /// (grimmerk/memsaga#60): path, line, rule and fingerprint, never the text.
+    pub held: Vec<crate::secrets::Hit>,
     /// Repository files in scope that this machine never had live, kept by
     /// the last sweep instead of being deleted (grimmerk/memsaga#22).
     pub absent: Vec<String>,
@@ -213,6 +216,7 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
             origin: None,
             roots,
             incoming: Default::default(),
+            held: Vec::new(),
             absent: Vec::new(),
             link_over_folder: Vec::new(),
             uncovered: Vec::new(),
@@ -252,6 +256,7 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
         origin,
         roots,
         incoming: crate::sync::load_incoming(&state),
+        held: crate::sweep::load_held(&state),
         absent: crate::sync::load_absent(&state),
         link_over_folder: crate::sync::load_link_over_folder(&state),
         uncovered: crate::differences::uncovered(cfg, "HEAD"),

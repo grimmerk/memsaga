@@ -156,6 +156,12 @@ impl<'a> Git<'a> {
     /// Stage everything and report whether the index differs from HEAD.
     pub fn add_all_and_check(&self) -> Result<bool> {
         self.run_ok(&["add", "-A", "--", "."])?;
+        self.has_staged_changes()
+    }
+
+    /// Whether the index still differs from `HEAD` (or holds anything, in a
+    /// repository with no commit yet).
+    pub fn has_staged_changes(&self) -> Result<bool> {
         let out = self.run(&["diff", "--cached", "--quiet"])?;
         // exit 1 = differences, 0 = none; anything else is an error (e.g. no HEAD yet)
         match out.status.code() {
