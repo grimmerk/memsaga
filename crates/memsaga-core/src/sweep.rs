@@ -268,7 +268,13 @@ pub fn pending(
     let held = if cfg.scan_secrets {
         let run_out =
             |args: &[&str]| -> Result<std::process::Output> { Ok(git_cmd().args(args).output()?) };
-        crate::secrets::unstage_held(&run_out, &cfg.allow_secrets)?
+        match crate::secrets::unstage_held(&run_out, &cfg.allow_secrets) {
+            Ok(h) => h,
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(e);
+            }
+        }
     } else {
         Vec::new()
     };

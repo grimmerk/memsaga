@@ -4498,3 +4498,23 @@ fn a_session_title_with_a_key_shape_is_left_out_of_the_commit() {
     assert!(msg.starts_with("Stop: claude:CLAUDE.md\n"), "{msg}");
     assert_key_in_no_commit(&fx, &key);
 }
+
+#[test]
+fn the_first_import_holds_a_live_file_that_already_has_a_key() {
+    let fx = fixture("turn", "");
+    let key = fake_key();
+    let mem = fx.claude.join("projects/-h-git-a/memory/one.md");
+    write(&mem, &format!("fact\n{key}\n"));
+    let out = run(&fx, &["init", "--no-backfill"]);
+    assert!(
+        out.contains("held back claude/memory/-h-git-a/one.md"),
+        "{out}"
+    );
+    assert!(!out.contains(&key), "{out}");
+    let files = head_files(&fx);
+    assert!(files.iter().any(|f| f == "claude/CLAUDE.md"));
+    assert!(!files.iter().any(|f| f == "claude/memory/-h-git-a/one.md"));
+    assert!(!fx.repo.join("claude/memory/-h-git-a/one.md").exists());
+    assert_key_in_no_commit(&fx, &key);
+    assert!(fs::read_to_string(&mem).unwrap().contains(&key));
+}
