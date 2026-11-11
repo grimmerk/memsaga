@@ -929,6 +929,10 @@ A file with a match is held back. What happens then:
    long as it is held. The key itself is
    never printed or logged.
 4. Each later turn checks again. Once the line is gone, the file is committed.
+5. If memsaga cannot take a held file out of the commit (a file name that is
+   not UTF-8, for example), it commits nothing that turn rather than risk the
+   key; the notice says "nothing was committed" and `memsaga status` shows
+   why, until a later turn gets past the check.
 
 When the match is not a secret, add `memsaga:allow-secret` anywhere on that
 line, or, in a file that cannot carry a comment (`settings.json`), add the
