@@ -445,8 +445,14 @@ pub fn diff_base(run: &dyn Fn(&[&str]) -> Result<Output>) -> Result<String> {
 /// the held files' copies. `run` is a git runner bound to the repository and
 /// to the index in use (the real one for a sweep, a temporary one for `diff`).
 pub fn unstage_held(run: &dyn Fn(&[&str]) -> Result<Output>, allow: &[String]) -> Result<Vec<Hit>> {
-    let base = diff_base(run)?;
-    let out = run(&diff_args(&base))?;
+    // `HEAD` first: one git process in the common case. Only a repository
+    // with no commit yet needs the empty tree, found by a second call.
+    let mut base = "HEAD".to_string();
+    let mut out = run(&diff_args(&base))?;
+    if !out.status.success() {
+        base = diff_base(run)?;
+        out = run(&diff_args(&base))?;
+    }
     if !out.status.success() {
         bail!(
             "git diff for the secret check failed: {}",

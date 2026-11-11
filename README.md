@@ -101,7 +101,7 @@ at.
 - [What memsaga does not cover, and what to use instead](#what-memsaga-does-not-cover-and-what-to-use-instead)
 - [How it works](#how-it-works), and [timing](#timing): when it commits, pushes and checks for edits
 - [When something looks wrong](#when-something-looks-wrong)
-- [Reference](#reference): [commands](#commands), [what is mirrored](#what-is-mirrored), [memory directory names](#memory-directory-names), [configuration](#configuration), [two-way sync](#two-way-sync), [commit messages](#commit-messages), [uninstalling](#uninstalling), [setting up another machine](#setting-up-another-machine)
+- [Reference](#reference): [commands](#commands), [what is mirrored](#what-is-mirrored), [memory directory names](#memory-directory-names), [configuration](#configuration), [held-back files](#if-a-file-is-held-back), [two-way sync](#two-way-sync), [commit messages](#commit-messages), [uninstalling](#uninstalling), [setting up another machine](#setting-up-another-machine)
 - [Tests](#tests) · [Roadmap](#roadmap) · [The name](#the-name)
 
 More documents: [FAQ](docs/faq.md) (other ways to keep this history,
@@ -308,9 +308,16 @@ on this machine.
 **Keep the data repository private.** Memory holds whatever Claude learned
 while working with you, which often includes details of your work. The default
 scope leaves out `~/.claude.json` (where Claude Code keeps its login),
-credentials and transcripts, and takes `settings.json` only if you ask. memsaga
-does not scan what it copies for secrets, so keep credentials out of anything
-you add to `files`, `dirs` or `extra_files`. To keep a project's memory out
+credentials and transcripts, and takes `settings.json` only if you ask. Before
+each commit, memsaga also checks the lines a change adds for known key shapes
+(API keys and tokens from Anthropic, OpenAI, GitHub, AWS, Slack, Google, Stripe,
+npm, GitLab and Hugging Face, and private key blocks). A file with a match is
+held back: it is not committed, the other files are, and the terminal notice
+and `memsaga status` name the file and the line, never the key itself. Once
+the line is gone, the next commit takes the file. A key in a shape the check
+does not know still gets through, so keep credentials out of anything you add
+to `files`, `dirs` or `extra_files` all the same
+([details](#if-a-file-is-held-back)). To keep a project's memory out
 entirely, exclude it before `init` (step 2 above); excluding it later stops
 new commits but does not remove what is already in the history.
 
@@ -660,7 +667,7 @@ a new hook. Try it, read the diff, keep it or roll it back.
 | Session transcripts | Large, and mostly the content of your work rather than configuration | Raise `cleanupPeriodDays` in `settings.json` so Claude Code keeps them longer. To search or archive them, use a transcript indexer such as [funes](https://github.com/huggingface/funes) or [fable](https://github.com/grooverLab/fable) |
 | Plugins installed from a marketplace | They are packages you can install again, not files you wrote | Install them again; with `settings.json` mirrored (opt-in, `files`), its `enabledPlugins` list records which ones |
 | Hand-written Claude Code mods | Not in the default scope | Add `"mods"` to `dirs` (use case 5) to version and sync them; give a mod you share or develop seriously its own git repository too, since one commit per turn is a backup, not a development history |
-| Credentials, OAuth tokens, `~/.claude.json` | Secrets and account state must never enter a repository | Your system keychain or a password manager |
+| Credentials, OAuth tokens, `~/.claude.json` | Secrets and account state must never enter a repository. A file in scope whose new line looks like a key is [held back](#if-a-file-is-held-back) | Your system keychain or a password manager |
 | `settings.json` keys that change all the time (`model`, `effortLevel`) | Claude Code rewrites them on every `/model` and `/effort` | Nothing: memsaga leaves them out of the repository and keeps each machine's own values (`settings_ignore_keys`) |
 
 ## How it works
@@ -704,7 +711,9 @@ Claude reads or writes that file.
   it never had (kept, not deleted), a folder where the repository has a link
   (nothing under it is mirrored, so nothing is written through the link),
   folders the repository has that this machine's config does not mirror, and
-  scripts that `settings.json` runs but this machine lacks.
+  scripts that `settings.json` runs but this machine lacks, and files held
+  back because a new line looks like a key
+  ([if a file is held back](#if-a-file-is-held-back)).
 - A hook never stops a turn. Its errors go to
   `<data repository>/.git/memsaga/memsaga.log`,
   and every sweep, push and merge to `events.jsonl` next to it.
@@ -823,6 +832,10 @@ reporter = true                  # one-line notice in the terminal after a commi
 # end of the window, not dropped. 0 disables pushes on Stop
 push_min_interval_secs = 600
 push_on_session_end = true
+# hold back a file whose new lines look like a key (see "If a file is held back")
+scan_secrets = true
+# fingerprints from the notice, or repository paths, the check lets through
+allow_secrets = []
 
 [[roots]]
 path = "~/.claude"
@@ -887,6 +900,43 @@ mirrored copy, memsaga runs on its defaults: fewer files are mirrored, and
 copies of files that drop out of scope are left in the repository. The
 reporter prints a warning with the restore command after every turn until the
 file is back.
+
+#### If a file is held back
+
+Before a commit, memsaga reads the lines the change adds (not the whole file,
+and not lines already in the history) and looks for key shapes with a fixed
+prefix: Anthropic and OpenAI API keys, GitHub, GitLab, npm, Slack and Hugging
+Face tokens, AWS access key IDs, Google API keys, Stripe live keys, and
+`-----BEGIN … PRIVATE KEY-----` lines. The list is a subset of
+[gitleaks](https://github.com/gitleaks/gitleaks)' rules, chosen for few false
+alarms; generic patterns such as `password=` or JSON Web Tokens are left out.
+
+A file with a match is held back. What happens then:
+
+1. The other files of that turn are committed as usual.
+2. The held file is not committed. memsaga's own copy of it in the data
+   repository goes back to its last committed version, so nothing waits half
+   done; a file you wrote in the repository yourself (`manual/`, a hand edit)
+   is left exactly as it is.
+3. The terminal notice names the file, the line, the kind of key and a
+   fingerprint (a short hash of the match), once; `memsaga status` and
+   `status --json` (`held`) list it as long as it is held. The key itself is
+   never printed or logged.
+4. Each later turn checks again. Once the line is gone, the file is committed.
+
+When the match is not a secret, add `memsaga:allow-secret` anywhere on that
+line, or, in a file that cannot carry a comment (`settings.json`), add the
+fingerprint to `allow_secrets` in the config file. A repository path in
+`allow_secrets` (`"claude/notes.md"`) skips the check for that file, and
+`scan_secrets = false` turns it off. `memsaga diff` leaves held files out of
+the patch it prints, `init` leaves out any old version it replays from
+transcripts that holds a key, and a session title that holds one is left out
+of the commit message.
+
+A key in `settings.json`'s `env` keeps the file held until the key moves out,
+for example to your shell profile or a password manager. Edits that reach the
+data repository through `origin` (another machine, GitHub's web editor) are
+already in that history, so the check does not apply to them.
 
 ### Two-way sync
 

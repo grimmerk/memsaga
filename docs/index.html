@@ -598,7 +598,7 @@ git log --grep 'Session-Title: .*login'</pre>
       <div class="promise"><h3>Every version can come back</h3><p>Restore one file, or all of them, from any point in history. A restore shows the diff and waits for your yes. No git needed: after <code>memsaga install --skills</code>, ask Claude what <code>CLAUDE.md</code> or a memory file said last week.</p></div>
       <div class="promise"><h3>It stays out of Claude's way</h3><p>If something fails, Claude Code carries on as usual, and <code>memsaga status</code> tells you what happened.</p></div>
       <div class="promise"><h3>What you add stays</h3><p>Files you put in the repository yourself are committed and never removed by memsaga.</p></div>
-      <div class="promise"><h3>Credential files stay out</h3><p>Not copied: <code>~/.claude.json</code>, credentials, transcripts and caches. <code>settings.json</code> only if you ask. The files that are copied are not scanned, so keep secrets out of them.</p></div>
+      <div class="promise"><h3>Credential files stay out</h3><p>Not copied: <code>~/.claude.json</code>, credentials, transcripts and caches. <code>settings.json</code> only if you ask. A file whose new line looks like an API key or token is held back, not committed.</p></div>
       <div class="promise"><h3>You own the repository</h3><p>Plain git, on your disk and in your own private GitHub repository. No service to sign up for, no telemetry.</p></div>
     </div>
   </div>

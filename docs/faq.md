@@ -12,6 +12,8 @@ it. For what memsaga adds over the simplest setup, see
   What each hook costs, measured.
 - [Is there something like this for Windows?](#is-there-something-like-this-for-windows)
   Engram, a memory sync tool for Windows 11.
+- [What if Claude writes an API key into a memory file?](#what-if-claude-writes-an-api-key-into-a-memory-file)
+  The file is held back instead of committed.
 
 ## Why not skip Claude Code's memory and keep my own in a repository?
 
@@ -190,6 +192,19 @@ works differently from memsaga:
 Its README is in Traditional Chinese, with an English version. Tools that
 replace the built-in memory with their own, the other approach, are covered in
 [the first question](#why-not-skip-claude-codes-memory-and-keep-my-own-in-a-repository).
+
+## What if Claude writes an API key into a memory file?
+
+memsaga checks the lines each change adds before it commits. When a line
+looks like an API key, a token or a private key, that file is held back: it is
+not committed or pushed, the other files are, and the terminal names the file
+and the line. Once the line is gone, the file is committed. The check knows
+fixed key shapes (Anthropic, OpenAI, GitHub, AWS, Slack, Google and others), not
+every secret, so keep passwords and keys out of the files memsaga copies.
+Claude Code's own login is not copied either: it lives in the macOS Keychain,
+or in `~/.claude/.credentials.json` (Linux, and macOS when the Keychain cannot
+be written), which is not in memsaga's scope unless you add it.
+Details: [If a file is held back](../README.md#if-a-file-is-held-back).
 
 ## Questions and bugs
 

@@ -152,7 +152,11 @@ overwrites or deletes any repository file:
    Otherwise it is a hand edit: it goes on the incoming list with
    base = `HEAD:<path>` (none for a new file), and is left as it is.
 4. Commit. A hand edit is committed by this sweep like any other change, so it
-   enters history at once.
+   enters history at once. The exception is a file whose added lines look like
+   a key (grimmerk/memsaga#60): it is left out of the commit. When the held
+   file is memsaga's own copy (equal to what the mirror would write), it goes
+   back to its `HEAD` version, so step 3 never sees it as a hand edit later and
+   the key cannot travel back into a live file; a hand edit is only unstaged.
 
 The same check runs before a Read, Write or Edit of one file (step 3), so a
 hand edit made since the last sweep reaches the live file before it is used.

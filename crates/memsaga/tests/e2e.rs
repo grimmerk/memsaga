@@ -4475,3 +4475,26 @@ fn a_held_file_does_not_block_merging_an_origin_change_to_it() {
     git_at(&other, &["pull", "-q"]);
     assert!(!git_at(&other, &["log", "--all", "-p"]).contains(&key));
 }
+
+#[test]
+fn a_session_title_with_a_key_shape_is_left_out_of_the_commit() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let key = fake_key();
+    let transcript = fx.repo.parent().unwrap().join("t.jsonl");
+    write(
+        &transcript,
+        &format!("{{\"type\":\"custom-title\",\"customTitle\":\"use {key}\"}}\n"),
+    );
+    write(&fx.claude.join("CLAUDE.md"), "# changed\n");
+    hook(
+        &fx,
+        &format!(
+            "{{\"hook_event_name\":\"Stop\",\"session_id\":\"s1\",\"cwd\":\"/h/git/a\",\"transcript_path\":\"{}\"}}",
+            transcript.display()
+        ),
+    );
+    let msg = git(&fx, &["log", "-1", "--format=%B"]);
+    assert!(msg.starts_with("Stop: claude:CLAUDE.md\n"), "{msg}");
+    assert_key_in_no_commit(&fx, &key);
+}
