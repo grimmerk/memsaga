@@ -5183,7 +5183,7 @@ fn a_machine_that_stops_using_home_relative_names_keeps_the_others_memory() {
         Some("from alpha\n")
     );
     // Not checked here: the two machines still rename the directory back and
-    // forth on every sync (a commit each time), the open half of this case.
+    // forth on every sync (a commit each time), grimmerk/memsaga#65.
 }
 
 #[test]

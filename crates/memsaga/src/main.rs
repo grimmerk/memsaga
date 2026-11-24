@@ -1137,7 +1137,7 @@ fn cmd_status(n: usize, json: bool) -> Result<()> {
         println!("sweeps and syncs stopped: {e}");
     }
     if st.unrecorded_head {
-        println!("HEAD moved outside memsaga (a git pull or commit by hand, or a sync stopped half-way); the next sweep or sync takes what it changed as incoming");
+        println!("HEAD is not recorded yet (the first run of this version) or moved outside memsaga (a git pull or commit by hand, or a sync stopped half-way); the next sweep or sync records it and takes what changed as incoming");
     }
     if let Some(e) = &st.held_error {
         println!("nothing committed by the last sweep: {e}");

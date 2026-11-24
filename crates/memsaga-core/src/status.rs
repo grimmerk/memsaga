@@ -34,7 +34,8 @@ pub struct Status {
     /// Set when `incoming.json` cannot be read: every sweep and sync stops
     /// until it is fixed or removed.
     pub incoming_error: Option<String>,
-    /// HEAD moved since memsaga last recorded it (a `git pull` or commit by
+    /// HEAD is not recorded yet (the first run of a version with the record)
+    /// or moved since memsaga last recorded it (a `git pull` or commit by
     /// hand in the data repository, or a merge stopped before its record):
     /// the next sweep or sync records what it changed as incoming.
     pub unrecorded_head: bool,
