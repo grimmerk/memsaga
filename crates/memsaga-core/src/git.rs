@@ -309,18 +309,25 @@ impl<'a> Git<'a> {
         Ok(())
     }
 
-    /// Full sha of `rev` as a commit, or None when it does not resolve to one
-    /// (no commit yet, a missing ref, an object that is gone).
-    pub fn commit_of(&self, rev: &str) -> Option<String> {
+    /// Full sha of `rev` as a commit; None when it does not resolve to one
+    /// (no commit yet, a missing ref); an error when git fails otherwise, so
+    /// a transient failure is never read as "no commit".
+    pub fn commit_of(&self, rev: &str) -> Result<Option<String>> {
         let spec = format!("{rev}^{{commit}}");
-        self.run(&["rev-parse", "--verify", "-q", &spec])
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .filter(|s| !s.is_empty())
+        let out = self.run(&["rev-parse", "--verify", "-q", &spec])?;
+        match out.status.code() {
+            Some(0) => Ok(
+                Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+                    .filter(|s| !s.is_empty()),
+            ),
+            Some(1) => Ok(None),
+            _ => bail!(
+                "git rev-parse {spec} failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+        }
     }
 
-    /// Is `a` an ancestor of `b` (or equal to it)?
     /// An error when git cannot tell (an object it cannot read), never a
     /// "no": a wrong "no" would be taken as unrelated history.
     pub fn is_ancestor(&self, a: &str, b: &str) -> Result<bool> {

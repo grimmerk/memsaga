@@ -248,28 +248,28 @@ impl State {
         (events, position)
     }
 
-    /// The shas of the newest `max` events whose kind is one of `kinds` and
-    /// that name one, newest first, through the current log and then the
-    /// rotated ones.
-    pub fn recent_event_shas(&self, kinds: &[&str], max: usize) -> Vec<String> {
+    /// The shas of the events whose kind is one of `kinds` and that name one,
+    /// newest first, through the current log and then the rotated ones. A
+    /// log that exists but cannot be read is an error, not an empty history.
+    pub fn event_shas(&self, kinds: &[&str]) -> Result<Vec<String>> {
         let mut files = vec![self.marker("events.jsonl")];
         files.extend(self.rotated_logs().into_iter().rev().map(|(p, _)| p));
         let mut out = Vec::new();
         for f in files {
-            let text = std::fs::read_to_string(&f).unwrap_or_default();
-            for e in text
-                .lines()
-                .rev()
-                .filter_map(|l| serde_json::from_str::<Event>(l).ok())
-                .filter(|e| kinds.contains(&e.kind.as_str()) && !e.sha.is_empty())
-            {
-                if out.len() == max {
-                    return out;
-                }
-                out.push(e.sha);
-            }
+            let text = match std::fs::read(&f) {
+                Ok(b) => String::from_utf8_lossy(&b).to_string(),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e).with_context(|| format!("reading {}", f.display())),
+            };
+            out.extend(
+                text.lines()
+                    .rev()
+                    .filter_map(|l| serde_json::from_str::<Event>(l).ok())
+                    .filter(|e| kinds.contains(&e.kind.as_str()) && !e.sha.is_empty())
+                    .map(|e| e.sha),
+            );
         }
-        out
+        Ok(out)
     }
 
     /// Rotated logs (`events-*.jsonl`) with their inodes, oldest first.

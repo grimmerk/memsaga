@@ -81,14 +81,14 @@ pub fn lock_reconciled(cfg: &Config, state: &State, wait: Duration) -> Result<Lo
             });
         }
     }
-    let Some(head) = git.commit_of("HEAD") else {
+    let Some(head) = git.commit_of("HEAD")? else {
         sync::load_incoming(state)?;
         return Ok(Locked {
             _lock: lock,
             head: None,
         });
     };
-    match git.commit_of(RECORDED_REF) {
+    match git.commit_of(RECORDED_REF)? {
         Some(r) if r == head => {}
         Some(r) => reconcile(cfg, state, &git, Some(&r), &r, &head)?,
         // First run of a version with the record (an upgrade, a fresh
@@ -123,8 +123,12 @@ pub fn unrecorded_move(cfg: &Config) -> bool {
     }
     let git = Git::new(&cfg.repo);
     match git.commit_of("HEAD") {
-        None => false,
-        Some(head) => git.commit_of(RECORDED_REF).as_deref() != Some(head.as_str()),
+        Ok(None) => false,
+        Ok(Some(head)) => {
+            git.commit_of(RECORDED_REF).ok().flatten().as_deref() != Some(head.as_str())
+        }
+        // Unknown: say yes, so the caller reconciles and meets the error.
+        Err(_) => true,
     }
 }
 
@@ -172,8 +176,10 @@ pub struct Moved {
 /// the one rule for a merge by memsaga and for a change of `HEAD` found
 /// afterwards. When `to` does not contain `from` (history rewritten, a
 /// reset), only what changed on `to`'s side of `side` (their merge base)
-/// counts, and deletions are left out: what `from` had and `to` lacks was
-/// dropped, not changed elsewhere, and the live files keep it.
+/// counts: what `from` had and `to` lacks without a change on `to`'s side
+/// was dropped, not changed elsewhere, and the live files keep it (a reset
+/// to an older commit takes nothing), while a deletion on `to`'s side (origin
+/// deleted a file, then a `pull --rebase`) is taken like any other change.
 ///
 /// Skipped: a path already on the list (its base is older and still right);
 /// a gitlink (a nested repository: no file to write); a path whose live file
@@ -248,8 +254,7 @@ pub fn record_moves(
             continue;
         }
         if c.new.is_none()
-            && (rewritten
-                || kept_live.contains(target.live())
+            && (kept_live.contains(target.live())
                 || moved_elsewhere(cfg, git, &mut cat, to, &c.path, &target)?)
         {
             continue;
@@ -390,6 +395,9 @@ fn reconcile(
     from: &str,
     head: &str,
 ) -> Result<()> {
+    // What follows may write the working tree (memsaga's own stale copies
+    // put back): not over a conflict left half-way.
+    check_no_conflicts(cfg, git)?;
     // A git error stops here, with the recorded head left where it was: a
     // wrong "unrelated history" would record HEAD without its changes.
     let ancestor = git.is_ancestor(from, head)?;
@@ -419,7 +427,7 @@ fn reconcile(
     let how = match (&side, ancestor) {
         (_, true) => String::new(),
         (Some(_), false) => {
-            " (history rewritten or reset: only changes on its side were taken, no deletions)"
+            " (history rewritten or reset: only the changes on its side of the merge base were taken)"
                 .into()
         }
         (None, false) => " (no common history: nothing taken)".into(),
@@ -445,21 +453,39 @@ fn reconcile(
 /// Where to start recording on the first run: the newest commit memsaga made,
 /// merged or recorded here (from the event log) that `HEAD` still contains.
 /// Newer ones `HEAD` does not contain were dropped by a reset, and a commit
-/// made by hand on top of the reset is still found from an older one. The
-/// newest `BOOTSTRAP_EVENTS` are tried, once per machine.
+/// made by hand on top of the reset is still found from an older one. Every
+/// event is tried, against one `git rev-list` of `HEAD`'s history, once per
+/// machine. An event log that cannot be read stops here: starting from
+/// `HEAD` would hide whatever changed since memsaga's last commit.
 fn bootstrap_start(state: &State, git: &Git, head: &str) -> Result<Option<String>> {
-    for sha in state.recent_event_shas(&["commit", "merge", "recovered"], BOOTSTRAP_EVENTS) {
-        let Some(full) = git.commit_of(&sha) else {
-            continue;
-        };
-        if git.is_ancestor(&full, head)? {
-            return Ok(Some(full));
-        }
+    let shas = state.event_shas(&["commit", "merge", "recovered"])?;
+    if shas.is_empty() {
+        return Ok(None);
     }
-    Ok(None)
+    let mut history: Vec<String> = git
+        .run_ok(&["rev-list", head])?
+        .lines()
+        .map(str::to_string)
+        .collect();
+    history.sort();
+    Ok(shas
+        .iter()
+        .find_map(|sha| commit_with_prefix(&history, sha)))
 }
 
-const BOOTSTRAP_EVENTS: usize = 50;
+/// The one commit in sorted `history` whose id starts with `prefix` (an
+/// event's short sha); None when none does, or more than one.
+fn commit_with_prefix(history: &[String], prefix: &str) -> Option<String> {
+    if prefix.len() < 4 || !prefix.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let start = history.partition_point(|h| h.as_str() < prefix);
+    let mut hits = history[start..]
+        .iter()
+        .take_while(|h| h.starts_with(prefix));
+    let first = hits.next()?;
+    hits.next().is_none().then(|| first.clone())
+}
 
 /// Move the ref to `new`; with `old`, only if it still points there.
 fn set_recorded(git: &Git, old: Option<&str>, new: &str) -> Result<()> {
@@ -589,7 +615,7 @@ mod tests {
         std::fs::write(dir.join("f"), "x\n").unwrap();
         run(&["add", "f"]);
         run(&["commit", "-q", "-m", "one"]);
-        let head = git.commit_of("HEAD").unwrap();
+        let head = git.commit_of("HEAD").unwrap().unwrap();
         run(&["update-ref", RECORDED_REF, &head]);
         let dot = dir.join(".git");
         assert_eq!(read_head(&dot).as_deref(), Some(head.as_str()));
@@ -602,7 +628,7 @@ mod tests {
         // A loose ref written later wins over its packed copy.
         std::fs::write(dir.join("f"), "y\n").unwrap();
         run(&["commit", "-q", "-am", "two"]);
-        let next = git.commit_of("HEAD").unwrap();
+        let next = git.commit_of("HEAD").unwrap().unwrap();
         assert_eq!(read_head(&dot).as_deref(), Some(next.as_str()));
         let _ = std::fs::remove_dir_all(&dir);
     }

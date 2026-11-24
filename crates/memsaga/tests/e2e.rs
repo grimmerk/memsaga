@@ -5426,3 +5426,51 @@ fn an_edit_from_elsewhere_to_a_file_this_machine_never_had_is_written_here() {
     assert!(!two.exists(), "a deletion here was undone");
     assert!(out.contains("conflict") && out.contains("two.md"), "{out}");
 }
+
+#[test]
+fn a_deletion_from_origin_reached_through_a_pull_rebase_is_taken() {
+    let fx = fixture("turn", "");
+    let two = fx.claude.join("projects/-h-git-a/memory/two.md");
+    write(&two, "two\n");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    // A local commit not pushed yet; origin deletes a file meanwhile.
+    touch_memory(&fx, "- idx\n- local\n", "s1");
+    push_from_other(&other, "claude/memory/-h-git-a/two.md", None);
+    let b = branch(&fx);
+    git_at(&fx.repo, &["pull", "-q", "--rebase", "origin", &b]);
+    run(&fx, &["sync"]);
+    assert!(
+        !two.exists(),
+        "origin's deletion did not reach the live side"
+    );
+    git_at(&other, &["pull", "-q"]);
+    assert!(
+        !other.join("claude/memory/-h-git-a/two.md").exists(),
+        "the next push undid origin's deletion"
+    );
+    assert_eq!(
+        fs::read_to_string(other.join("claude/memory/-h-git-a/MEMORY.md")).unwrap(),
+        "- idx\n- local\n"
+    );
+}
+
+#[test]
+fn an_unreadable_event_log_stops_the_first_run_instead_of_starting_at_head() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let rel = "claude/memory/-h-git-a/one.md";
+    fs::write(fx.repo.join(rel), "committed by hand\n").unwrap();
+    git_at(&fx.repo, &["commit", "-q", "-am", "by hand"]);
+    git(&fx, &["update-ref", "-d", "refs/memsaga/recorded"]);
+    let log = fx.repo.join(".git/memsaga/events.jsonl");
+    fs::set_permissions(&log, fs::Permissions::from_mode(0o000)).unwrap();
+    let out = cmd(&fx).arg("sweep").output().unwrap();
+    fs::set_permissions(&log, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(!out.status.success(), "{out:?}");
+    assert_eq!(
+        git(&fx, &["show", &format!("HEAD:{rel}")]),
+        "committed by hand\n"
+    );
+}

@@ -263,7 +263,10 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
         }
     });
     events.truncate(n_events);
-    let incoming = crate::sync::load_incoming(&state);
+    let (incoming_list, incoming_error) = match crate::sync::load_incoming(&state) {
+        Ok(list) => (list, None),
+        Err(e) => (Default::default(), Some(format!("{e:#}"))),
+    };
     Status {
         schema: SCHEMA_VERSION,
         repo: cfg.repo.clone(),
@@ -274,8 +277,8 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
         dirty: state.exists("dirty"),
         origin,
         roots,
-        incoming: incoming.as_ref().cloned().unwrap_or_default(),
-        incoming_error: incoming.err().map(|e| format!("{e:#}")),
+        incoming: incoming_list,
+        incoming_error,
         unrecorded_head: crate::recorded::unrecorded_move(cfg),
         repo_blocked: crate::recorded::blocker(cfg).or_else(|| {
             crate::recorded::check_no_conflicts(cfg, &git)

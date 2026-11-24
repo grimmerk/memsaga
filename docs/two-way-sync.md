@@ -227,10 +227,12 @@ merge, settle and per-file check takes the sweep lock through one function,
    files, without a git process.
 3. No recorded head yet (the first run after an upgrade, or a fresh clone):
    start from the newest commit memsaga made or merged on this machine, taken
-   from the event log, that `HEAD` still contains (newer ones a reset dropped
-   are passed over, so a commit made by hand after the reset is still
-   found); with none, from `HEAD`. A git error here, or anywhere in this
-   list, stops the run and leaves the recorded head where it was.
+   from the event log, that `HEAD` still contains (every event is tried,
+   against one `git rev-list` of `HEAD`; newer ones a reset dropped are
+   passed over, so a commit made by hand after the reset is still found);
+   with none, from `HEAD`. An event log that cannot be read, or a git error
+   here or anywhere in this list, stops the run and leaves the recorded
+   head where it was.
 4. Otherwise compare the recorded head with `HEAD` (one `git diff --raw`).
    Every changed file with a live side goes on the incoming list, with its
    version at the recorded head as base, exactly as a merge by memsaga lists
@@ -251,9 +253,12 @@ merge, settle and per-file check takes the sweep lock through one function,
    - a nested repository (a gitlink), which has no file to write.
 5. When `HEAD` no longer contains the recorded head (history rewritten by a
    `git reset` or a `git pull --rebase`), only the files changed on `HEAD`'s
-   side of the two commits' merge base count, and deletions never do. A
-   reset back to an older commit therefore takes nothing, and the live files
-   win, as before; a rebase onto origin still takes origin's changes.
+   side of the two commits' merge base count. A reset back to an older
+   commit therefore takes nothing (the merge base is `HEAD` itself), and the
+   live files win, as before; a rebase onto origin takes origin's changes,
+   its deletions included, so the next push does not undo them. What the
+   recorded head had and `HEAD` lacks without a change on `HEAD`'s side
+   (commits a rewrite dropped) is not taken: the live files keep it.
 6. Save the list, then move the recorded head to `HEAD`, and log a
    `recovered` event with the files.
 
@@ -280,9 +285,9 @@ so a file marked assume-unchanged or skip-worktree cannot hide an edit, and
 a file that changed after that moment is hashed again); and settle reads
 every base version through one `git cat-file --batch` process. Measured on 2026-11-25 with a throwaway data
 repository: a `memsaga sync` that brings in 300 changed and 300 new files
-went from 54 s and 2,731 git processes to 2.5 s and 91; a sweep that commits
-costs two more git processes than before (about 40 ms), and the idle hooks
-cost the same.
+went from 49.9 s and 2,731 git processes to 3.1 s and 91; a sweep that
+commits costs two more git processes than before (about 37 ms), and the idle
+hooks cost the same.
 
 ## 5. The incoming list
 

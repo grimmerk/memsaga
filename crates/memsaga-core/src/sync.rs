@@ -860,7 +860,7 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
         }
     }
     let merged = git
-        .commit_of("HEAD")
+        .commit_of("HEAD")?
         .context("reading HEAD after the merge")?;
     let head = git.head_short()?;
     // One `git diff --raw` for the whole merge (B's catch-up of ~6,700 files
