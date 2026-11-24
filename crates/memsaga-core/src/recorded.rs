@@ -488,3 +488,42 @@ pub fn check_no_conflicts(cfg: &Config, git: &Git) -> Result<()> {
 fn short(sha: &str) -> &str {
     &sha[..sha.len().min(8)]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{read_head, read_ref, RECORDED_REF};
+    use crate::git::Git;
+
+    #[test]
+    fn refs_read_from_files_match_git_loose_and_packed() {
+        let dir = std::env::temp_dir().join(format!("memsaga-refs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = Git::new(&dir);
+        let run = |args: &[&str]| {
+            let mut a = vec!["-c", "user.name=t", "-c", "user.email=t@t"];
+            a.extend_from_slice(args);
+            git.run_ok(&a).unwrap()
+        };
+        run(&["init", "-q"]);
+        std::fs::write(dir.join("f"), "x\n").unwrap();
+        run(&["add", "f"]);
+        run(&["commit", "-q", "-m", "one"]);
+        let head = git.commit_of("HEAD").unwrap();
+        run(&["update-ref", RECORDED_REF, &head]);
+        let dot = dir.join(".git");
+        assert_eq!(read_head(&dot).as_deref(), Some(head.as_str()));
+        assert_eq!(read_ref(&dot, RECORDED_REF).as_deref(), Some(head.as_str()));
+        // After `git gc` or `git pack-refs` the refs live in packed-refs.
+        run(&["pack-refs", "--all", "--prune"]);
+        assert!(!dot.join(RECORDED_REF).exists());
+        assert_eq!(read_head(&dot).as_deref(), Some(head.as_str()));
+        assert_eq!(read_ref(&dot, RECORDED_REF).as_deref(), Some(head.as_str()));
+        // A loose ref written later wins over its packed copy.
+        std::fs::write(dir.join("f"), "y\n").unwrap();
+        run(&["commit", "-q", "-am", "two"]);
+        let next = git.commit_of("HEAD").unwrap();
+        assert_eq!(read_head(&dot).as_deref(), Some(next.as_str()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

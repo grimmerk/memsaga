@@ -5064,3 +5064,44 @@ fn an_explicit_backfill_never_brings_old_versions_to_the_live_files() {
         "current\n"
     );
 }
+
+#[test]
+fn deleting_a_second_copy_of_a_live_file_never_deletes_the_live_file() {
+    // A copy under an older layout, committed and later deleted by hand
+    // while the file's own path stays: the deletion removed a duplicate.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let legacy = "claude/projects/-h-git-a/memory/one.md";
+    write(&fx.repo.join(legacy), "fact\n");
+    git_at(&fx.repo, &["add", "--", legacy]);
+    git_at(&fx.repo, &["commit", "-q", "-m", "a second copy"]);
+    run(&fx, &["pull"]);
+    git_at(&fx.repo, &["rm", "-q", "--", legacy]);
+    git_at(&fx.repo, &["commit", "-q", "-m", "the second copy removed"]);
+    run(&fx, &["sync"]);
+    assert_eq!(fs::read_to_string(live_one(&fx)).unwrap(), "fact\n");
+    assert!(head_files(&fx)
+        .iter()
+        .any(|f| f == "claude/memory/-h-git-a/one.md"));
+}
+
+#[test]
+fn a_session_start_after_a_pull_by_hand_brings_claude_md_in() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "claude/CLAUDE.md", Some("# from elsewhere\n"));
+    let b = branch(&fx);
+    git(&fx, &["pull", "-q", "--no-rebase", "origin", &b]);
+    // Origin's answer is fresh and says "not moved"; only the record knows.
+    run(&fx, &["pull", "--check", "--max-age", "0"]);
+    let out = hook(
+        &fx,
+        &hook_json("SessionStart", "s1", ",\"source\":\"startup\""),
+    );
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("CLAUDE.md")).unwrap(),
+        "# from elsewhere\n"
+    );
+    assert!(out.contains("CLAUDE.md"), "{out}");
+}
