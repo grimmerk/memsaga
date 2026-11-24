@@ -321,19 +321,26 @@ impl<'a> Git<'a> {
 
     /// The paths that differ between two commits, with the blob on each
     /// side (None where the path does not exist), from one `git diff --raw`.
-    /// No rename detection: a rename is a deletion and an addition.
+    /// A rename (found by git's own detection, asked for explicitly so the
+    /// user's `diff.renames` does not decide) is one entry for the new path,
+    /// added, naming the old path in `moved_from`: the old path is not listed
+    /// as deleted. Another machine moving a memory directory to the name it
+    /// uses is a rename, and reading it as a deletion would delete this
+    /// machine's live file (the merges before 0.1.6 listed only new paths
+    /// too, through `git diff --name-only`'s rename detection).
     pub fn changes(&self, from: &str, to: &str) -> Result<Vec<Change>> {
         let out = self.run_ok(&[
             "diff",
             "--raw",
             "-z",
-            "--no-renames",
+            "--find-renames",
             "--no-abbrev",
             "--no-ext-diff",
             from,
             to,
         ])?;
-        // `:<old mode> <new mode> <old id> <new id> <status>` NUL `<path>` NUL
+        // `:<old mode> <new mode> <old id> <new id> <status>` NUL `<path>` NUL,
+        // and for a rename (`R<score>`) NUL `<old path>` NUL `<new path>` NUL.
         let mut fields = out.split('\0');
         let mut list = Vec::new();
         while let Some(meta) = fields.next() {
@@ -348,12 +355,25 @@ impl<'a> Git<'a> {
             let id = |mode: &str, id: &str| {
                 (mode != "000000" && id.bytes().any(|b| b != b'0')).then(|| id.to_string())
             };
+            if parts[4].starts_with('R') || parts[4].starts_with('C') {
+                let Some(new_path) = fields.next() else { break };
+                list.push(Change {
+                    path: new_path.to_string(),
+                    old: None,
+                    new: id(parts[1], parts[3]),
+                    old_mode: "000000".to_string(),
+                    new_mode: parts[1].to_string(),
+                    moved_from: Some(path.to_string()),
+                });
+                continue;
+            }
             list.push(Change {
                 path: path.to_string(),
                 old: id(parts[0], parts[2]),
                 new: id(parts[1], parts[3]),
                 old_mode: parts[0].to_string(),
                 new_mode: parts[1].to_string(),
+                moved_from: None,
             });
         }
         Ok(list)
@@ -382,6 +402,8 @@ pub struct Change {
     pub new: Option<String>,
     pub old_mode: String,
     pub new_mode: String,
+    /// For a rename: the path it moved from (listed nowhere else).
+    pub moved_from: Option<String>,
 }
 
 /// Reads many objects through one `git cat-file --batch` process, one at a

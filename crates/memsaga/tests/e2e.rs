@@ -5127,3 +5127,86 @@ fn a_merge_on_push_is_recorded_so_a_later_live_edit_is_committed() {
     );
     assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
 }
+
+/// Each machine decides on its own whether it can store memory under
+/// home-relative names (`HOME-…`): a directory elsewhere whose name starts
+/// like its home makes it keep live names, and that can change on a machine
+/// when such a directory appears. Machines that decide differently must
+/// still keep each other's memory where Claude reads it: the other machine's
+/// rename of the directory is not a deletion of this machine's live file.
+#[test]
+fn a_machine_that_stops_using_home_relative_names_keeps_the_others_memory() {
+    let tmp = TempDir::new().unwrap();
+    let a = Machine::new(tmp.path(), "alpha");
+    let b = Machine::new(tmp.path(), "beta");
+    let on_a = a.memory_dir("git/webapp").join("fact.md");
+    write(&on_a, "from alpha\n");
+    a.run(&["init", "--no-backfill"]);
+    let origin = tmp.path().join("origin.git");
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q", "--bare"])
+        .arg(&origin)
+        .status()
+        .unwrap()
+        .success());
+    plain_git(
+        &a.repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    a.run(&["push"]);
+    assert!(std::process::Command::new("git")
+        .args(["clone", "-q"])
+        .arg(&origin)
+        .arg(&b.repo)
+        .status()
+        .unwrap()
+        .success());
+    b.run(&["restore", "--all", "--yes"]);
+    let on_b = b.memory_dir("git/webapp").join("fact.md");
+    assert_eq!(fs::read_to_string(&on_b).unwrap(), "from alpha\n");
+    b.run(&["sync"]);
+    // Later a directory appears whose name starts like beta's home: from
+    // now on beta keeps live names.
+    fs::create_dir_all(tmp.path().join("beta-old")).unwrap();
+    for _ in 0..2 {
+        b.run(&["sync"]);
+        a.run(&["sync"]);
+    }
+    let files = plain_git(&a.repo, &["ls-files", "claude/memory"]);
+    assert_eq!(
+        fs::read_to_string(&on_a).ok().as_deref(),
+        Some("from alpha\n"),
+        "alpha lost its memory; repository: {files}"
+    );
+    assert_eq!(
+        fs::read_to_string(&on_b).ok().as_deref(),
+        Some("from alpha\n")
+    );
+    // Not checked here: the two machines still rename the directory back and
+    // forth on every sync (a commit each time), the open half of this case.
+}
+
+#[test]
+fn a_move_within_the_repository_that_git_cannot_see_as_a_rename_keeps_the_live_file() {
+    // Moved to the older layout and rewritten in the same commit: git lists
+    // a deletion and an addition, and both paths stand for one live file.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    fs::create_dir_all(fx.repo.join("claude/projects/-h-git-a/memory")).unwrap();
+    git_at(
+        &fx.repo,
+        &[
+            "mv",
+            "claude/memory/-h-git-a/one.md",
+            "claude/projects/-h-git-a/memory/one.md",
+        ],
+    );
+    fs::write(
+        fx.repo.join("claude/projects/-h-git-a/memory/one.md"),
+        "an entirely different text\nwith nothing in common\n",
+    )
+    .unwrap();
+    git_at(&fx.repo, &["commit", "-q", "-am", "moved and rewritten"]);
+    run(&fx, &["pull"]);
+    assert!(live_one(&fx).exists(), "the live file was deleted");
+}
