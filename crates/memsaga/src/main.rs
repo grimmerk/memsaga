@@ -445,7 +445,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Backfill { group_window } => {
             let cfg = Config::load()?;
             let r = backfill::backfill(&cfg, group_window)?;
-            println!("backfill: {} ops, {} commits, {} versions known / {} unknown, {} failed calls dropped, {} held back, {} .. {}", r.ops, r.commits, r.known_versions, r.unknown_versions, r.failed_dropped, r.held, r.first_ts, r.last_ts);
+            println!("backfill: {} ops, {} commits, {} versions known / {} unknown, {} failed calls dropped, {} held back, {} left out (waiting for the live side), {} .. {}", r.ops, r.commits, r.known_versions, r.unknown_versions, r.failed_dropped, r.held, r.waiting, r.first_ts, r.last_ts);
             Ok(())
         }
         Cmd::Companions { repo } => {

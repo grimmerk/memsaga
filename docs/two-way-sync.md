@@ -354,8 +354,9 @@ B = base, R = repository file.
      │ no
   L missing? ── R != B ──▶ write R: an edit elsewhere wins over a
      │          │           deletion here (the deletion stays in history)
-     │          └─ R == B ─▶ only the deletion here: drop the entry, the next
-     │                       sweep commits it
+     │          └─ R == B ─▶ only the deletion here: drop the entry; the next
+     │                       sweep takes it as any live deletion (committed
+     │                       if this machine had the file, else absent, §4)
      │ no
   both changed:
      git merge-file L B R ── clean ──▶ write the merged text to the live file

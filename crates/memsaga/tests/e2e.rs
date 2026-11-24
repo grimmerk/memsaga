@@ -4908,24 +4908,40 @@ fn a_sweep_stopped_between_its_commit_and_its_record_is_not_taken_for_a_change_f
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
     let one = live_one(&fx);
+    // An edit and a new file in the same sweep.
+    let added = fx.claude.join("projects/-h-git-a/memory/added.md");
     write(&one, "committed by a sweep\n");
+    write(&added, "added by the same sweep\n");
     hook(&fx, &post_tool_use(&one, "s1"));
     hook(&fx, &stop("s1"));
     // As a sweep stopped right after `git commit` leaves it: the record
-    // still at the previous commit, the copy still on the uncommitted list.
-    let blob = git(&fx, &["rev-parse", "HEAD:claude/memory/-h-git-a/one.md"]);
+    // still at the previous commit, the copies still on the uncommitted list.
+    let blob = |rel: &str| {
+        git(&fx, &["rev-parse", &format!("HEAD:{rel}")])
+            .trim()
+            .to_string()
+    };
     write(
         &fx.repo.join(".git/memsaga/preview.json"),
-        &format!("{{\"claude/memory/-h-git-a/one.md\":\"{}\"}}", blob.trim()),
+        &format!(
+            "{{\"claude/memory/-h-git-a/one.md\":\"{}\",\"claude/memory/-h-git-a/added.md\":\"{}\"}}",
+            blob("claude/memory/-h-git-a/one.md"),
+            blob("claude/memory/-h-git-a/added.md")
+        ),
     );
     git(&fx, &["update-ref", "refs/memsaga/recorded", "HEAD~1"]);
-    // The live file moves on before the next sweep.
+    // The live files move on before the next sweep.
     write(&one, "edited again\n");
+    write(&added, "added, then edited\n");
     hook(&fx, &post_tool_use(&one, "s2"));
     hook(&fx, &stop("s2"));
     assert_eq!(
         git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
         "edited again\n"
+    );
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/added.md"]),
+        "added, then edited\n"
     );
     assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
 }

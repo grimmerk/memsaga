@@ -270,7 +270,9 @@ pub fn record_moves(
         }
         // memsaga's own copy, committed: only when the mode did not change
         // too (the copy's record holds content, not the executable bit).
-        if c.new.is_some() && uncommitted.get(&c.path) == c.new.as_ref() && c.old_mode == c.new_mode
+        if c.new.is_some()
+            && uncommitted.get(&c.path) == c.new.as_ref()
+            && (c.old.is_none() || c.old_mode == c.new_mode)
         {
             continue;
         }

@@ -57,6 +57,9 @@ pub struct Report {
     /// (grimmerk/memsaga#60): a key pasted once and removed long ago would
     /// otherwise enter history through the replay.
     pub held: usize,
+    /// Versions left out because the file waits on the incoming list: the
+    /// newer repository version is delivered to the live side instead.
+    pub waiting: usize,
     pub first_ts: String,
     pub last_ts: String,
 }
@@ -128,9 +131,11 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
         // an existing repository) is left exactly as it is.
         let mut written_now: HashSet<PathBuf> = HashSet::new();
         for (rel, content) in versions {
-            if latest.get(&rel) == Some(&content)
-                || waiting.contains_key(rel.to_string_lossy().as_ref())
-            {
+            if latest.get(&rel) == Some(&content) {
+                continue;
+            }
+            if waiting.contains_key(rel.to_string_lossy().as_ref()) {
+                report.waiting += 1;
                 continue;
             }
             let dst = cfg.repo.join(&rel);
@@ -211,10 +216,11 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
         kind: "backfill".into(),
         event: "init".into(),
         message: format!(
-            "ops={} commits={} held={} known={} unknown={} dropped={} range={}..{}",
+            "ops={} commits={} held={} waiting={} known={} unknown={} dropped={} range={}..{}",
             report.ops,
             report.commits,
             report.held,
+            report.waiting,
             report.known_versions,
             report.unknown_versions,
             report.failed_dropped,

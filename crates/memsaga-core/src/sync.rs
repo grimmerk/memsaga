@@ -834,16 +834,6 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
     }
     let merge = git.run(&["merge", "--no-edit", "-q", "-m", &message, &remote])?;
     if !merge.status.success() {
-        // Refused because someone else's merge is in progress (started in the
-        // moment since the check above): it is theirs, never aborted here.
-        let stderr = String::from_utf8_lossy(&merge.stderr);
-        if stderr.contains("not concluded your merge") || stderr.contains("MERGE_HEAD exists") {
-            bail!(
-                "a merge started in the data repository {} while memsaga was merging; it was left as it is: {}",
-                cfg.repo.display(),
-                stderr.trim()
-            );
-        }
         let conflicted: Vec<String> = git
             .run_ok(&["diff", "--name-only", "-z", "--diff-filter=U"])
             .unwrap_or_default()
@@ -1175,7 +1165,9 @@ fn settle_one(
     // Missing here. Changed elsewhere: the edit wins over a deletion here
     // (written, as a new file is; the deletion stays in history), whether
     // this machine ever had the file or not. Unchanged elsewhere: only the
-    // deletion here is left, which the next sweep commits.
+    // deletion here is left, and the next sweep takes it as it takes any
+    // live deletion (committed when this machine had the file, else kept
+    // and listed as absent, §4 of docs/two-way-sync.md).
     if l.is_none()
         && matches!(std::fs::symlink_metadata(target.live()), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
     {
