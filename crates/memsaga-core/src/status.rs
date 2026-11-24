@@ -277,7 +277,7 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
         incoming: incoming.as_ref().cloned().unwrap_or_default(),
         incoming_error: incoming.err().map(|e| format!("{e:#}")),
         unrecorded_head: crate::recorded::unrecorded_move(cfg),
-        repo_blocked: crate::recorded::blocker(cfg, &state).or_else(|| {
+        repo_blocked: crate::recorded::blocker(cfg).or_else(|| {
             crate::recorded::check_no_conflicts(cfg, &git)
                 .err()
                 .map(|e| format!("{e:#}"))

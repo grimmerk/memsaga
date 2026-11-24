@@ -419,30 +419,43 @@ fn hash_of(git: &Git, abs: &Path) -> Option<String> {
 
 /// `hash_of` for many files in one git process (`--stdin-paths`), in order.
 /// Falls back to one process per file when the batch cannot be used: a path
-/// git would read differently from a line (a newline or carriage return in
-/// it, since git drops a trailing `\r`; a leading `"`, which it unquotes), or
-/// a file that vanished (git then stops at it).
+/// git would read differently from a line (see `batchable`), or a file that
+/// vanished (git then stops at it).
 pub(crate) fn hash_many(git: &Git, paths: &[&PathBuf]) -> Vec<Option<String>> {
-    use std::os::unix::ffi::OsStrExt;
-    let mut input = Vec::new();
-    for p in paths {
-        let bytes = p.as_os_str().as_bytes();
-        if bytes.contains(&b'\n') || bytes.contains(&b'\r') || bytes.first() == Some(&b'"') {
-            return paths.iter().map(|p| hash_of(git, p)).collect();
-        }
-        input.extend_from_slice(bytes);
-        input.push(b'\n');
-    }
-    if let Ok(out) = git.run_with_input(&["hash-object", "--stdin-paths"], input) {
-        let ids: Vec<String> = String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .map(str::to_string)
-            .collect();
-        if out.status.success() && ids.len() == paths.len() {
+    if paths.iter().all(|p| batchable(p)) {
+        if let Some(ids) = hash_batch(git, paths) {
             return ids.into_iter().map(Some).collect();
         }
     }
     paths.iter().map(|p| hash_of(git, p)).collect()
+}
+
+/// Can git read `p` back from one line of `--stdin-paths`? Not with a
+/// newline or carriage return in it (git drops a trailing `\r`) or a leading
+/// `"` (which it unquotes).
+fn batchable(p: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let bytes = p.as_os_str().as_bytes();
+    !(bytes.contains(&b'\n') || bytes.contains(&b'\r') || bytes.first() == Some(&b'"'))
+}
+
+/// One `git hash-object --stdin-paths` for `paths` (all `batchable`); None
+/// when it fails as a whole, never one process per file.
+fn hash_batch(git: &Git, paths: &[&PathBuf]) -> Option<Vec<String>> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut input = Vec::new();
+    for p in paths {
+        input.extend_from_slice(p.as_os_str().as_bytes());
+        input.push(b'\n');
+    }
+    let out = git
+        .run_with_input(&["hash-object", "--stdin-paths"], input)
+        .ok()?;
+    let ids: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    (out.status.success() && ids.len() == paths.len()).then_some(ids)
 }
 
 /// Handed to the mirror for one sweep (step 1b).
@@ -510,13 +523,22 @@ impl HeadView {
                 (t > since).then(|| (e.into_path(), t, m.len()))
             })
             .collect();
-        let paths: Vec<&PathBuf> = newer.iter().map(|(p, _, _)| p).collect();
-        let ids = hash_many(git, &paths);
-        let hashed = newer
-            .iter()
-            .zip(ids)
-            .filter_map(|((p, t, len), id)| Some((p.clone(), (*t, *len, id?))))
-            .collect();
+        // One batch for the paths git can read from a line; a path it cannot,
+        // or a batch that fails (a file removed meanwhile), is left out and
+        // hashed on its own if the guard ever asks about it. Never one
+        // process per file for the whole repository.
+        let batch: Vec<&(PathBuf, SystemTime, u64)> =
+            newer.iter().filter(|(p, _, _)| batchable(p)).collect();
+        let paths: Vec<&PathBuf> = batch.iter().map(|(p, _, _)| p).collect();
+        let hashed = hash_batch(git, &paths)
+            .map(|ids| {
+                batch
+                    .iter()
+                    .zip(ids)
+                    .map(|((p, t, len), id)| (p.clone(), (*t, *len, id)))
+                    .collect()
+            })
+            .unwrap_or_default();
         HeadView { blobs, hashed }
     }
 }
@@ -798,11 +820,6 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
         .context("no commit to merge into")?
         .to_string();
     let message = format!("sync: merge {remote}");
-    // Marks this merge as memsaga's until the function returns: one stopped
-    // half-way (MERGE_HEAD naming this commit) may then be aborted by the
-    // next run, and one started by hand never is.
-    let remote_sha = git.commit_of(&remote).context("reading origin's head")?;
-    let _merging = crate::recorded::mark_merge(&state, &remote_sha)?;
     let merge = git.run(&["merge", "--no-edit", "-q", "-m", &message, &remote])?;
     if !merge.status.success() {
         let conflicted: Vec<String> = git

@@ -214,14 +214,15 @@ merge, settle and per-file check takes the sweep lock through one function,
 
 1. Refuse while the data repository is half-way through a merge, a rebase, a
    cherry-pick or a revert (one commit or a sequence): its working tree then
-   holds conflict markers or half-applied commits. memsaga's own merge,
-   stopped half-way, is aborted instead, and the next sync merges again; it
-   is recognised by `.git/memsaga/merging`, which memsaga writes before its
-   `git merge` with the commit it merges and removes afterwards, so a merge
-   started by hand is never aborted, whatever its message. A sweep and a
-   settle also refuse while the index holds unresolved conflicts (a
-   `git stash pop` that conflicted leaves no other trace). `memsaga status`
-   names the reason.
+   holds conflict markers or half-applied commits. A sweep and a settle also
+   refuse while the index holds unresolved conflicts (a `git stash pop` that
+   conflicted leaves no other trace). `memsaga status` names the reason and
+   the git command that ends it. A merge is never aborted for the user, not
+   even one memsaga started and was stopped in (killed in the moment between
+   a conflict and its own `git merge --abort`; its `.git/MERGE_MSG` begins
+   `sync: merge origin/`): nothing proves which process started a merge,
+   and aborting someone else's would throw away their conflict
+   resolutions.
 2. Recorded head equal to `HEAD`: nothing to do. Both are read from their
    files, without a git process.
 3. No recorded head yet (the first run after an upgrade, or a fresh clone):

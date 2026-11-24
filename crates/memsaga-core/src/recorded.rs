@@ -67,7 +67,7 @@ impl Locked {
 pub fn lock_reconciled(cfg: &Config, state: &State, wait: Duration) -> Result<Locked> {
     let lock = state.lock(wait).context("sweep lock")?;
     let git = Git::new(&cfg.repo);
-    check_not_busy(cfg, &git, state)?;
+    check_not_busy(cfg)?;
     // The usual case, read from the files without a git process.
     let dir = cfg.repo.join(".git");
     if let Some(head) = read_head(&dir) {
@@ -476,80 +476,59 @@ fn set_recorded(git: &Git, old: Option<&str>, new: &str) -> Result<()> {
 /// a sweep would commit them or settle would write them to the live files.
 /// memsaga's own merge, stopped before it finished, is aborted instead: the
 /// next sync merges again.
-fn check_not_busy(cfg: &Config, git: &Git, state: &State) -> Result<()> {
-    let dir = cfg.repo.join(".git");
-    let mark = state.read_marker(MERGING);
-    if own_merge_stopped(&dir, mark.as_deref()) {
-        git.run_ok(&["merge", "--abort"])
-            .context("aborting memsaga's unfinished merge")?;
-        let text = "aborted an unfinished merge of origin that memsaga had started; the next sync merges again";
-        state.log(text);
-        state.append_event(&Event {
-            ts: state::now_rfc3339(),
-            kind: "error".into(),
-            event: "sync".into(),
-            message: text.into(),
-            ..Default::default()
-        })?;
-    }
-    if mark.is_some() && !dir.join("MERGE_HEAD").exists() {
-        state.remove(MERGING); // the merge finished or was aborted
-    }
-    match blocker(cfg, state) {
+fn check_not_busy(cfg: &Config) -> Result<()> {
+    match blocker(cfg) {
         Some(reason) => bail!(reason),
         None => Ok(()),
     }
 }
 
-/// State file naming the commit memsaga is merging, written just before its
-/// `git merge` and removed after it: the only proof that a merge stopped
-/// half-way is memsaga's own, and so may be aborted.
-pub const MERGING: &str = "merging";
-
-/// Holding this value marks memsaga's merge of `sha` as running.
-pub struct MergeMark<'a> {
-    state: &'a State,
-}
-
-pub fn mark_merge<'a>(state: &'a State, sha: &str) -> Result<MergeMark<'a>> {
-    state.write_marker(MERGING, sha)?;
-    Ok(MergeMark { state })
-}
-
-impl Drop for MergeMark<'_> {
-    fn drop(&mut self) {
-        self.state.remove(MERGING);
-    }
-}
-
-/// A merge is in progress, and it is the one memsaga marked.
-fn own_merge_stopped(dir: &std::path::Path, mark: Option<&str>) -> bool {
-    let Some(mark) = mark.filter(|m| !m.is_empty()) else {
-        return false;
-    };
-    std::fs::read_to_string(dir.join("MERGE_HEAD")).is_ok_and(|h| h.trim() == mark)
-}
-
 /// Why memsaga would change nothing in the data repository now, if it would
 /// not: a git operation left half-way. Read-only, for `status` too.
-pub fn blocker(cfg: &Config, state: &State) -> Option<String> {
+///
+/// A merge is never aborted for the user, not even one memsaga started and
+/// was stopped in (its `.git/MERGE_MSG` then begins `sync: merge origin/`):
+/// nothing can prove which process started a merge, and aborting someone
+/// else's would throw away their conflict resolutions. memsaga's own merge
+/// stops half-way only when it is killed in the moment between a conflict
+/// and its own `git merge --abort`.
+pub fn blocker(cfg: &Config) -> Option<String> {
     let dir = cfg.repo.join(".git");
-    if own_merge_stopped(&dir, state.read_marker(MERGING).as_deref()) {
-        return Some(
-            "memsaga's own merge of origin stopped half-way; the next sweep or sync aborts it and merges again".into(),
-        );
-    }
-    for (name, what) in [
-        ("MERGE_HEAD", "a merge"),
-        ("rebase-merge", "a rebase"),
-        ("rebase-apply", "a rebase or `git am`"),
-        ("CHERRY_PICK_HEAD", "a cherry-pick"),
-        ("REVERT_HEAD", "a revert"),
-        ("sequencer", "a cherry-pick or revert of several commits"),
+    for (name, what, how) in [
+        (
+            "MERGE_HEAD",
+            "a merge",
+            "`git commit` or `git merge --abort`",
+        ),
+        (
+            "rebase-merge",
+            "a rebase",
+            "`git rebase --continue` or `--abort`",
+        ),
+        (
+            "rebase-apply",
+            "a rebase or `git am`",
+            "`--continue` or `--abort`",
+        ),
+        (
+            "CHERRY_PICK_HEAD",
+            "a cherry-pick",
+            "`git cherry-pick --continue` or `--abort`",
+        ),
+        (
+            "REVERT_HEAD",
+            "a revert",
+            "`git revert --continue` or `--abort`",
+        ),
+        (
+            "sequencer",
+            "a cherry-pick or revert of several commits",
+            "`--continue` or `--abort`",
+        ),
     ] {
         if dir.join(name).exists() {
             return Some(format!(
-                "the data repository {} is in the middle of {what} (.git/{name} exists); memsaga changes nothing until it is finished or aborted",
+                "the data repository {} is in the middle of {what} (.git/{name} exists); memsaga changes nothing until it is finished or aborted ({how})",
                 cfg.repo.display()
             ));
         }

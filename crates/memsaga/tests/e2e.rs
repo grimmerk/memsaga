@@ -4972,20 +4972,16 @@ fn nothing_is_swept_while_the_data_repository_is_in_the_middle_of_a_merge() {
             .is_some_and(|r| r.contains("middle of a merge")),
         "{v}"
     );
-    // A merge by hand that happens to use memsaga's message is still the
-    // user's: never aborted.
+    // Never aborted for the user, not even with memsaga's own message (what
+    // a merge memsaga was stopped in looks like): nothing proves who started
+    // it. Once it is aborted by hand, work goes on.
     git(&fx, &["merge", "--abort"]);
     merge(&format!("sync: merge origin/{b}"));
     let out = cmd(&fx).arg("sweep").output().unwrap();
     assert!(!out.status.success());
     assert!(fx.repo.join(".git/MERGE_HEAD").exists());
-    // memsaga's own merge, stopped half-way (its mark names the commit being
-    // merged), is aborted, and work goes on.
-    let merging = fs::read_to_string(fx.repo.join(".git/MERGE_HEAD")).unwrap();
-    write(&fx.repo.join(".git/memsaga/merging"), merging.trim());
+    git(&fx, &["merge", "--abort"]);
     run(&fx, &["sweep"]);
-    assert!(!fx.repo.join(".git/MERGE_HEAD").exists());
-    assert!(!fx.repo.join(".git/memsaga/merging").exists());
     assert!(commits(&fx) > before);
     // A sequence of cherry-picks or reverts left half-way stops it too.
     fs::create_dir_all(fx.repo.join(".git/sequencer")).unwrap();
