@@ -344,6 +344,9 @@ B = base, R = repository file.
      │                write R to the live file, or delete the live file
      │                when the repository deleted it
      │ no
+  L missing, and this machine never had it? ── yes ──▶ write R, as for a
+     │                                                 new file
+     │ no
   both changed:
      git merge-file L B R ── clean ──▶ write the merged text to the live file
      │                                  (the next sweep commits it)
@@ -362,6 +365,11 @@ How it writes:
   dropped. `memsaga sync --take live|repo <path>` settles one file explicitly.
 - A both-sides change in a file that is not text (no line structure that
   `git merge-file` can use) is a conflict.
+- A file missing live that this machine never had (`.git/memsaga/seen.json`
+  does not list it: a fresh clone, or a file left in the repository only,
+  §4) is written when it changes elsewhere, as a new file is; one this
+  machine had and deleted is a conflict (deleted here, changed there) and
+  waits.
 
 ## 7. Step 3: read before use, through command hooks
 

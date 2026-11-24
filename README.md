@@ -972,7 +972,8 @@ deleted in the repository is deleted live when the live file was unchanged.
 The other way round, a live file counts as deleted only on a machine that has
 had it: a file the repository has but this machine never had (a fresh clone, a
 folder another machine added to the config) is kept, and `memsaga status`
-lists it.
+lists it. When such a file changes elsewhere, the new version is written
+here, as a new file is.
 
 Git commands you run by hand in the data repository count as edits from
 elsewhere: after a `git pull`, `git merge`, `git commit` or `git revert`
