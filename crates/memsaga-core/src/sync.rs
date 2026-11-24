@@ -845,7 +845,7 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
     // The list first, then the record: stopped in between, the next run
     // finds HEAD unrecorded and records the same files again.
     save_incoming(&state, &incoming)?;
-    locked.advance(&git)?;
+    locked.advance_to(&git, &merged)?;
     mark_integrated(&state);
     state.append_event(&Event {
         ts: state::now_rfc3339(),
@@ -901,6 +901,8 @@ pub fn settle_within(cfg: &Config, take: Option<(Take, &str)>, wait: Duration) -
     let git = Git::new(&cfg.repo);
     let state = State::new(cfg.state_dir());
     let _locked = crate::recorded::lock_reconciled(cfg, &state, wait)?;
+    // A conflicted repository file would be written live, markers and all.
+    crate::recorded::check_no_conflicts(cfg, &git)?;
     let mut incoming = load_incoming(&state)?;
     let mut out = Settled::default();
     let take = match take {

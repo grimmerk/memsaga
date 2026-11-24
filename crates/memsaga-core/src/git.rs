@@ -187,7 +187,8 @@ impl<'a> Git<'a> {
     }
 
     /// Commit the index. `date` (RFC 3339) backdates author and committer.
-    pub fn commit(&self, message: &str, date: Option<&str>) -> Result<String> {
+    /// Returns the new commit's full and short ids (one git call for both).
+    pub fn commit(&self, message: &str, date: Option<&str>) -> Result<(String, String)> {
         let mut c = self.cmd();
         c.args(["commit", "-q", "-F", "-"]);
         if let Some(d) = date {
@@ -207,7 +208,12 @@ impl<'a> Git<'a> {
                 String::from_utf8_lossy(&out.stderr).trim()
             );
         }
-        self.head_short()
+        let ids = self.run_ok(&["rev-parse", "HEAD", "--short", "HEAD"])?;
+        let mut lines = ids.lines().map(str::trim);
+        match (lines.next(), lines.next()) {
+            (Some(full), Some(short)) => Ok((full.to_string(), short.to_string())),
+            _ => bail!("unexpected git rev-parse output: {ids}"),
+        }
     }
 
     /// `blob` / `tree` / `commit` for `<rev>:<path>`, or None when it does not exist.

@@ -5006,3 +5006,61 @@ fn an_unreadable_incoming_list_stops_sweeps_instead_of_reading_as_empty() {
         "{v}"
     );
 }
+
+#[test]
+fn nothing_is_swept_or_synced_while_a_conflict_is_unresolved() {
+    // A `git stash pop` by hand that conflicts leaves conflict markers and no
+    // MERGE_HEAD: a sweep would commit the markers, and sync would write them
+    // to the live file.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let repo_one = fx.repo.join("claude/memory/-h-git-a/one.md");
+    fs::write(&repo_one, "stashed\n").unwrap();
+    git_at(&fx.repo, &["stash", "-q"]);
+    fs::write(&repo_one, "committed\n").unwrap();
+    git_at(&fx.repo, &["commit", "-q", "-am", "by hand"]);
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&fx.repo)
+        .args(["stash", "pop", "-q"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "the pop was meant to conflict");
+    let before = commits(&fx);
+    touch_memory(&fx, "- idx\n- during the conflict\n", "s1");
+    assert_eq!(commits(&fx), before, "a sweep committed conflict markers");
+    let out = cmd(&fx).arg("sync").output().unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("unresolved conflicts"),
+        "{out:?}"
+    );
+    assert_eq!(fs::read_to_string(live_one(&fx)).unwrap(), "fact\n");
+}
+
+#[test]
+fn an_explicit_backfill_never_brings_old_versions_to_the_live_files() {
+    // A backfill commits old versions on top of HEAD; they are memsaga's own
+    // commits, not changes from elsewhere, so the live files keep their text.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let one = live_one(&fx);
+    write(&one, "current\n");
+    hook(&fx, &post_tool_use(&one, "s1"));
+    hook(&fx, &stop("s1"));
+    let transcript = format!(
+        "{{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:00.000Z\",\"sessionId\":\"s-old\",\"cwd\":\"/h/git/a\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Write\",\"input\":{{\"file_path\":\"{}\",\"content\":\"v1 fact\\n\"}}}}]}}}}\n",
+        one.display()
+    );
+    write(
+        &fx.claude.join("projects/-h-git-a/0000-session.jsonl"),
+        &transcript,
+    );
+    run(&fx, &["backfill"]);
+    run(&fx, &["sync"]);
+    assert_eq!(fs::read_to_string(&one).unwrap(), "current\n");
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "current\n"
+    );
+}

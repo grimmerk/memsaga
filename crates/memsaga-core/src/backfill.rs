@@ -190,8 +190,8 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
             let shortstat = git.staged_shortstat()?;
             let msg =
                 crate::sweep::commit_message(cfg, &attrib, "", &files, &name_status, &shortstat);
-            git.commit(&msg, Some(&last.ts))?;
-            locked.advance(&git)?;
+            let (full, _) = git.commit(&msg, Some(&last.ts))?;
+            locked.advance_to(&git, &full)?;
             crate::sync::clear_uncommitted(&state);
             report.commits += 1;
         }

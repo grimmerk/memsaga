@@ -37,15 +37,12 @@ impl Locked {
         self.head.as_deref()
     }
 
-    /// memsaga itself moved `HEAD` (its sweep's commit, a backfill commit, a
-    /// merge once its incoming record is saved): record the new `HEAD`.
-    pub fn advance(&mut self, git: &Git) -> Result<()> {
-        let Some(new) = git.commit_of("HEAD") else {
-            return Ok(());
-        };
-        if self.head.as_deref() != Some(new.as_str()) {
-            set_recorded(git, self.head.as_deref(), &new)?;
-            self.head = Some(new);
+    /// memsaga itself moved `HEAD` to `new` (its sweep's commit, a backfill
+    /// commit, a merge once its incoming record is saved): record it.
+    pub fn advance_to(&mut self, git: &Git, new: &str) -> Result<()> {
+        if self.head.as_deref() != Some(new) {
+            set_recorded(git, self.head.as_deref(), new)?;
+            self.head = Some(new.to_string());
         }
         Ok(())
     }
@@ -464,6 +461,14 @@ fn check_not_busy(cfg: &Config, git: &Git, state: &State) -> Result<()> {
             );
         }
     }
+    Ok(())
+}
+
+/// Refuse while the index holds unresolved conflicts (a `git stash pop` by
+/// hand that conflicted leaves no other trace). One git call, so only where
+/// the conflict would do harm: before a sweep stages everything, and before
+/// settle writes repository files to the live side.
+pub fn check_no_conflicts(cfg: &Config, git: &Git) -> Result<()> {
     let unmerged = git.run_ok(&["ls-files", "-u", "-z"])?;
     if !unmerged.is_empty() {
         let first = unmerged

@@ -303,6 +303,8 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     // A change of HEAD memsaga did not record is recorded first, so the
     // guard below protects what it brought (docs/two-way-sync.md).
     let mut locked = crate::recorded::lock_reconciled(cfg, &state, Duration::from_secs(60))?;
+    // `git add -A` below would stage a conflicted file, markers and all.
+    crate::recorded::check_no_conflicts(cfg, &git)?;
     let sweep_start = SystemTime::now();
 
     // Files changed on the repository side are not overwritten (step 1b of
@@ -403,11 +405,11 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
                 "layout: {renames} memory directories renamed home-relative (grimmerk/memsaga-private#25)\n{body}"
             );
         }
-        let sha = git.commit(&msg, None)?;
+        let (full, sha) = git.commit(&msg, None)?;
         // Recorded before the uncommitted record is cleared below: stopped in
         // between, the next run finds this commit unrecorded, and the record
         // still names every copy in it as memsaga's own.
-        locked.advance(&git)?;
+        locked.advance_to(&git, &full)?;
         out.committed = true;
         out.sha = sha;
         out.files = files;
