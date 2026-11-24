@@ -108,6 +108,7 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
         .keys()
         .filter_map(|k| crate::sync::live_target(cfg, k).map(|t| t.live().to_path_buf()))
         .collect();
+    let mut live_of: HashMap<PathBuf, Option<PathBuf>> = HashMap::new();
     // Emit commits: ops of one session within the window form one commit,
     // whose tree holds the latest known version of every touched file.
     let mut latest: HashMap<PathBuf, String> = HashMap::new(); // rel -> content written so far
@@ -138,8 +139,16 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
             if latest.get(&rel) == Some(&content) {
                 continue;
             }
-            let live = crate::sync::live_target(cfg, &rel.to_string_lossy());
-            if live.is_some_and(|t| waiting.contains(t.live())) {
+            // Each path's live file resolved once: `live_target` builds the
+            // scope's matchers on every call.
+            let live = live_of
+                .entry(rel.clone())
+                .or_insert_with(|| {
+                    crate::sync::live_target(cfg, &rel.to_string_lossy())
+                        .map(|t| t.live().to_path_buf())
+                })
+                .clone();
+            if live.is_some_and(|l| waiting.contains(&l)) {
                 report.waiting += 1;
                 continue;
             }

@@ -1985,7 +1985,7 @@ fn checked_tool(
     if writes {
         if let Some((_, why)) = settled.skipped.iter().find(|(f, _)| *f == rel) {
             return Ok(ToolVerdict::Deny(format!(
-                "memsaga: {} has a change from elsewhere it could not bring in ({why}). Do not write it now: tell the user, who can see it with `memsaga status`.",
+                "memsaga: {} has a change from elsewhere it could not bring in ({why}). Do not write it now: tell the user, who can run `memsaga sync` to see the reason per file and settle it (`memsaga sync --take live|repo <path>` picks a side).",
                 live.display()
             )));
         }
