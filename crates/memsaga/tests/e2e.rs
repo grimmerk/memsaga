@@ -5105,3 +5105,25 @@ fn a_session_start_after_a_pull_by_hand_brings_claude_md_in() {
     );
     assert!(out.contains("CLAUDE.md"), "{out}");
 }
+
+#[test]
+fn a_merge_on_push_is_recorded_so_a_later_live_edit_is_committed() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "claude/memory/-h-git-a/one.md", Some("same edit\n"));
+    // The same edit made here and not swept yet: the push is rejected,
+    // origin is merged, and the file is already in step.
+    let one = live_one(&fx);
+    write(&one, "same edit\n");
+    run(&fx, &["push"]);
+    // An edit made afterwards is this machine's own: the next Stop commits it.
+    write(&one, "edited after the merge\n");
+    hook(&fx, &post_tool_use(&one, "s1"));
+    hook(&fx, &stop("s1"));
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "edited after the merge\n"
+    );
+    assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
+}
