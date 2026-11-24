@@ -31,6 +31,13 @@ pub struct Status {
     /// Repository files newer than their live file, waiting for
     /// `memsaga sync` (docs/two-way-sync.md): repo-relative path -> entry.
     pub incoming: crate::sync::Incoming,
+    /// Set when `incoming.json` cannot be read: every sweep and sync stops
+    /// until it is fixed or removed.
+    pub incoming_error: Option<String>,
+    /// HEAD moved since memsaga last recorded it (a `git pull` or commit by
+    /// hand in the data repository, or a merge stopped before its record):
+    /// the next sweep or sync records what it changed as incoming.
+    pub unrecorded_head: bool,
     /// Files the last sweep held back because a new line looks like a secret
     /// (grimmerk/memsaga#60): path, line, rule and fingerprint, never the text.
     pub held: Vec<crate::secrets::Hit>,
@@ -219,6 +226,8 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
             origin: None,
             roots,
             incoming: Default::default(),
+            incoming_error: None,
+            unrecorded_head: false,
             held: Vec::new(),
             held_error: None,
             absent: Vec::new(),
@@ -249,6 +258,7 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
         }
     });
     events.truncate(n_events);
+    let incoming = crate::sync::load_incoming(&state);
     Status {
         schema: SCHEMA_VERSION,
         repo: cfg.repo.clone(),
@@ -259,7 +269,9 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
         dirty: state.exists("dirty"),
         origin,
         roots,
-        incoming: crate::sync::load_incoming(&state),
+        incoming: incoming.as_ref().cloned().unwrap_or_default(),
+        incoming_error: incoming.err().map(|e| format!("{e:#}")),
+        unrecorded_head: crate::recorded::unrecorded_move(cfg),
         held: crate::sweep::load_held(&state),
         held_error: crate::sweep::load_held_error(&state),
         absent: crate::sync::load_absent(&state),

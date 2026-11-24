@@ -41,11 +41,22 @@ pub struct IncomingEntry {
 /// Repo-relative path -> entry. Sorted, so the file and the reports are stable.
 pub type Incoming = BTreeMap<String, IncomingEntry>;
 
-pub fn load_incoming(state: &State) -> Incoming {
-    std::fs::read_to_string(state.marker(INCOMING))
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
+/// The list; empty when there is none. An unreadable list is an error, never
+/// an empty one: the list is what keeps a sweep from overwriting the newer
+/// repository files on it with stale live copies.
+pub fn load_incoming(state: &State) -> Result<Incoming> {
+    let path = state.marker(INCOMING);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Incoming::new()),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    serde_json::from_str(&text).with_context(|| {
+        format!(
+            "{} is not readable as the incoming list; memsaga will not sweep or sync until it is fixed or removed (removing it lets the next sweep overwrite the repository files it listed)",
+            path.display()
+        )
+    })
 }
 
 /// Rewrite entries recorded under a memory directory's live name to its
@@ -55,13 +66,20 @@ pub fn load_incoming(state: &State) -> Incoming {
 /// the old directory, so a file left there would be lost and settle would
 /// read the newer version as deleted. When both names have an entry, the
 /// old one is kept: its base is the last version the live file agreed with.
+/// Entries of a root missing on this machine stay as they are, as the sweep
+/// leaves that root's directories (`memory_renames_pending`).
 /// The caller holds the sweep lock. True when anything changed.
-pub fn rename_incoming(repo: &Path, incoming: &mut Incoming) -> Result<bool> {
+pub fn rename_incoming(cfg: &Config, incoming: &mut Incoming) -> Result<bool> {
+    let repo = &cfg.repo;
     let renamed: Vec<(String, String)> = incoming
         .keys()
         .filter_map(|k| {
             let parts: Vec<&str> = k.splitn(4, '/').collect();
-            if parts.len() >= 3 && parts[1] == crate::roots::MEMORY_DIR {
+            let here = cfg
+                .roots
+                .iter()
+                .any(|r| r.label == parts[0] && r.path.is_dir());
+            if here && parts.len() >= 3 && parts[1] == crate::roots::MEMORY_DIR {
                 let name = crate::roots::repo_name_of_slug(parts[2]);
                 if name != parts[2] {
                     let mut new = format!("{}/{}/{}", parts[0], parts[1], name);
@@ -210,7 +228,16 @@ pub fn record_uncommitted(cfg: &Config, state: &State, written: &[PathBuf]) -> R
             None => record.remove(&rel),
         };
     }
-    state.write_marker(UNCOMMITTED, &serde_json::to_string_pretty(&record)?)
+    save_uncommitted(state, &record)
+}
+
+/// Replace the record. The caller holds the sweep lock.
+pub(crate) fn save_uncommitted(state: &State, record: &BTreeMap<String, String>) -> Result<()> {
+    if record.is_empty() {
+        state.remove(UNCOMMITTED);
+        return Ok(());
+    }
+    state.write_marker(UNCOMMITTED, &serde_json::to_string_pretty(record)?)
 }
 
 /// A sweep has committed every copy memsaga wrote (or kept a hand edit made
@@ -267,7 +294,7 @@ impl Target {
 /// leave that file out for good: never written live, and, with the new config
 /// loaded, missing here (grimmerk/memsaga#22). Repository location and roots
 /// stay this machine's own.
-fn scope_after_merge(cfg: &Config, changed: &[String]) -> Config {
+pub(crate) fn scope_after_merge(cfg: &Config, changed: &[String]) -> Config {
     let mut next = cfg.clone();
     if !changed.iter().any(|f| f == "memsaga/config.toml") {
         return next;
@@ -357,6 +384,29 @@ fn blob_content(git: &Git, id: &str) -> Option<Vec<u8>> {
     out.status.success().then_some(out.stdout)
 }
 
+/// Blob `id` through the shared `cat-file --batch` process, started on first
+/// use; one process per blob only if that process fails.
+fn read_blob(git: &Git, cat: &mut Option<crate::git::CatFile>, id: &str) -> Option<Vec<u8>> {
+    if cat.is_none() {
+        *cat = crate::git::CatFile::new(git).ok();
+    }
+    if let Some(c) = cat.as_mut() {
+        match c.read(id) {
+            Ok(found) => return found,
+            Err(_) => *cat = None,
+        }
+    }
+    blob_content(git, id)
+}
+
+/// `settle` saves the list after this many files, so a hook stopped half-way
+/// through a long catch-up keeps what it settled.
+const SETTLE_SAVE_EVERY: usize = 500;
+
+/// Most files whose change `settle` computes for a notice (files loaded at
+/// session start are always computed).
+const SETTLE_DIFFS_MAX: usize = 50;
+
 /// Blob id the file's current bytes would have.
 fn hash_of(git: &Git, abs: &Path) -> Option<String> {
     let out = git
@@ -372,7 +422,7 @@ fn hash_of(git: &Git, abs: &Path) -> Option<String> {
 /// git would read differently from a line (a newline or carriage return in
 /// it, since git drops a trailing `\r`; a leading `"`, which it unquotes), or
 /// a file that vanished (git then stops at it).
-fn hash_many(git: &Git, paths: &[&PathBuf]) -> Vec<Option<String>> {
+pub(crate) fn hash_many(git: &Git, paths: &[&PathBuf]) -> Vec<Option<String>> {
     use std::os::unix::ffi::OsStrExt;
     let mut input = Vec::new();
     for p in paths {
@@ -415,10 +465,72 @@ pub struct Guard {
     roots: Vec<Root>,
     /// Paths a removal was refused for because this machine never had them.
     absent: RefCell<BTreeSet<String>>,
+    /// What `HEAD` holds, read once at the first candidate (`at_head`).
+    head: std::cell::OnceCell<HeadView>,
+}
+
+/// `HEAD`'s blob per path, and the paths whose working-tree file may differ
+/// from it: three git processes for a whole sweep, instead of two per
+/// candidate (a catch-up of 6,700 merged files took a 735 s sweep).
+struct HeadView {
+    blobs: std::collections::HashMap<String, String>,
+    /// Listed by `git diff-files` (working tree vs index, by stat) or
+    /// `git diff-index --cached HEAD` (index vs HEAD). A path not listed holds
+    /// exactly `HEAD`'s blob; a listed one is hashed to find out.
+    maybe_changed: std::collections::HashSet<String>,
+}
+
+impl HeadView {
+    fn read(git: &Git) -> HeadView {
+        let ids = git
+            .run_ok(&["ls-tree", "-r", "-z", "--full-tree", "HEAD"])
+            .unwrap_or_default();
+        let mut map = std::collections::HashMap::new();
+        for l in ids.split('\0').filter(|l| !l.is_empty()) {
+            let Some((meta, path)) = l.split_once('\t') else {
+                continue;
+            };
+            let mut parts = meta.split_whitespace();
+            let (_, kind, id) = (parts.next(), parts.next(), parts.next());
+            if kind == Some("blob") {
+                if let Some(id) = id {
+                    map.insert(path.to_string(), id.to_string());
+                }
+            }
+        }
+        let mut maybe_changed = std::collections::HashSet::new();
+        for args in [
+            &["diff-files", "--name-only", "-z"][..],
+            &["diff-index", "--cached", "--name-only", "-z", "HEAD"][..],
+        ] {
+            match git.run(args) {
+                Ok(o) if o.status.success() => maybe_changed.extend(
+                    String::from_utf8_lossy(&o.stdout)
+                        .split('\0')
+                        .filter(|p| !p.is_empty())
+                        .map(str::to_string),
+                ),
+                // Unknown: every path is hashed, as before.
+                _ => map.clear(),
+            }
+        }
+        HeadView {
+            blobs: map,
+            maybe_changed,
+        }
+    }
 }
 
 impl Guard {
-    pub fn new(cfg: &Config, since: Option<SystemTime>, incoming: &Incoming) -> Guard {
+    /// `_locked` proves the caller holds the sweep lock with the recorded
+    /// head equal to `HEAD`: the guard's "equal to `HEAD` means memsaga's own
+    /// copy" holds only then.
+    pub fn new(
+        cfg: &Config,
+        since: Option<SystemTime>,
+        incoming: &Incoming,
+        _locked: &crate::recorded::Locked,
+    ) -> Guard {
         Guard {
             repo: cfg.repo.clone(),
             since,
@@ -429,6 +541,17 @@ impl Guard {
             seen: load_seen(&State::new(cfg.state_dir())),
             roots: cfg.roots.clone(),
             absent: RefCell::new(BTreeSet::new()),
+            head: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// `HEAD`'s blob for `rel`, and whether the working-tree file is known to
+    /// hold exactly it.
+    fn at_head(&self, git: &Git, rel: &str) -> (Option<String>, bool) {
+        let view = self.head.get_or_init(|| HeadView::read(git));
+        match view.blobs.get(rel) {
+            Some(id) => (Some(id.clone()), !view.maybe_changed.contains(rel)),
+            None => (blob_at(git, "HEAD", rel), false),
         }
     }
 
@@ -479,10 +602,13 @@ impl Guard {
         };
         let rel = rel.to_string_lossy().to_string();
         let git = Git::new(&self.repo);
-        let base = blob_at(&git, "HEAD", &rel);
+        let (base, unchanged) = self.at_head(&git, &rel);
+        if unchanged {
+            return true; // equal to what memsaga committed (or recorded)
+        }
         let now = hash_of(&git, dst);
         if base.is_some() && base == now {
-            return true; // equal to what memsaga committed
+            return true; // equal to what memsaga committed (or recorded)
         }
         if is_uncommitted_copy(&self.uncommitted, &rel, now.as_ref()) {
             return true; // memsaga's own uncommitted copy (a preview, a stopped sweep)
@@ -634,7 +760,9 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
     if !git.has_remote("origin") {
         return Ok(Integrated::default());
     }
-    let _guard = state.lock(wait).context("sweep lock")?;
+    // Reconciled first: a change of HEAD found now is recorded against the
+    // HEAD it moved from, before this merge moves HEAD again.
+    let mut locked = crate::recorded::lock_reconciled(cfg, &state, wait)?;
     let branch = current_branch(&git)?;
     git.run_ok(&["fetch", "-q", "origin"])?;
     let remote = format!("origin/{branch}");
@@ -652,7 +780,10 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
     if !behind {
         return Ok(Integrated::default());
     }
-    let pre = git.run_ok(&["rev-parse", "HEAD"])?.trim().to_string();
+    let pre = locked
+        .head()
+        .context("no commit to merge into")?
+        .to_string();
     let message = format!("sync: merge {remote}");
     let merge = git.run(&["merge", "--no-edit", "-q", "-m", &message, &remote])?;
     if !merge.status.success() {
@@ -693,35 +824,28 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
             return Err(MergeConflict(conflicted).into());
         }
     }
-    let head = git
-        .run_ok(&["rev-parse", "--short", "HEAD"])?
-        .trim()
-        .to_string();
-    let changed: Vec<String> = git
-        .run_ok(&["diff", "--name-only", "-z", &pre, "HEAD"])?
-        .split('\0')
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect();
-    let mut incoming = load_incoming(&state);
-    let mut files = Vec::new();
-    let next = scope_after_merge(cfg, &changed);
-    for f in changed {
-        if live_target(cfg, &f).is_none() && live_target(&next, &f).is_none() {
-            continue;
-        }
-        if !incoming.contains_key(&f) {
-            incoming.insert(
-                f.clone(),
-                IncomingEntry {
-                    base: blob_at(&git, &pre, &f),
-                    from: format!("merge {head}"),
-                },
-            );
-        }
-        files.push(f);
-    }
+    let merged = git
+        .commit_of("HEAD")
+        .context("reading HEAD after the merge")?;
+    let head = git.head_short()?;
+    // One `git diff --raw` for the whole merge (B's catch-up of ~6,700 files
+    // cost one git process per file, and the hook was stopped half-way).
+    let mut incoming = load_incoming(&state)?;
+    let moved = crate::recorded::record_moves(
+        cfg,
+        &state,
+        &git,
+        &mut incoming,
+        &pre,
+        &pre,
+        &merged,
+        &format!("merge {head}"),
+    )?;
+    let files = moved.changed;
+    // The list first, then the record: stopped in between, the next run
+    // finds HEAD unrecorded and records the same files again.
     save_incoming(&state, &incoming)?;
+    locked.advance(&git)?;
     mark_integrated(&state);
     state.append_event(&Event {
         ts: state::now_rfc3339(),
@@ -776,8 +900,8 @@ pub fn settle(cfg: &Config, take: Option<(Take, &str)>) -> Result<Settled> {
 pub fn settle_within(cfg: &Config, take: Option<(Take, &str)>, wait: Duration) -> Result<Settled> {
     let git = Git::new(&cfg.repo);
     let state = State::new(cfg.state_dir());
-    let _guard = state.lock(wait).context("sweep lock")?;
-    let mut incoming = load_incoming(&state);
+    let _locked = crate::recorded::lock_reconciled(cfg, &state, wait)?;
+    let mut incoming = load_incoming(&state)?;
     let mut out = Settled::default();
     let take = match take {
         Some((side, path)) => {
@@ -790,14 +914,24 @@ pub fn settle_within(cfg: &Config, take: Option<(Take, &str)>, wait: Duration) -
         None => None,
     };
     let keys: Vec<String> = incoming.keys().cloned().collect();
-    for rel in keys {
+    // Base versions are read through one `git cat-file --batch` process.
+    let mut cat: Option<crate::git::CatFile> = None;
+    for (i, rel) in keys.into_iter().enumerate() {
+        // Progress survives a hook stopped half-way through a long catch-up.
+        if i > 0 && i % SETTLE_SAVE_EVERY == 0 {
+            save_incoming(&state, &incoming)?;
+        }
         let entry = incoming[&rel].clone();
         let target = live_target(cfg, &rel);
         let before = target.as_ref().and_then(|t| mirror_form(cfg, t));
-        match settle_one(cfg, &git, &state, &rel, &entry, take.as_ref()) {
+        match settle_one(cfg, &git, &state, &mut cat, &rel, &entry, take.as_ref()) {
             Ok(Outcome::Done(kind)) => {
                 incoming.remove(&rel);
-                if !matches!(kind, Done::InStep) {
+                // A notice quotes a few files; one `git diff` per file for a
+                // catch-up of thousands would not fit in a hook's time limit.
+                if !matches!(kind, Done::InStep)
+                    && (out.diffs.len() < SETTLE_DIFFS_MAX || loaded_at_start(&rel))
+                {
                     let after = target.as_ref().and_then(|t| mirror_form(cfg, t));
                     out.diffs.insert(
                         rel.clone(),
@@ -817,6 +951,14 @@ pub fn settle_within(cfg: &Config, take: Option<(Take, &str)>, wait: Duration) -
         }
     }
     save_incoming(&state, &incoming)?;
+    // What a pull wrote, this machine has had (once, not once per file).
+    let had: Vec<PathBuf> = out
+        .written
+        .iter()
+        .chain(&out.merged)
+        .map(|r| cfg.repo.join(r))
+        .collect();
+    mark_seen(cfg, &state, &had)?;
     if !(out.written.is_empty()
         && out.merged.is_empty()
         && out.deleted.is_empty()
@@ -875,6 +1017,7 @@ fn settle_one(
     cfg: &Config,
     git: &Git,
     state: &State,
+    cat: &mut Option<crate::git::CatFile>,
     rel: &str,
     entry: &IncomingEntry,
     take: Option<&(Take, String)>,
@@ -919,7 +1062,7 @@ fn settle_one(
         if which == rel {
             return match side {
                 Take::Live => Ok(Outcome::Done(Done::InStep)),
-                Take::Repo => apply(cfg, state, &target, &repo_path, r.as_deref()),
+                Take::Repo => apply(cfg, &target, &repo_path, r.as_deref()),
             };
         }
     }
@@ -941,11 +1084,11 @@ fn settle_one(
         return Ok(Outcome::Done(Done::InStep));
     }
     let b = match &entry.base {
-        Some(id) => Some(blob_content(git, id).context("reading the base version")?),
+        Some(id) => Some(read_blob(git, cat, id).context("reading the base version")?),
         None => None,
     };
     if l == b {
-        return apply(cfg, state, &target, &repo_path, r.as_deref());
+        return apply(cfg, &target, &repo_path, r.as_deref());
     }
     // Both sides changed: a line merge when all three are text.
     let (Some(l), Some(r)) = (l, r) else {
@@ -966,17 +1109,10 @@ fn settle_one(
 }
 
 /// Make the live file equal the repository file (or delete it).
-fn apply(
-    cfg: &Config,
-    state: &State,
-    target: &Target,
-    repo_path: &Path,
-    r: Option<&[u8]>,
-) -> Result<Outcome> {
+fn apply(cfg: &Config, target: &Target, repo_path: &Path, r: Option<&[u8]>) -> Result<Outcome> {
     match r {
         Some(bytes) => {
             write_live(cfg, target, bytes, executable(repo_path))?;
-            mark_seen(cfg, state, &[repo_path])?;
             Ok(Outcome::Done(Done::Written))
         }
         None => {
@@ -1123,8 +1259,8 @@ fn merge_text(
 pub fn note_hand_edit(cfg: &Config, repo_rel: &str) -> Result<bool> {
     let git = Git::new(&cfg.repo);
     let state = State::new(cfg.state_dir());
-    let _guard = state.lock(HOOK_LOCK_WAIT).context("sweep lock")?;
-    let mut incoming = load_incoming(&state);
+    let _locked = crate::recorded::lock_reconciled(cfg, &state, HOOK_LOCK_WAIT)?;
+    let mut incoming = load_incoming(&state)?;
     if incoming.contains_key(repo_rel) {
         return Ok(true);
     }
@@ -1575,7 +1711,7 @@ fn notice(
 pub fn on_session_start(cfg: &Config) -> Result<Option<String>> {
     let state = State::new(cfg.state_dir());
     let check = check_remote(cfg, CHECK_MAX_AGE)?;
-    if !check.moved && load_incoming(&state).is_empty() {
+    if !check.moved && load_incoming(&state)?.is_empty() && !crate::recorded::unrecorded_move(cfg) {
         return Ok(None);
     }
     let (_, settled) = pull_now(cfg)?;
@@ -1591,7 +1727,12 @@ pub fn on_session_start(cfg: &Config) -> Result<Option<String>> {
 pub fn on_prompt(cfg: &Config, session: &str, transcript: &Path) -> Result<Option<String>> {
     let state = State::new(cfg.state_dir());
     refresh_check_in_background(&state);
-    if !cached_check(&state).moved && load_incoming(&state).is_empty() {
+    // A change of HEAD memsaga did not record (a `git pull` by hand in the
+    // data repository) is brought in like a change from origin.
+    if !cached_check(&state).moved
+        && load_incoming(&state)?.is_empty()
+        && !crate::recorded::unrecorded_move(cfg)
+    {
         return Ok(None);
     }
     let (_, settled) = pull_now(cfg)?;
@@ -1707,7 +1848,10 @@ pub fn before_tool(cfg: &Config, session: &str, live: &Path, tool: &str) -> Resu
         cached_check(&state)
     };
     let from_origin = check.changed.iter().any(|(f, _)| *f == rel);
-    let waiting = from_origin || load_incoming(&state).contains_key(&rel);
+    // A change of HEAD memsaga did not record (a `git pull` by hand) gave the
+    // repository copy a new mtime, so `note_hand_edit` above reconciled and
+    // listed it.
+    let waiting = from_origin || load_incoming(&state)?.contains_key(&rel);
     if !waiting {
         return Ok(ToolVerdict::Allow);
     }

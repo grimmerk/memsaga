@@ -89,6 +89,12 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
     report.known_versions = after.iter().filter(|a| a.is_some()).count();
     report.unknown_versions = after.len() - report.known_versions;
 
+    // Commits move HEAD: under the sweep lock, with the recorded head moved
+    // after each one. Otherwise a commit of old versions here would later
+    // read as a change of HEAD from elsewhere, and its old versions would be
+    // brought to the live files.
+    let mut locked =
+        crate::recorded::lock_reconciled(cfg, &state, std::time::Duration::from_secs(60))?;
     // Emit commits: ops of one session within the window form one commit,
     // whose tree holds the latest known version of every touched file.
     let mut latest: HashMap<PathBuf, String> = HashMap::new(); // rel -> content written so far
@@ -128,6 +134,11 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
             latest.insert(rel, content);
             wrote = true;
         }
+        // memsaga's own copies until committed: stopped before the commit,
+        // the next sweep overwrites them with the live files instead of
+        // taking them for hand edits.
+        let own: Vec<PathBuf> = written_now.iter().map(|r| cfg.repo.join(r)).collect();
+        crate::sync::record_uncommitted(cfg, &state, &own)?;
         let mut changed = wrote && git.add_all_and_check()?;
         if changed && cfg.scan_secrets {
             let run = |a: &[&str]| git.run(a);
@@ -180,6 +191,8 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
             let msg =
                 crate::sweep::commit_message(cfg, &attrib, "", &files, &name_status, &shortstat);
             git.commit(&msg, Some(&last.ts))?;
+            locked.advance(&git)?;
+            crate::sync::clear_uncommitted(&state);
             report.commits += 1;
         }
     }

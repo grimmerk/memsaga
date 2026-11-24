@@ -481,7 +481,9 @@ fn held_notice(state: &State) -> Option<String> {
 /// the last report (a new merge, a hand edit, a conflict left over), so a
 /// pending sync is never silent but a lingering one does not repeat.
 fn incoming_notice(state: &State) -> Option<String> {
-    let incoming = crate::sync::load_incoming(state);
+    // An unreadable list is reported by `memsaga status`; every sweep and
+    // sync stops on it with the reason.
+    let incoming = crate::sync::load_incoming(state).ok()?;
     let key = incoming.keys().cloned().collect::<Vec<_>>().join("\n");
     if state.read_marker("incoming-reported").unwrap_or_default() == key {
         return None;

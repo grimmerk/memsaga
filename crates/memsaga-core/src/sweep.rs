@@ -202,14 +202,15 @@ pub fn pending(
         );
     }
     let state = State::new(cfg.state_dir());
-    let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
+    let locked = crate::recorded::lock_reconciled(cfg, &state, Duration::from_secs(60))?;
     // The same guard as a sweep, so a preview never overwrites a repository-side
     // edit either; what it finds is recorded by the next sweep, not here.
-    let incoming = crate::sync::load_incoming(&state);
+    let incoming = crate::sync::load_incoming(&state)?;
     let scope = Scope::new(cfg).with_guard(crate::sync::Guard::new(
         cfg,
         state.mtime("last-sweep"),
         &incoming,
+        &locked,
     ));
     let mut stats = mirror::Stats::default();
     let refreshed = refresh_mirror(cfg, &scope, &mut stats);
@@ -299,19 +300,22 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         );
     }
     let state = State::new(cfg.state_dir());
-    let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
+    // A change of HEAD memsaga did not record is recorded first, so the
+    // guard below protects what it brought (docs/two-way-sync.md).
+    let mut locked = crate::recorded::lock_reconciled(cfg, &state, Duration::from_secs(60))?;
     let sweep_start = SystemTime::now();
 
     // Files changed on the repository side are not overwritten (step 1b of
     // docs/two-way-sync.md); hand edits found on the way join the list.
-    let mut incoming = crate::sync::load_incoming(&state);
-    if crate::sync::rename_incoming(&cfg.repo, &mut incoming)? {
+    let mut incoming = crate::sync::load_incoming(&state)?;
+    if crate::sync::rename_incoming(cfg, &mut incoming)? {
         crate::sync::save_incoming(&state, &incoming)?;
     }
     let scope = Scope::new(cfg).with_guard(crate::sync::Guard::new(
         cfg,
         state.mtime("last-sweep"),
         &incoming,
+        &locked,
     ));
     let renames: usize = cfg
         .roots
@@ -400,6 +404,10 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
             );
         }
         let sha = git.commit(&msg, None)?;
+        // Recorded before the uncommitted record is cleared below: stopped in
+        // between, the next run finds this commit unrecorded, and the record
+        // still names every copy in it as memsaga's own.
+        locked.advance(&git)?;
         out.committed = true;
         out.sha = sha;
         out.files = files;

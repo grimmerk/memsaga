@@ -967,7 +967,7 @@ fn cmd_sync(take: &[String]) -> Result<()> {
         }
         // The push may have merged a commit that reached origin meanwhile:
         // bring it to the live files too, and push the result.
-        if !sync::load_incoming(&state).is_empty() {
+        if !sync::load_incoming(&state)?.is_empty() {
             let late = sync::settle(&cfg, None)?;
             print_settled(&late);
             conflicts += late.conflicts.len();
@@ -1010,7 +1010,7 @@ fn cmd_pull(check: bool, path: Option<&str>, max_age: u64, json: bool) -> Result
         }
         let c = sync::check_remote(&cfg, std::time::Duration::from_secs(max_age))?;
         let state = State::new(cfg.state_dir());
-        let incoming = sync::load_incoming(&state);
+        let incoming = sync::load_incoming(&state)?;
         let affected = rel
             .as_ref()
             .map(|r| incoming.contains_key(r) || c.changed.iter().any(|(f, _)| f == r));
@@ -1132,6 +1132,12 @@ fn cmd_status(n: usize, json: bool) -> Result<()> {
         for (f, e) in &st.incoming {
             println!("  {f}  ({})", e.from);
         }
+    }
+    if let Some(e) = &st.incoming_error {
+        println!("sweeps and syncs stopped: {e}");
+    }
+    if st.unrecorded_head {
+        println!("HEAD moved outside memsaga (a git pull or commit by hand, or a sync stopped half-way); the next sweep or sync takes what it changed as incoming");
     }
     if let Some(e) = &st.held_error {
         println!("nothing committed by the last sweep: {e}");

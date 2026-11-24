@@ -296,6 +296,63 @@ impl<'a> Git<'a> {
         Ok(())
     }
 
+    /// Full sha of `rev` as a commit, or None when it does not resolve to one
+    /// (no commit yet, a missing ref, an object that is gone).
+    pub fn commit_of(&self, rev: &str) -> Option<String> {
+        let spec = format!("{rev}^{{commit}}");
+        self.run(&["rev-parse", "--verify", "-q", &spec])
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Is `a` an ancestor of `b` (or equal to it)?
+    pub fn is_ancestor(&self, a: &str, b: &str) -> bool {
+        self.run(&["merge-base", "--is-ancestor", a, b])
+            .is_ok_and(|o| o.status.success())
+    }
+
+    /// The paths that differ between two commits, with the blob on each
+    /// side (None where the path does not exist), from one `git diff --raw`.
+    /// No rename detection: a rename is a deletion and an addition.
+    pub fn changes(&self, from: &str, to: &str) -> Result<Vec<Change>> {
+        let out = self.run_ok(&[
+            "diff",
+            "--raw",
+            "-z",
+            "--no-renames",
+            "--no-abbrev",
+            "--no-ext-diff",
+            from,
+            to,
+        ])?;
+        // `:<old mode> <new mode> <old id> <new id> <status>` NUL `<path>` NUL
+        let mut fields = out.split('\0');
+        let mut list = Vec::new();
+        while let Some(meta) = fields.next() {
+            let Some(meta) = meta.strip_prefix(':') else {
+                continue;
+            };
+            let Some(path) = fields.next() else { break };
+            let parts: Vec<&str> = meta.split(' ').collect();
+            if parts.len() < 5 {
+                bail!("unexpected git diff --raw line: {meta}");
+            }
+            let id = |mode: &str, id: &str| {
+                (mode != "000000" && id.bytes().any(|b| b != b'0')).then(|| id.to_string())
+            };
+            list.push(Change {
+                path: path.to_string(),
+                old: id(parts[0], parts[2]),
+                new: id(parts[1], parts[3]),
+                old_mode: parts[0].to_string(),
+                new_mode: parts[1].to_string(),
+            });
+        }
+        Ok(list)
+    }
+
     /// `git log` lines for the status view.
     pub fn recent(&self, n: usize) -> Result<String> {
         let n = n.to_string();
@@ -306,6 +363,82 @@ impl<'a> Git<'a> {
             "--date=format:%Y-%m-%d %H:%M",
             "--format=%h  %ad  %s",
         ])
+    }
+}
+
+/// One path that differs between two commits (`Git::changes`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Change {
+    pub path: String,
+    /// Blob (or link, or gitlink) id before; None when the path was added.
+    pub old: Option<String>,
+    /// Id after; None when the path was deleted.
+    pub new: Option<String>,
+    pub old_mode: String,
+    pub new_mode: String,
+}
+
+/// Reads many objects through one `git cat-file --batch` process, one at a
+/// time, so a catch-up of thousands of files costs one process and holds one
+/// file in memory at a time.
+pub struct CatFile {
+    child: std::process::Child,
+    stdin: Option<std::process::ChildStdin>,
+    stdout: std::io::BufReader<std::process::ChildStdout>,
+}
+
+impl CatFile {
+    pub fn new(git: &Git) -> Result<CatFile> {
+        let mut child = git
+            .cmd()
+            .args(["cat-file", "--batch"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .context("running git cat-file --batch")?;
+        let stdin = child.stdin.take();
+        let stdout = std::io::BufReader::new(child.stdout.take().context("cat-file stdout")?);
+        Ok(CatFile {
+            child,
+            stdin,
+            stdout,
+        })
+    }
+
+    /// The content of object `id`, or None when it does not exist.
+    pub fn read(&mut self, id: &str) -> Result<Option<Vec<u8>>> {
+        use std::io::{BufRead, Read, Write};
+        // One request per line: a name holding a newline would be read as
+        // two, and every later answer would belong to the wrong request.
+        if id.contains('\n') {
+            bail!("an object name with a newline cannot be read in a batch: {id:?}");
+        }
+        let stdin = self.stdin.as_mut().context("cat-file stdin")?;
+        writeln!(stdin, "{id}")?;
+        stdin.flush()?;
+        let mut header = String::new();
+        self.stdout.read_line(&mut header)?;
+        let header = header.trim_end();
+        if header.ends_with(" missing") || header.is_empty() {
+            return Ok(None);
+        }
+        let size: usize = header
+            .rsplit(' ')
+            .next()
+            .and_then(|s| s.parse().ok())
+            .with_context(|| format!("unexpected git cat-file header: {header}"))?;
+        let mut buf = vec![0u8; size + 1]; // content, then a newline
+        self.stdout.read_exact(&mut buf)?;
+        buf.pop();
+        Ok(Some(buf))
+    }
+}
+
+impl Drop for CatFile {
+    fn drop(&mut self) {
+        drop(self.stdin.take());
+        let _ = self.child.wait();
     }
 }
 

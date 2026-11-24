@@ -2128,6 +2128,20 @@ fn a_file_this_machine_never_had_is_kept_not_deleted_and_a_deletion_still_counts
     );
     git(&fx, &["add", "claude/hooks/elsewhere.sh"]);
     git(&fx, &["commit", "-q", "-m", "from another machine"]);
+    // A commit memsaga did not make is taken like a merge: the new file
+    // waits for the live side. Declining it (`--take live`) leaves it in the
+    // repository only, the state this test is about.
+    run(&fx, &["sweep"]);
+    let v = status_json(&fx);
+    assert!(
+        v["incoming"]["claude/hooks/elsewhere.sh"].is_object(),
+        "{v}"
+    );
+    run(
+        &fx,
+        &["sync", "--take", "live", "claude/hooks/elsewhere.sh"],
+    );
+    assert!(!fx.claude.join("hooks/elsewhere.sh").exists());
     write(&fx.claude.join("CLAUDE.md"), "# edited here\n");
     hook(&fx, &post_tool_use(&fx.claude.join("CLAUDE.md"), "s1"));
     hook(&fx, &stop("s1"));
@@ -4685,4 +4699,310 @@ fn a_held_file_named_with_a_newline_is_reported_once() {
     );
     assert!(!run(&fx, &["report"]).contains("held back"));
     assert_key_in_no_commit(&fx, &key);
+}
+
+// ---- Changes of HEAD memsaga did not record (the 2026-11-24 incident) ----
+
+/// The data repository's branch.
+fn branch(fx: &Fx) -> String {
+    git(fx, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .trim()
+        .to_string()
+}
+
+/// A live change that makes the next Stop sweep and commit something.
+fn touch_memory(fx: &Fx, text: &str, session: &str) {
+    let memory = fx.claude.join("projects/-h-git-a/memory/MEMORY.md");
+    write(&memory, text);
+    hook(fx, &post_tool_use(&memory, session));
+    hook(fx, &stop(session));
+}
+
+fn live_one(fx: &Fx) -> PathBuf {
+    fx.claude.join("projects/-h-git-a/memory/one.md")
+}
+
+#[test]
+fn a_merge_without_its_record_never_lets_stale_live_files_overwrite_it() {
+    // 2026-11-24: memsaga merged origin and was stopped before it recorded
+    // what the merge changed; the next sweep took the merged files for its
+    // own commits and copied the machine's stale live files over them.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    write(
+        &other.join("claude/memory/-h-git-a/one.md"),
+        "newer elsewhere\n",
+    );
+    write(
+        &other.join("claude/memory/-h-git-a/added.md"),
+        "added elsewhere\n",
+    );
+    git_at(&other, &["add", "-A"]);
+    git_at(&other, &["commit", "-q", "-m", "elsewhere"]);
+    git_at(&other, &["push", "-q"]);
+    // What a merge stopped before its record leaves: HEAD moved, no list.
+    let b = branch(&fx);
+    git(&fx, &["fetch", "-q", "origin"]);
+    git(&fx, &["merge", "-q", "--no-edit", &format!("origin/{b}")]);
+    assert_eq!(status_json(&fx)["unrecorded_head"], true);
+    touch_memory(&fx, "- idx\n- local\n", "s1");
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "newer elsewhere\n",
+        "the sweep reverted a newer file"
+    );
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/MEMORY.md"]),
+        "- idx\n- local\n",
+        "the live change was committed"
+    );
+    let v = status_json(&fx);
+    assert!(
+        v["incoming"]["claude/memory/-h-git-a/one.md"].is_object(),
+        "{v}"
+    );
+    assert!(
+        v["incoming"]["claude/memory/-h-git-a/added.md"].is_object(),
+        "{v}"
+    );
+    assert_eq!(v["unrecorded_head"], false, "{v}");
+    // sync brings both to the live side.
+    run(&fx, &["sync"]);
+    assert_eq!(
+        fs::read_to_string(live_one(&fx)).unwrap(),
+        "newer elsewhere\n"
+    );
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("projects/-h-git-a/memory/added.md")).unwrap(),
+        "added elsewhere\n"
+    );
+    assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
+}
+
+#[test]
+fn the_first_run_after_an_upgrade_starts_from_the_last_commit_memsaga_made() {
+    // A machine upgraded from a version without the record, after a merge
+    // that version never recorded (as on 2026-11-24): the record starts at
+    // memsaga's last commit, not at HEAD, so the merge is still taken.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(
+        &other,
+        "claude/memory/-h-git-a/one.md",
+        Some("newer elsewhere\n"),
+    );
+    git(&fx, &["update-ref", "-d", "refs/memsaga/recorded"]);
+    let b = branch(&fx);
+    git(&fx, &["fetch", "-q", "origin"]);
+    git(&fx, &["merge", "-q", "--no-edit", &format!("origin/{b}")]);
+    touch_memory(&fx, "- idx\n- local\n", "s1");
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "newer elsewhere\n"
+    );
+    assert!(status_json(&fx)["incoming"]["claude/memory/-h-git-a/one.md"].is_object());
+}
+
+#[test]
+fn a_pull_by_hand_in_the_data_repository_reaches_the_live_files_at_the_next_prompt() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "claude/CLAUDE.md", Some("# from elsewhere\n"));
+    let b = branch(&fx);
+    git(&fx, &["pull", "-q", "--no-rebase", "origin", &b]);
+    let out = hook(
+        &fx,
+        &hook_json("UserPromptSubmit", "s1", ",\"prompt\":\"go on\""),
+    );
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("CLAUDE.md")).unwrap(),
+        "# from elsewhere\n"
+    );
+    // CLAUDE.md is loaded at session start: the model is told.
+    assert!(out.contains("CLAUDE.md"), "{out}");
+    assert_eq!(status_json(&fx)["unrecorded_head"], false);
+}
+
+#[test]
+fn a_write_after_a_pull_by_hand_is_refused_until_the_file_is_read_again() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(
+        &other,
+        "claude/memory/-h-git-a/one.md",
+        Some("from elsewhere\n"),
+    );
+    let b = branch(&fx);
+    git(&fx, &["pull", "-q", "--no-rebase", "origin", &b]);
+    // Origin itself no longer looks moved: the pull updated its tracking ref.
+    run(&fx, &["pull", "--check", "--max-age", "0"]);
+    let one = live_one(&fx);
+    let reason = denied(&hook(&fx, &pre_tool("Write", &one, "s1"))).expect("refused");
+    assert!(reason.contains("Read it again"), "{reason}");
+    assert_eq!(fs::read_to_string(&one).unwrap(), "from elsewhere\n");
+}
+
+#[test]
+fn a_commit_by_hand_in_the_data_repository_reaches_the_live_file() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let repo_one = fx.repo.join("claude/memory/-h-git-a/one.md");
+    fs::write(&repo_one, "edited and committed in the clone\n").unwrap();
+    git_at(&fx.repo, &["commit", "-q", "-am", "by hand"]);
+    touch_memory(&fx, "- idx\n- local\n", "s1");
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "edited and committed in the clone\n",
+        "the live file was copied over a commit made by hand"
+    );
+    run(&fx, &["sync"]);
+    assert_eq!(
+        fs::read_to_string(live_one(&fx)).unwrap(),
+        "edited and committed in the clone\n"
+    );
+}
+
+#[test]
+fn a_reset_by_hand_lets_the_live_files_win_and_a_rebase_keeps_the_other_side() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    let one = live_one(&fx);
+    // A reset: the commits it drops brought nothing from elsewhere, so
+    // nothing is taken from it and the live files win.
+    write(&one, "kept live\n");
+    hook(&fx, &post_tool_use(&one, "s1"));
+    hook(&fx, &stop("s1"));
+    git(&fx, &["reset", "-q", "--hard", "HEAD~1"]);
+    touch_memory(&fx, "- idx\n- after reset\n", "s2");
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "kept live\n"
+    );
+    assert_eq!(fs::read_to_string(&one).unwrap(), "kept live\n");
+    assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
+    // A pull --rebase: HEAD no longer contains the recorded commit, but
+    // what origin changed is still taken, and reaches the live file.
+    push_from_other(&other, "claude/CLAUDE.md", Some("# from elsewhere\n"));
+    let b = branch(&fx);
+    git_at(&fx.repo, &["pull", "-q", "--rebase", "origin", &b]);
+    touch_memory(&fx, "- idx\n- after rebase\n", "s3");
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/CLAUDE.md"]),
+        "# from elsewhere\n"
+    );
+    run(&fx, &["sync"]);
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("CLAUDE.md")).unwrap(),
+        "# from elsewhere\n"
+    );
+    assert_eq!(fs::read_to_string(&one).unwrap(), "kept live\n");
+}
+
+#[test]
+fn a_sweep_stopped_between_its_commit_and_its_record_is_not_taken_for_a_change_from_elsewhere() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let one = live_one(&fx);
+    write(&one, "committed by a sweep\n");
+    hook(&fx, &post_tool_use(&one, "s1"));
+    hook(&fx, &stop("s1"));
+    // As a sweep stopped right after `git commit` leaves it: the record
+    // still at the previous commit, the copy still on the uncommitted list.
+    let blob = git(&fx, &["rev-parse", "HEAD:claude/memory/-h-git-a/one.md"]);
+    write(
+        &fx.repo.join(".git/memsaga/preview.json"),
+        &format!("{{\"claude/memory/-h-git-a/one.md\":\"{}\"}}", blob.trim()),
+    );
+    git(&fx, &["update-ref", "refs/memsaga/recorded", "HEAD~1"]);
+    // The live file moves on before the next sweep.
+    write(&one, "edited again\n");
+    hook(&fx, &post_tool_use(&one, "s2"));
+    hook(&fx, &stop("s2"));
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/memory/-h-git-a/one.md"]),
+        "edited again\n"
+    );
+    assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
+}
+
+#[test]
+fn nothing_is_swept_while_the_data_repository_is_in_the_middle_of_a_merge() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "claude/memory/-h-git-a/one.md", Some("theirs\n"));
+    let repo_one = fx.repo.join("claude/memory/-h-git-a/one.md");
+    fs::write(&repo_one, "ours\n").unwrap();
+    git_at(&fx.repo, &["commit", "-q", "-am", "ours by hand"]);
+    git(&fx, &["fetch", "-q", "origin"]);
+    let b = branch(&fx);
+    let merge = |msg: &str| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&fx.repo)
+            .args(["-c", "user.name=o", "-c", "user.email=o@o"])
+            .args(["merge", "-q", "-m", msg, &format!("origin/{b}")])
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "the merge was meant to conflict");
+    };
+    // A merge by hand, stopped on a conflict.
+    merge("merge by hand");
+    let before = commits(&fx);
+    touch_memory(&fx, "- idx\n- during the merge\n", "s1");
+    assert_eq!(
+        commits(&fx),
+        before,
+        "a sweep committed in the middle of a merge"
+    );
+    let log = fs::read_to_string(fx.repo.join(".git/memsaga/memsaga.log")).unwrap();
+    assert!(log.contains("in the middle of a merge"), "{log}");
+    let out = cmd(&fx).arg("sweep").output().unwrap();
+    assert!(!out.status.success());
+    assert_eq!(fs::read_to_string(live_one(&fx)).unwrap(), "fact\n");
+    // memsaga's own merge, stopped half-way, is aborted and work goes on.
+    git(&fx, &["merge", "--abort"]);
+    merge(&format!("sync: merge origin/{b}"));
+    run(&fx, &["sweep"]);
+    assert!(!fx.repo.join(".git/MERGE_HEAD").exists());
+    assert!(commits(&fx) > before);
+}
+
+#[test]
+fn an_unreadable_incoming_list_stops_sweeps_instead_of_reading_as_empty() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let repo_one = fx.repo.join("claude/memory/-h-git-a/one.md");
+    // A hand edit in the clone waits on the list...
+    fs::write(&repo_one, "edited in the clone\n").unwrap();
+    run(&fx, &["sweep"]);
+    assert!(status_json(&fx)["incoming"]["claude/memory/-h-git-a/one.md"].is_object());
+    // ...and the list is cut short, as a write stopped half-way left it.
+    fs::write(
+        fx.repo.join(".git/memsaga/incoming.json"),
+        "{\n  \"claude/memory",
+    )
+    .unwrap();
+    let out = cmd(&fx).arg("sweep").output().unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("incoming.json"),
+        "{out:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(&repo_one).unwrap(),
+        "edited in the clone\n"
+    );
+    let v = status_json(&fx);
+    assert!(
+        v["incoming_error"]
+            .as_str()
+            .is_some_and(|e| e.contains("incoming.json")),
+        "{v}"
+    );
 }
