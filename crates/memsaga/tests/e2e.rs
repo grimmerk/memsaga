@@ -5356,3 +5356,34 @@ fn a_deleted_file_is_named_as_deleted_even_in_a_large_pull() {
     assert!(!two.exists());
     assert!(out.contains("It was deleted"), "{out}");
 }
+
+#[test]
+fn pull_check_for_one_file_counts_a_pull_by_hand_as_affecting_it() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(
+        &other,
+        "claude/memory/-h-git-a/one.md",
+        Some("from elsewhere\n"),
+    );
+    let b = branch(&fx);
+    git(&fx, &["pull", "-q", "--no-rebase", "origin", &b]);
+    // Origin looks unmoved (the pull updated its tracking ref); the file is
+    // still affected, through the change of HEAD memsaga did not record.
+    let one = live_one(&fx);
+    let v: serde_json::Value = serde_json::from_str(&run(
+        &fx,
+        &[
+            "pull",
+            "--check",
+            "--max-age",
+            "0",
+            "--path",
+            one.to_str().unwrap(),
+        ],
+    ))
+    .unwrap();
+    assert_eq!(v["moved"], false, "{v}");
+    assert_eq!(v["affected"], true, "{v}");
+}

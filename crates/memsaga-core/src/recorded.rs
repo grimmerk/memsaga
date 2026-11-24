@@ -474,8 +474,7 @@ fn set_recorded(git: &Git, old: Option<&str>, new: &str) -> Result<()> {
 /// Refuse while the data repository is half-way through a git operation:
 /// its working tree then holds conflict markers or half-applied commits, and
 /// a sweep would commit them or settle would write them to the live files.
-/// memsaga's own merge, stopped before it finished, is aborted instead: the
-/// next sync merges again.
+/// Nothing is aborted for the user (see `blocker`).
 fn check_not_busy(cfg: &Config) -> Result<()> {
     match blocker(cfg) {
         Some(reason) => bail!(reason),
