@@ -231,7 +231,13 @@ merge, settle and per-file check takes the sweep lock through one function,
      sweep stopped between its commit and moving the recorded head;
    - a deletion of a path whose live file another repository path still
      stands for: the file moved within the repository (an older layout, a
-     renamed memory directory), and its live file stays;
+     renamed memory directory), and its live file stays. A rename is found
+     by git's own detection, asked for explicitly (another machine moving a
+     memory directory to the name it uses is a rename, not a deletion here);
+     a move git cannot pair (the file was also rewritten) is found by the
+     two paths standing for one live file. Either way the new path's base
+     is the old path's version, so settle takes the move as an edit of the
+     live file;
    - a nested repository (a gitlink), which has no file to write.
 5. When `HEAD` no longer contains the recorded head (history rewritten by a
    `git reset` or a `git pull --rebase`), only the files changed on `HEAD`'s
