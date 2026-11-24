@@ -226,8 +226,9 @@ merge, settle and per-file check takes the sweep lock through one function,
 2. Recorded head equal to `HEAD`: nothing to do. Both are read from their
    files, without a git process.
 3. No recorded head yet (the first run after an upgrade, or a fresh clone):
-   start from the newest commit memsaga made or merged on this machine, taken
-   from the event log, that `HEAD` still contains (every event is tried,
+   start from the newest commit memsaga made, merged or recorded on this
+   machine (its `commit`, `merge` and `recovered` events) that `HEAD` still
+   contains (every event is tried,
    against one `git rev-list` of `HEAD`; newer ones a reset dropped are
    passed over, so a commit made by hand after the reset is still found);
    with none, from `HEAD`. An event log that cannot be read, or a git error

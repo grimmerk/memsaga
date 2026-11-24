@@ -129,12 +129,20 @@ const UNCOMMITTED: &str = "preview.json";
 /// a machine ever had, and guessing (all of `HEAD`) is the #22 bug again.
 const SEEN: &str = "seen.json";
 
-/// The record; empty when there is none yet.
+/// The record; empty when there is none yet, or when it cannot be read (the
+/// guard then keeps more files, the safe side for it).
 pub fn load_seen(state: &State) -> BTreeSet<String> {
-    std::fs::read_to_string(state.marker(SEEN))
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
+    load_seen_checked(state).unwrap_or_default()
+}
+
+/// The record, or None when it exists but cannot be read: for a decision
+/// where "never had" is the side that writes a live file.
+fn load_seen_checked(state: &State) -> Option<BTreeSet<String>> {
+    match std::fs::read_to_string(state.marker(SEEN)) {
+        Ok(t) => serde_json::from_str(&t).ok(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(BTreeSet::new()),
+        Err(_) => None,
+    }
 }
 
 /// Add repository paths (absolute or repo-relative) to the record. The caller
@@ -954,7 +962,7 @@ pub fn settle_within(cfg: &Config, take: Option<(Take, &str)>, wait: Duration) -
     // Base versions are read through one `git cat-file --batch` process.
     let mut ctx = SettleCtx {
         cat: None,
-        seen: load_seen(&state),
+        seen: load_seen_checked(&state),
     };
     for (i, rel) in keys.into_iter().enumerate() {
         // Progress survives a hook stopped half-way through a long catch-up;
@@ -1064,8 +1072,9 @@ enum Outcome {
 struct SettleCtx {
     /// Base versions, through one `git cat-file --batch` process.
     cat: Option<crate::git::CatFile>,
-    /// Repository paths whose live file this machine has had (`load_seen`).
-    seen: BTreeSet<String>,
+    /// Repository paths whose live file this machine has had; None when the
+    /// record cannot be read, and then nothing counts as never had.
+    seen: Option<BTreeSet<String>>,
 }
 
 fn settle_one(
@@ -1151,8 +1160,8 @@ fn settle_one(
     // (deleted here, changed there) and waits.
     if l.is_none()
         && r.is_some()
-        && std::fs::symlink_metadata(target.live()).is_err()
-        && !ctx.seen.contains(rel)
+        && matches!(std::fs::symlink_metadata(target.live()), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+        && ctx.seen.as_ref().is_some_and(|seen| !seen.contains(rel))
     {
         return apply(cfg, &target, &repo_path, r.as_deref());
     }

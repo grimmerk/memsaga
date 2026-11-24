@@ -328,8 +328,9 @@ impl<'a> Git<'a> {
         }
     }
 
-    /// An error when git cannot tell (an object it cannot read), never a
-    /// "no": a wrong "no" would be taken as unrelated history.
+    /// Is `a` an ancestor of `b` (or equal to it)? An error when git cannot
+    /// tell (an object it cannot read), never a "no": a wrong "no" would be
+    /// taken as unrelated history.
     pub fn is_ancestor(&self, a: &str, b: &str) -> Result<bool> {
         let out = self.run(&["merge-base", "--is-ancestor", a, b])?;
         match out.status.code() {

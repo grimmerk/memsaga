@@ -5478,3 +5478,22 @@ fn an_unreadable_event_log_stops_the_first_run_instead_of_starting_at_head() {
         "committed by hand\n"
     );
 }
+
+#[test]
+fn an_unreadable_seen_record_never_counts_a_missing_file_as_never_had() {
+    // Unreadable, the record cannot tell "never had" from "had and deleted":
+    // the file waits as a conflict instead of being written live.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "claude/hooks/elsewhere.sh", Some("v1\n"));
+    run(
+        &fx,
+        &["sync", "--take", "live", "claude/hooks/elsewhere.sh"],
+    );
+    push_from_other(&other, "claude/hooks/elsewhere.sh", Some("v2\n"));
+    write(&fx.repo.join(".git/memsaga/seen.json"), "[\"claude");
+    let out = run(&fx, &["pull"]);
+    assert!(!fx.claude.join("hooks/elsewhere.sh").exists(), "{out}");
+    assert!(out.contains("conflict"), "{out}");
+}
