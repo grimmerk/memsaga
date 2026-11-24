@@ -5387,3 +5387,42 @@ fn pull_check_for_one_file_counts_a_pull_by_hand_as_affecting_it() {
     assert_eq!(v["moved"], false, "{v}");
     assert_eq!(v["affected"], true, "{v}");
 }
+
+#[test]
+fn an_edit_from_elsewhere_to_a_file_this_machine_never_had_is_written_here() {
+    let fx = fixture("turn", "");
+    let two = fx.claude.join("projects/-h-git-a/memory/two.md");
+    write(&two, "two\n");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    // A file from elsewhere that this machine declined: in the repository
+    // only, never had here.
+    push_from_other(&other, "claude/hooks/elsewhere.sh", Some("v1\n"));
+    run(
+        &fx,
+        &["sync", "--take", "live", "claude/hooks/elsewhere.sh"],
+    );
+    let elsewhere = fx.claude.join("hooks/elsewhere.sh");
+    assert!(!elsewhere.exists());
+    // A file this machine had, deleted here and not swept yet.
+    fs::remove_file(&two).unwrap();
+    // Both change elsewhere.
+    git_at(&other, &["pull", "-q"]);
+    write(&other.join("claude/hooks/elsewhere.sh"), "v2\n");
+    write(
+        &other.join("claude/memory/-h-git-a/two.md"),
+        "two, edited\n",
+    );
+    git_at(&other, &["add", "-A"]);
+    git_at(&other, &["commit", "-q", "-m", "edited elsewhere"]);
+    git_at(&other, &["push", "-q"]);
+    // `pull` merges without sweeping first, as the hooks do.
+    let out = run(&fx, &["pull"]);
+    assert_eq!(
+        fs::read_to_string(&elsewhere).ok().as_deref(),
+        Some("v2\n"),
+        "{out}"
+    );
+    assert!(!two.exists(), "a deletion here was undone");
+    assert!(out.contains("conflict") && out.contains("two.md"), "{out}");
+}

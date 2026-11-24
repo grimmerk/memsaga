@@ -952,7 +952,10 @@ pub fn settle_within(cfg: &Config, take: Option<(Take, &str)>, wait: Duration) -
     };
     let keys: Vec<String> = incoming.keys().cloned().collect();
     // Base versions are read through one `git cat-file --batch` process.
-    let mut cat: Option<crate::git::CatFile> = None;
+    let mut ctx = SettleCtx {
+        cat: None,
+        seen: load_seen(&state),
+    };
     for (i, rel) in keys.into_iter().enumerate() {
         // Progress survives a hook stopped half-way through a long catch-up;
         // what was written is recorded as had first, or a file deleted live
@@ -964,7 +967,7 @@ pub fn settle_within(cfg: &Config, take: Option<(Take, &str)>, wait: Duration) -
         let entry = incoming[&rel].clone();
         let target = live_target(cfg, &rel);
         let before = target.as_ref().and_then(|t| mirror_form(cfg, t));
-        match settle_one(cfg, &git, &state, &mut cat, &rel, &entry, take.as_ref()) {
+        match settle_one(cfg, &git, &state, &mut ctx, &rel, &entry, take.as_ref()) {
             Ok(Outcome::Done(kind)) => {
                 incoming.remove(&rel);
                 // A notice quotes a few files; one `git diff` per file for a
@@ -1057,11 +1060,19 @@ enum Outcome {
     Skip(String),
 }
 
+/// What one `settle` shares across its files.
+struct SettleCtx {
+    /// Base versions, through one `git cat-file --batch` process.
+    cat: Option<crate::git::CatFile>,
+    /// Repository paths whose live file this machine has had (`load_seen`).
+    seen: BTreeSet<String>,
+}
+
 fn settle_one(
     cfg: &Config,
     git: &Git,
     state: &State,
-    cat: &mut Option<crate::git::CatFile>,
+    ctx: &mut SettleCtx,
     rel: &str,
     entry: &IncomingEntry,
     take: Option<&(Take, String)>,
@@ -1128,10 +1139,21 @@ fn settle_one(
         return Ok(Outcome::Done(Done::InStep));
     }
     let b = match &entry.base {
-        Some(id) => Some(read_blob(git, cat, id).context("reading the base version")?),
+        Some(id) => Some(read_blob(git, &mut ctx.cat, id).context("reading the base version")?),
         None => None,
     };
     if l == b {
+        return apply(cfg, &target, &repo_path, r.as_deref());
+    }
+    // Changed elsewhere, missing here, and this machine never had it (a
+    // fresh clone, or a file left in the repository only): written here, as
+    // a new file is. One this machine had and deleted is a real conflict
+    // (deleted here, changed there) and waits.
+    if l.is_none()
+        && r.is_some()
+        && std::fs::symlink_metadata(target.live()).is_err()
+        && !ctx.seen.contains(rel)
+    {
         return apply(cfg, &target, &repo_path, r.as_deref());
     }
     // Both sides changed: a line merge when all three are text.
