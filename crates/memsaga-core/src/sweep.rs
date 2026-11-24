@@ -203,6 +203,8 @@ pub fn pending(
     }
     let state = State::new(cfg.state_dir());
     let locked = crate::recorded::lock_reconciled(cfg, &state, Duration::from_secs(60))?;
+    // The preview writes the working tree too: not over a conflict.
+    crate::recorded::check_no_conflicts(cfg, &git)?;
     // The same guard as a sweep, so a preview never overwrites a repository-side
     // edit either; what it finds is recorded by the next sweep, not here.
     let incoming = crate::sync::load_incoming(&state)?;

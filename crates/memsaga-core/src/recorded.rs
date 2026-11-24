@@ -204,7 +204,14 @@ pub fn record_moves(
     }
     let rewritten = side != from;
     let theirs: Option<BTreeSet<String>> = if rewritten {
-        Some(git.changes(side, to)?.into_iter().map(|c| c.path).collect())
+        // A rename on that side counts for both of its paths: the other diff
+        // may list the old path as a plain deletion.
+        Some(
+            git.changes(side, to)?
+                .into_iter()
+                .flat_map(|c| std::iter::once(c.path).chain(c.moved_from.map(|(p, _)| p)))
+                .collect(),
+        )
     } else {
         None
     };
@@ -239,6 +246,8 @@ pub fn record_moves(
     }
     let uncommitted = sync::load_uncommitted(state);
     let mut cat: Option<CatFile> = None;
+    // Whether each recorded path exists at `to`, as the diff said.
+    let mut present: std::collections::BTreeMap<String, bool> = std::collections::BTreeMap::new();
     for c in changes {
         if c.new_mode == "160000" || (c.new.is_none() && c.old_mode == "160000") {
             continue;
@@ -259,7 +268,10 @@ pub fn record_moves(
         {
             continue;
         }
-        if c.new.is_some() && uncommitted.get(&c.path) == c.new.as_ref() {
+        // memsaga's own copy, committed: only when the mode did not change
+        // too (the copy's record holds content, not the executable bit).
+        if c.new.is_some() && uncommitted.get(&c.path) == c.new.as_ref() && c.old_mode == c.new_mode
+        {
             continue;
         }
         if live_equals(cfg, git, &mut cat, &target, &c)? {
@@ -276,10 +288,11 @@ pub fn record_moves(
                 from: label.to_string(),
             },
         );
+        present.insert(c.path.clone(), c.new.is_some());
         out.recorded.push(c.path);
     }
     drop(cat);
-    restore_own_copies(cfg, state, git, to, &out.recorded)?;
+    restore_own_copies(cfg, state, git, to, &out.recorded, &present)?;
     Ok(out)
 }
 
@@ -322,7 +335,10 @@ fn live_equals(
 ) -> Result<bool> {
     let live = sync::mirror_form(cfg, target);
     let Some(id) = &c.new else {
-        return Ok(live.is_none() && std::fs::symlink_metadata(target.live()).is_err());
+        // Absent only when the file system says so: an error such as a
+        // denied search leaves the deletion to be recorded.
+        return Ok(live.is_none()
+            && matches!(std::fs::symlink_metadata(target.live()), Err(e) if e.kind() == std::io::ErrorKind::NotFound));
     };
     // A link in the repository is recorded as a merge always recorded it.
     if c.new_mode == "120000" {
@@ -357,6 +373,7 @@ fn restore_own_copies(
     git: &Git,
     to: &str,
     recorded: &[String],
+    present: &std::collections::BTreeMap<String, bool>,
 ) -> Result<()> {
     let mut record = sync::load_uncommitted(state);
     let own: Vec<&String> = recorded
@@ -374,10 +391,12 @@ fn restore_own_copies(
             continue; // changed since memsaga wrote it: an edit, left alone
         }
         let spec = format!(":(literal){p}");
-        if git.object_type(&format!("{to}:{p}"))?.is_some() {
-            git.run_ok(&["checkout", "-q", to, "--", &spec])?;
-        } else {
-            std::fs::remove_file(cfg.repo.join(p))?;
+        match present.get(p) {
+            Some(true) => {
+                git.run_ok(&["checkout", "-q", to, "--", &spec])?;
+            }
+            Some(false) => std::fs::remove_file(cfg.repo.join(p))?,
+            None => continue,
         }
         record.remove(p);
     }
@@ -406,31 +425,36 @@ fn reconcile(
     } else {
         git.merge_base(from, head)?
     };
-    let mut incoming = sync::load_incoming(state)?;
-    let moved = match &side {
-        Some(side) => record_moves(
-            cfg,
-            state,
-            git,
-            &mut incoming,
-            from,
-            side,
-            head,
-            &format!("HEAD moved to {}", short(head)),
-        )?,
-        None => Moved::default(),
+    // No common history (a switch to an unrelated branch): nothing says what
+    // changed, and recording HEAD would let the next sweep copy the live
+    // files over it. Stop, and say how to start from HEAD on purpose.
+    let Some(side) = side else {
+        bail!(
+            "HEAD ({}) shares no history with the commit memsaga recorded ({}), so memsaga cannot tell what changed; check out the branch memsaga uses, or, to make the live files follow HEAD's files from now on, run `git -C {} update-ref {RECORDED_REF} HEAD` (the next sweep then copies the live files over any that differ)",
+            short(head),
+            short(from),
+            cfg.repo.display()
+        );
     };
+    let mut incoming = sync::load_incoming(state)?;
+    let moved = record_moves(
+        cfg,
+        state,
+        git,
+        &mut incoming,
+        from,
+        &side,
+        head,
+        &format!("HEAD moved to {}", short(head)),
+    )?;
     if !moved.recorded.is_empty() {
         sync::save_incoming(state, &incoming)?;
     }
     set_recorded(git, old_ref, head)?;
-    let how = match (&side, ancestor) {
-        (_, true) => String::new(),
-        (Some(_), false) => {
-            " (history rewritten or reset: only the changes on its side of the merge base were taken)"
-                .into()
-        }
-        (None, false) => " (no common history: nothing taken)".into(),
+    let how = if ancestor {
+        ""
+    } else {
+        " (history rewritten or reset: only the changes on its side of the merge base were taken)"
     };
     let message = format!(
         "HEAD moved from {} to {} outside memsaga's record{how}; {} file(s) to bring to the live side",
@@ -533,7 +557,7 @@ pub fn blocker(cfg: &Config) -> Option<String> {
         (
             "rebase-apply",
             "a rebase or `git am`",
-            "`--continue` or `--abort`",
+            "`git rebase --continue` or `--abort` for a rebase, `git am --continue` or `--abort` for `git am`",
         ),
         (
             "CHERRY_PICK_HEAD",
@@ -548,7 +572,7 @@ pub fn blocker(cfg: &Config) -> Option<String> {
         (
             "sequencer",
             "a cherry-pick or revert of several commits",
-            "`--continue` or `--abort`",
+            "`git cherry-pick --continue` or `--abort` for a cherry-pick, `git revert --continue` or `--abort` for a revert",
         ),
     ] {
         if dir.join(name).exists() {

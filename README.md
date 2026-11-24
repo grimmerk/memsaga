@@ -726,9 +726,11 @@ Claude reads or writes that file.
   while the data repository is half-way through a merge, rebase, cherry-pick
   or revert, has unresolved conflicts, or when
   `<data repository>/.git/memsaga/incoming.json` cannot be read. Finish or
-  abort the git command; a damaged list is better fixed by hand than
-  removed, since removing it lets the next sweep overwrite the files it
-  listed.
+  abort the git command (`status` names it). Conflicts with no git command
+  in progress (a `git stash pop` that conflicted) are resolved by editing
+  the files and staging them with `git add`. A damaged list is better fixed
+  by hand than removed, since removing it lets the next sweep overwrite the
+  files it listed.
 - To stop, `memsaga uninstall` removes the hooks. The repository and its
   history stay.
 - Questions and ideas go to
@@ -973,7 +975,9 @@ The other way round, a live file counts as deleted only on a machine that has
 had it: a file the repository has but this machine never had (a fresh clone, a
 folder another machine added to the config) is kept, and `memsaga status`
 lists it. When such a file changes elsewhere, the new version is written
-here, as a new file is.
+here, as a new file is; so is a file deleted here that changed elsewhere
+before the deletion was synced (the edit wins, and the deletion stays in
+history).
 
 Git commands you run by hand in the data repository count as edits from
 elsewhere: after a `git pull`, `git merge`, `git commit` or `git revert`

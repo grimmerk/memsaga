@@ -252,6 +252,8 @@ impl State {
     /// newest first, through the current log and then the rotated ones. A
     /// log that exists but cannot be read is an error, not an empty history.
     pub fn event_shas(&self, kinds: &[&str]) -> Result<Vec<String>> {
+        // A directory that cannot be listed would hide the rotated logs.
+        std::fs::read_dir(&self.dir).with_context(|| format!("listing {}", self.dir.display()))?;
         let mut files = vec![self.marker("events.jsonl")];
         files.extend(self.rotated_logs().into_iter().rev().map(|(p, _)| p));
         let mut out = Vec::new();

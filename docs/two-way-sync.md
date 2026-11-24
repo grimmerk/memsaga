@@ -259,7 +259,9 @@ merge, settle and per-file check takes the sweep lock through one function,
    live files win, as before; a rebase onto origin takes origin's changes,
    its deletions included, so the next push does not undo them. What the
    recorded head had and `HEAD` lacks without a change on `HEAD`'s side
-   (commits a rewrite dropped) is not taken: the live files keep it.
+   (commits a rewrite dropped) is not taken: the live files keep it. With no
+   common history at all (a switch to an unrelated branch) the run stops
+   and says how to start recording from `HEAD` on purpose.
 6. Save the list, then move the recorded head to `HEAD`, and log a
    `recovered` event with the files.
 
@@ -350,8 +352,10 @@ B = base, R = repository file.
      │                write R to the live file, or delete the live file
      │                when the repository deleted it
      │ no
-  L missing, and this machine never had it? ── yes ──▶ write R, as for a
-     │                                                 new file
+  L missing? ── R != B ──▶ write R: an edit elsewhere wins over a
+     │          │           deletion here (the deletion stays in history)
+     │          └─ R == B ─▶ only the deletion here: drop the entry, the next
+     │                       sweep commits it
      │ no
   both changed:
      git merge-file L B R ── clean ──▶ write the merged text to the live file
@@ -371,11 +375,12 @@ How it writes:
   dropped. `memsaga sync --take live|repo <path>` settles one file explicitly.
 - A both-sides change in a file that is not text (no line structure that
   `git merge-file` can use) is a conflict.
-- A file missing live that this machine never had (`.git/memsaga/seen.json`
-  does not list it: a fresh clone, or a file left in the repository only,
-  §4) is written when it changes elsewhere, as a new file is; one this
-  machine had and deleted is a conflict (deleted here, changed there) and
-  waits.
+- A file missing live that changed elsewhere is written, whether this
+  machine never had it (a fresh clone, a file left in the repository only,
+  §4) or deleted it here before the change arrived: an edit is never lost to
+  a deletion, which stays in history; delete the file again to delete it
+  everywhere. This does not depend on `.git/memsaga/seen.json`, so a damaged
+  or incomplete record cannot change the outcome.
 
 ## 7. Step 3: read before use, through command hooks
 

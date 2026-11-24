@@ -129,20 +129,12 @@ const UNCOMMITTED: &str = "preview.json";
 /// a machine ever had, and guessing (all of `HEAD`) is the #22 bug again.
 const SEEN: &str = "seen.json";
 
-/// The record; empty when there is none yet, or when it cannot be read (the
-/// guard then keeps more files, the safe side for it).
+/// The record; empty when there is none yet.
 pub fn load_seen(state: &State) -> BTreeSet<String> {
-    load_seen_checked(state).unwrap_or_default()
-}
-
-/// The record, or None when it exists but cannot be read: for a decision
-/// where "never had" is the side that writes a live file.
-fn load_seen_checked(state: &State) -> Option<BTreeSet<String>> {
-    match std::fs::read_to_string(state.marker(SEEN)) {
-        Ok(t) => serde_json::from_str(&t).ok(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(BTreeSet::new()),
-        Err(_) => None,
-    }
+    std::fs::read_to_string(state.marker(SEEN))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
 }
 
 /// Add repository paths (absolute or repo-relative) to the record. The caller
@@ -486,8 +478,14 @@ pub struct Guard {
     roots: Vec<Root>,
     /// Paths a removal was refused for because this machine never had them.
     absent: RefCell<BTreeSet<String>>,
-    /// What `HEAD` holds, read once at the first candidate (`at_head`).
+    /// What the reconciled `HEAD` holds, read once at the first candidate
+    /// (`at_head`).
     head: std::cell::OnceCell<HeadView>,
+    /// The commit `lock_reconciled` reconciled: the baseline, not whatever
+    /// `HEAD` is by the time a candidate is checked (a commit made by hand
+    /// during the sweep is no copy of memsaga's). None before the first
+    /// commit.
+    reconciled: Option<String>,
 }
 
 /// What the guard compares a candidate with, read once at the first
@@ -505,9 +503,9 @@ struct HeadView {
 }
 
 impl HeadView {
-    fn read(git: &Git, repo: &Path, since: SystemTime) -> HeadView {
+    fn read(git: &Git, repo: &Path, since: SystemTime, head: &str) -> HeadView {
         let blobs = git
-            .run_ok(&["ls-tree", "-r", "-z", "--full-tree", "HEAD"])
+            .run_ok(&["ls-tree", "-r", "-z", "--full-tree", head])
             .ok()
             .map(|ids| {
                 ids.split('\0')
@@ -552,14 +550,14 @@ impl HeadView {
 }
 
 impl Guard {
-    /// `_locked` proves the caller holds the sweep lock with the recorded
+    /// `locked` proves the caller holds the sweep lock with the recorded
     /// head equal to `HEAD`: the guard's "equal to `HEAD` means memsaga's own
-    /// copy" holds only then.
+    /// copy" holds only for that commit, which is the guard's baseline.
     pub fn new(
         cfg: &Config,
         since: Option<SystemTime>,
         incoming: &Incoming,
-        _locked: &crate::recorded::Locked,
+        locked: &crate::recorded::Locked,
     ) -> Guard {
         Guard {
             repo: cfg.repo.clone(),
@@ -572,6 +570,7 @@ impl Guard {
             roots: cfg.roots.clone(),
             absent: RefCell::new(BTreeSet::new()),
             head: std::cell::OnceCell::new(),
+            reconciled: locked.head().map(str::to_string),
         }
     }
 
@@ -585,12 +584,13 @@ impl Guard {
         meta: &std::fs::Metadata,
     ) -> (Option<String>, Option<String>) {
         let since = self.since.unwrap_or(SystemTime::UNIX_EPOCH);
+        let head = self.reconciled.as_deref().unwrap_or("HEAD");
         let view = self
             .head
-            .get_or_init(|| HeadView::read(git, &self.repo, since));
+            .get_or_init(|| HeadView::read(git, &self.repo, since, head));
         let base = match &view.blobs {
             Some(map) => map.get(rel).cloned(),
-            None => blob_at(git, "HEAD", rel),
+            None => blob_at(git, head, rel),
         };
         let now = match view.hashed.get(dst) {
             Some((t, len, id)) if meta.modified().ok() == Some(*t) && meta.len() == *len => {
@@ -828,8 +828,22 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
         .context("no commit to merge into")?
         .to_string();
     let message = format!("sync: merge {remote}");
+    // A merge started by hand while the fetch ran: leave it alone.
+    if let Some(reason) = crate::recorded::blocker(cfg) {
+        bail!(reason);
+    }
     let merge = git.run(&["merge", "--no-edit", "-q", "-m", &message, &remote])?;
     if !merge.status.success() {
+        // Refused because someone else's merge is in progress (started in the
+        // moment since the check above): it is theirs, never aborted here.
+        let stderr = String::from_utf8_lossy(&merge.stderr);
+        if stderr.contains("not concluded your merge") || stderr.contains("MERGE_HEAD exists") {
+            bail!(
+                "a merge started in the data repository {} while memsaga was merging; it was left as it is: {}",
+                cfg.repo.display(),
+                stderr.trim()
+            );
+        }
         let conflicted: Vec<String> = git
             .run_ok(&["diff", "--name-only", "-z", "--diff-filter=U"])
             .unwrap_or_default()
@@ -870,6 +884,16 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
     let merged = git
         .commit_of("HEAD")?
         .context("reading HEAD after the merge")?;
+    // Something outside memsaga moved HEAD in the moment since the merge:
+    // listing `pre..merged` would read what it dropped as deletions from
+    // origin. Nothing is recorded; the next run reconciles from `pre`.
+    if !git.is_ancestor(&pre, &merged)? {
+        bail!(
+            "HEAD moved to {} right after the merge, to a commit that does not contain {}; nothing recorded, the next sweep or sync takes it from there",
+            &merged[..8.min(merged.len())],
+            &pre[..8.min(pre.len())]
+        );
+    }
     let head = git.head_short()?;
     // One `git diff --raw` for the whole merge (B's catch-up of ~6,700 files
     // cost one git process per file, and the hook was stopped half-way).
@@ -960,10 +984,7 @@ pub fn settle_within(cfg: &Config, take: Option<(Take, &str)>, wait: Duration) -
     };
     let keys: Vec<String> = incoming.keys().cloned().collect();
     // Base versions are read through one `git cat-file --batch` process.
-    let mut ctx = SettleCtx {
-        cat: None,
-        seen: load_seen_checked(&state),
-    };
+    let mut ctx = SettleCtx { cat: None };
     for (i, rel) in keys.into_iter().enumerate() {
         // Progress survives a hook stopped half-way through a long catch-up;
         // what was written is recorded as had first, or a file deleted live
@@ -1072,9 +1093,6 @@ enum Outcome {
 struct SettleCtx {
     /// Base versions, through one `git cat-file --batch` process.
     cat: Option<crate::git::CatFile>,
-    /// Repository paths whose live file this machine has had; None when the
-    /// record cannot be read, and then nothing counts as never had.
-    seen: Option<BTreeSet<String>>,
 }
 
 fn settle_one(
@@ -1154,16 +1172,19 @@ fn settle_one(
     if l == b {
         return apply(cfg, &target, &repo_path, r.as_deref());
     }
-    // Changed elsewhere, missing here, and this machine never had it (a
-    // fresh clone, or a file left in the repository only): written here, as
-    // a new file is. One this machine had and deleted is a real conflict
-    // (deleted here, changed there) and waits.
+    // Missing here. Changed elsewhere: the edit wins over a deletion here
+    // (written, as a new file is; the deletion stays in history), whether
+    // this machine ever had the file or not. Unchanged elsewhere: only the
+    // deletion here is left, which the next sweep commits.
     if l.is_none()
-        && r.is_some()
         && matches!(std::fs::symlink_metadata(target.live()), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
-        && ctx.seen.as_ref().is_some_and(|seen| !seen.contains(rel))
     {
-        return apply(cfg, &target, &repo_path, r.as_deref());
+        if r == b {
+            return Ok(Outcome::Done(Done::InStep));
+        }
+        if r.is_some() {
+            return apply(cfg, &target, &repo_path, r.as_deref());
+        }
     }
     // Both sides changed: a line merge when all three are text.
     let (Some(l), Some(r)) = (l, r) else {
@@ -1900,6 +1921,27 @@ pub fn before_tool(cfg: &Config, session: &str, live: &Path, tool: &str) -> Resu
         return Ok(ToolVerdict::Allow);
     };
     let writes = tool != "Read";
+    match checked_tool(cfg, session, live, tool, &rel, writes) {
+        // A write memsaga could not check first might undo a change it has
+        // not brought in yet (a hook's error alone lets the call through).
+        Err(e) if writes => Ok(ToolVerdict::Deny(format!(
+            "memsaga could not bring in changes to {} before this write ({e:#}). Do not write it now: tell the user, who can see why with `memsaga status`.",
+            live.display()
+        ))),
+        other => other,
+    }
+}
+
+/// `before_tool` for a file in scope.
+fn checked_tool(
+    cfg: &Config,
+    session: &str,
+    live: &Path,
+    tool: &str,
+    rel: &str,
+    writes: bool,
+) -> Result<ToolVerdict> {
+    let rel = rel.to_string();
     let state = State::new(cfg.state_dir());
     note_session_file(&state, session, &rel);
     // A change of HEAD memsaga did not record (a `git pull` or `git commit`

@@ -5057,6 +5057,12 @@ fn nothing_is_swept_or_synced_while_a_conflict_is_unresolved() {
         String::from_utf8_lossy(&out.stderr).contains("unresolved conflicts"),
         "{out:?}"
     );
+    // A preview writes the working tree too.
+    let out = cmd(&fx).arg("diff").output().unwrap();
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("unresolved conflicts"),
+        "{out:?}"
+    );
     // `pull` reaches settle without a sweep first.
     let out = cmd(&fx).arg("pull").output().unwrap();
     assert!(!out.status.success());
@@ -5393,7 +5399,7 @@ fn pull_check_for_one_file_counts_a_pull_by_hand_as_affecting_it() {
 }
 
 #[test]
-fn an_edit_from_elsewhere_to_a_file_this_machine_never_had_is_written_here() {
+fn an_edit_from_elsewhere_reaches_a_file_missing_here() {
     let fx = fixture("turn", "");
     let two = fx.claude.join("projects/-h-git-a/memory/two.md");
     write(&two, "two\n");
@@ -5408,7 +5414,8 @@ fn an_edit_from_elsewhere_to_a_file_this_machine_never_had_is_written_here() {
     );
     let elsewhere = fx.claude.join("hooks/elsewhere.sh");
     assert!(!elsewhere.exists());
-    // A file this machine had, deleted here and not swept yet.
+    // A file this machine had, deleted here and not swept yet: the edit
+    // elsewhere wins over the deletion (which stays in history).
     fs::remove_file(&two).unwrap();
     // Both change elsewhere.
     git_at(&other, &["pull", "-q"]);
@@ -5427,8 +5434,12 @@ fn an_edit_from_elsewhere_to_a_file_this_machine_never_had_is_written_here() {
         Some("v2\n"),
         "{out}"
     );
-    assert!(!two.exists(), "a deletion here was undone");
-    assert!(out.contains("conflict") && out.contains("two.md"), "{out}");
+    assert_eq!(
+        fs::read_to_string(&two).ok().as_deref(),
+        Some("two, edited\n"),
+        "{out}"
+    );
+    assert!(!out.contains("conflict"), "{out}");
 }
 
 #[test]
@@ -5461,17 +5472,21 @@ fn a_deletion_from_origin_reached_through_a_pull_rebase_is_taken() {
 
 #[test]
 fn an_unreadable_event_log_stops_the_first_run_instead_of_starting_at_head() {
-    use std::os::unix::fs::PermissionsExt;
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
     let rel = "claude/memory/-h-git-a/one.md";
     fs::write(fx.repo.join(rel), "committed by hand\n").unwrap();
     git_at(&fx.repo, &["commit", "-q", "-am", "by hand"]);
     git(&fx, &["update-ref", "-d", "refs/memsaga/recorded"]);
+    // A directory where the log should be: unreadable whatever the
+    // permissions (root reads a mode-000 file).
     let log = fx.repo.join(".git/memsaga/events.jsonl");
-    fs::set_permissions(&log, fs::Permissions::from_mode(0o000)).unwrap();
+    let kept = fx.repo.join(".git/memsaga/events-kept");
+    fs::rename(&log, &kept).unwrap();
+    fs::create_dir(&log).unwrap();
     let out = cmd(&fx).arg("sweep").output().unwrap();
-    fs::set_permissions(&log, fs::Permissions::from_mode(0o644)).unwrap();
+    fs::remove_dir(&log).unwrap();
+    fs::rename(&kept, &log).unwrap();
     assert!(!out.status.success(), "{out:?}");
     assert_eq!(
         git(&fx, &["show", &format!("HEAD:{rel}")]),
@@ -5480,20 +5495,71 @@ fn an_unreadable_event_log_stops_the_first_run_instead_of_starting_at_head() {
 }
 
 #[test]
-fn an_unreadable_seen_record_never_counts_a_missing_file_as_never_had() {
-    // Unreadable, the record cannot tell "never had" from "had and deleted":
-    // the file waits as a conflict instead of being written live.
+fn a_switch_to_unrelated_history_stops_instead_of_being_recorded() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
-    let (_origin, other) = with_origin(&fx);
-    push_from_other(&other, "claude/hooks/elsewhere.sh", Some("v1\n"));
-    run(
-        &fx,
-        &["sync", "--take", "live", "claude/hooks/elsewhere.sh"],
+    let rel = "claude/memory/-h-git-a/one.md";
+    // A branch with no common history, holding a newer version.
+    git_at(&fx.repo, &["checkout", "-q", "--orphan", "elsewhere"]);
+    fs::write(fx.repo.join(rel), "on the unrelated branch\n").unwrap();
+    git_at(&fx.repo, &["add", "-A"]);
+    git_at(&fx.repo, &["commit", "-q", "-m", "unrelated"]);
+    let out = cmd(&fx).arg("sweep").output().unwrap();
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("shares no history"),
+        "{out:?}"
     );
-    push_from_other(&other, "claude/hooks/elsewhere.sh", Some("v2\n"));
-    write(&fx.repo.join(".git/memsaga/seen.json"), "[\"claude");
-    let out = run(&fx, &["pull"]);
-    assert!(!fx.claude.join("hooks/elsewhere.sh").exists(), "{out}");
-    assert!(out.contains("conflict"), "{out}");
+    assert_eq!(
+        fs::read_to_string(fx.repo.join(rel)).unwrap(),
+        "on the unrelated branch\n"
+    );
+}
+
+#[test]
+fn a_write_is_refused_when_memsaga_cannot_check_the_repository_first() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let rel = "claude/memory/-h-git-a/one.md";
+    // HEAD moved by hand, and a conflict left half-way: reconciling stops.
+    fs::write(fx.repo.join(rel), "stashed\n").unwrap();
+    git_at(&fx.repo, &["stash", "-q"]);
+    fs::write(fx.repo.join(rel), "committed by hand\n").unwrap();
+    git_at(&fx.repo, &["commit", "-q", "-am", "by hand"]);
+    let pop = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&fx.repo)
+        .args(["stash", "pop", "-q"])
+        .output()
+        .unwrap();
+    assert!(!pop.status.success(), "the pop was meant to conflict");
+    let one = live_one(&fx);
+    let reason = denied(&hook(&fx, &pre_tool("Write", &one, "s1"))).expect("refused");
+    assert!(reason.contains("could not bring in"), "{reason}");
+    // A Read still goes ahead.
+    assert_eq!(denied(&hook(&fx, &pre_tool("Read", &one, "s1"))), None);
+}
+
+#[test]
+fn an_explicit_backfill_never_replays_over_a_file_waiting_for_the_live_side() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let one = live_one(&fx);
+    let rel = "claude/memory/-h-git-a/one.md";
+    // A commit by hand: the newer version waits for the live side.
+    fs::write(fx.repo.join(rel), "newer, by hand\n").unwrap();
+    git_at(&fx.repo, &["commit", "-q", "-am", "by hand"]);
+    run(&fx, &["sweep"]);
+    assert!(status_json(&fx)["incoming"][rel].is_object());
+    let transcript = format!(
+        "{{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:00.000Z\",\"sessionId\":\"s-old\",\"cwd\":\"/h/git/a\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Write\",\"input\":{{\"file_path\":\"{}\",\"content\":\"v1 fact\\n\"}}}}]}}}}\n",
+        one.display()
+    );
+    write(
+        &fx.claude.join("projects/-h-git-a/0000-session.jsonl"),
+        &transcript,
+    );
+    run(&fx, &["backfill"]);
+    run(&fx, &["sync"]);
+    assert_eq!(fs::read_to_string(&one).unwrap(), "newer, by hand\n");
 }

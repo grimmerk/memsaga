@@ -98,6 +98,9 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
     // The replay writes files and stages everything: a conflicted file would
     // be overwritten, and its markers staged.
     crate::recorded::check_no_conflicts(cfg, &git)?;
+    // A file waiting for the live side holds the newer version: a replayed
+    // old one over it would be what sync then writes live. Left out.
+    let waiting = crate::sync::load_incoming(&state)?;
     // Emit commits: ops of one session within the window form one commit,
     // whose tree holds the latest known version of every touched file.
     let mut latest: HashMap<PathBuf, String> = HashMap::new(); // rel -> content written so far
@@ -125,7 +128,9 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
         // an existing repository) is left exactly as it is.
         let mut written_now: HashSet<PathBuf> = HashSet::new();
         for (rel, content) in versions {
-            if latest.get(&rel) == Some(&content) {
+            if latest.get(&rel) == Some(&content)
+                || waiting.contains_key(rel.to_string_lossy().as_ref())
+            {
                 continue;
             }
             let dst = cfg.repo.join(&rel);
