@@ -1121,7 +1121,13 @@ fn settle_one(
         }
         return Ok(Outcome::Skip("inside a link in the repository".into()));
     }
-    let repo_meta = std::fs::symlink_metadata(&repo_path).ok();
+    // Absent only when the file system says so: another error must not read
+    // as a deletion from the repository, which would delete the live file.
+    let repo_meta = match std::fs::symlink_metadata(&repo_path) {
+        Ok(m) => Some(m),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e).with_context(|| format!("reading {}", repo_path.display())),
+    };
     if repo_meta.as_ref().is_some_and(|m| !m.is_file()) {
         return Ok(Outcome::Skip("not a regular file in the repository".into()));
     }
@@ -1163,7 +1169,7 @@ fn settle_one(
         return apply(cfg, &target, &repo_path, r.as_deref());
     }
     // Missing here. Changed elsewhere: the edit wins over a deletion here
-    // (written, as a new file is; the deletion stays in history), whether
+    // (written, as a new file is; delete it again if that was meant), whether
     // this machine ever had the file or not. Unchanged elsewhere: only the
     // deletion here is left, and the next sweep takes it as it takes any
     // live deletion (committed when this machine had the file, else kept
@@ -1347,7 +1353,7 @@ fn merge_text(
 pub fn note_hand_edit(cfg: &Config, repo_rel: &str) -> Result<bool> {
     let git = Git::new(&cfg.repo);
     let state = State::new(cfg.state_dir());
-    let _locked = crate::recorded::lock_reconciled(cfg, &state, HOOK_LOCK_WAIT)?;
+    let locked = crate::recorded::lock_reconciled(cfg, &state, HOOK_LOCK_WAIT)?;
     let mut incoming = load_incoming(&state)?;
     if incoming.contains_key(repo_rel) {
         return Ok(true);
@@ -1356,7 +1362,9 @@ pub fn note_hand_edit(cfg: &Config, repo_rel: &str) -> Result<bool> {
     if !std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
         return Ok(false);
     }
-    let base = blob_at(&git, "HEAD", repo_rel);
+    // The reconciled commit, not the HEAD of the moment: a commit made by
+    // hand since the lock is no copy of memsaga's.
+    let base = locked.head().and_then(|head| blob_at(&git, head, repo_rel));
     let now = hash_of(&git, &path);
     if base.is_some() && base == now {
         return Ok(false);
@@ -1972,6 +1980,16 @@ fn checked_tool(
         return Ok(ToolVerdict::Allow);
     }
     let (merge_error, settled) = pull_now(cfg)?;
+    // Still waiting after the pull (settle skipped it, say a link in the
+    // repository): a Write would go to a live file that is not up to date.
+    if writes {
+        if let Some((_, why)) = settled.skipped.iter().find(|(f, _)| *f == rel) {
+            return Ok(ToolVerdict::Deny(format!(
+                "memsaga: {} has a change from elsewhere it could not bring in ({why}). Do not write it now: tell the user, who can see it with `memsaga status`.",
+                live.display()
+            )));
+        }
+    }
     if !writes {
         // A Read goes ahead either way: on the fresh file, or on the live
         // file as it is when the pull could not settle it (the next prompt's

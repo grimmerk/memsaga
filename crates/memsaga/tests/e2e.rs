@@ -5579,3 +5579,20 @@ fn an_explicit_backfill_never_replays_over_a_file_waiting_for_the_live_side() {
     run(&fx, &["sync"]);
     assert_eq!(fs::read_to_string(&one).unwrap(), "newer, by hand\n");
 }
+
+#[test]
+fn a_write_is_refused_while_a_change_to_the_file_cannot_be_brought_in() {
+    // A commit by hand turned the repository copy into a link: settle skips
+    // it, so the live file is not up to date and a Write must wait.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let rel = "claude/memory/-h-git-a/one.md";
+    fs::remove_file(fx.repo.join(rel)).unwrap();
+    std::os::unix::fs::symlink("MEMORY.md", fx.repo.join(rel)).unwrap();
+    git_at(&fx.repo, &["add", "-A"]);
+    git_at(&fx.repo, &["commit", "-q", "-m", "a link by hand"]);
+    let one = live_one(&fx);
+    let reason = denied(&hook(&fx, &pre_tool("Write", &one, "s1"))).expect("refused");
+    assert!(reason.contains("could not bring in"), "{reason}");
+    assert_eq!(denied(&hook(&fx, &pre_tool("Read", &one, "s1"))), None);
+}

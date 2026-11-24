@@ -432,7 +432,7 @@ fn reconcile(
     // files over it. Stop, and say how to start from HEAD on purpose.
     let Some(side) = side else {
         bail!(
-            "HEAD ({}) shares no history with the commit memsaga recorded ({}), so memsaga cannot tell what changed; check out the branch memsaga uses, or, to make the live files follow HEAD's files from now on, run `git -C {} update-ref {RECORDED_REF} HEAD` (the next sweep then copies the live files over any that differ)",
+            "HEAD ({}) shares no history with the commit memsaga recorded ({}), so memsaga cannot tell what changed; check out the branch memsaga uses, or, to accept HEAD as the starting point, run `git -C {} update-ref {RECORDED_REF} HEAD` (this copies none of HEAD's files to the live side: the live files stay authoritative, and the next sweep copies them over any that differ)",
             short(head),
             short(from),
             cfg.repo.display()

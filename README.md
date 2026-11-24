@@ -976,8 +976,8 @@ had it: a file the repository has but this machine never had (a fresh clone, a
 folder another machine added to the config) is kept, and `memsaga status`
 lists it. When such a file changes elsewhere, the new version is written
 here, as a new file is; so is a file deleted here that changed elsewhere
-before the deletion was synced (the edit wins, and the deletion stays in
-history).
+before the deletion was synced (the edit wins and the file comes back;
+delete it again if that was meant).
 
 Git commands you run by hand in the data repository count as edits from
 elsewhere: after a `git pull`, `git merge`, `git commit` or `git revert`

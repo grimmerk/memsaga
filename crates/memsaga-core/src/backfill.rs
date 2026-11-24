@@ -102,8 +102,12 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
     // be overwritten, and its markers staged.
     crate::recorded::check_no_conflicts(cfg, &git)?;
     // A file waiting for the live side holds the newer version: a replayed
-    // old one over it would be what sync then writes live. Left out.
-    let waiting = crate::sync::load_incoming(&state)?;
+    // old one over it would be what sync then writes live. Left out, by live
+    // file, so an entry kept under an older name of its directory counts.
+    let waiting: HashSet<PathBuf> = crate::sync::load_incoming(&state)?
+        .keys()
+        .filter_map(|k| crate::sync::live_target(cfg, k).map(|t| t.live().to_path_buf()))
+        .collect();
     // Emit commits: ops of one session within the window form one commit,
     // whose tree holds the latest known version of every touched file.
     let mut latest: HashMap<PathBuf, String> = HashMap::new(); // rel -> content written so far
@@ -134,7 +138,8 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
             if latest.get(&rel) == Some(&content) {
                 continue;
             }
-            if waiting.contains_key(rel.to_string_lossy().as_ref()) {
+            let live = crate::sync::live_target(cfg, &rel.to_string_lossy());
+            if live.is_some_and(|t| waiting.contains(t.live())) {
                 report.waiting += 1;
                 continue;
             }

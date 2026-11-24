@@ -353,7 +353,7 @@ B = base, R = repository file.
      │                when the repository deleted it
      │ no
   L missing? ── R != B ──▶ write R: an edit elsewhere wins over a
-     │          │           deletion here (the deletion stays in history)
+     │          │           deletion here (the file comes back)
      │          └─ R == B ─▶ only the deletion here: drop the entry; the next
      │                       sweep takes it as any live deletion (committed
      │                       if this machine had the file, else absent, §4)
@@ -379,7 +379,8 @@ How it writes:
 - A file missing live that changed elsewhere is written, whether this
   machine never had it (a fresh clone, a file left in the repository only,
   §4) or deleted it here before the change arrived: an edit is never lost to
-  a deletion, which stays in history; delete the file again to delete it
+  a deletion. The file comes back with the other side's text (a deletion no
+  sweep committed yet is in no history); delete it again to delete it
   everywhere. This does not depend on `.git/memsaga/seen.json`, so a damaged
   or incomplete record cannot change the outcome.
 
