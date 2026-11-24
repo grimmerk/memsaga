@@ -5035,8 +5035,12 @@ fn nothing_is_swept_or_synced_while_a_conflict_is_unresolved() {
     let repo_one = fx.repo.join("claude/memory/-h-git-a/one.md");
     fs::write(&repo_one, "stashed\n").unwrap();
     git_at(&fx.repo, &["stash", "-q"]);
-    fs::write(&repo_one, "committed\n").unwrap();
-    git_at(&fx.repo, &["commit", "-q", "-am", "by hand"]);
+    // memsaga commits a live edit of the same line: HEAD stays recorded, so
+    // each command's own check is what stops it (no reconcile runs first).
+    let one = live_one(&fx);
+    write(&one, "committed\n");
+    hook(&fx, &post_tool_use(&one, "s0"));
+    hook(&fx, &stop("s0"));
     let out = std::process::Command::new("git")
         .arg("-C")
         .arg(&fx.repo)
@@ -5060,7 +5064,7 @@ fn nothing_is_swept_or_synced_while_a_conflict_is_unresolved() {
         String::from_utf8_lossy(&out.stderr).contains("unresolved conflicts"),
         "{out:?}"
     );
-    assert_eq!(fs::read_to_string(live_one(&fx)).unwrap(), "fact\n");
+    assert_eq!(fs::read_to_string(live_one(&fx)).unwrap(), "committed\n");
     assert!(status_json(&fx)["repo_blocked"]
         .as_str()
         .is_some_and(|r| r.contains("unresolved conflicts")));
