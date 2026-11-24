@@ -37,8 +37,21 @@ impl Locked {
         self.head.as_deref()
     }
 
-    /// memsaga itself moved `HEAD` to `new` (its sweep's commit, a backfill
-    /// commit, a merge once its incoming record is saved): record it.
+    /// After memsaga's own commit: record it, but only if it sits right on
+    /// the recorded head. A commit someone else made in the same instant
+    /// would be `HEAD` instead, and recording it would hide its change; then
+    /// nothing is recorded and the next run lists what changed. True when
+    /// recorded.
+    pub fn advance_after_commit(&mut self, git: &Git, c: &crate::git::Committed) -> Result<bool> {
+        if c.parents.first().map(String::as_str) != self.head.as_deref() {
+            return Ok(false);
+        }
+        self.advance_to(git, &c.full)?;
+        Ok(true)
+    }
+
+    /// memsaga itself moved `HEAD` to `new` and has listed every change up to
+    /// it (a merge, once its incoming list is saved): record it.
     pub fn advance_to(&mut self, git: &Git, new: &str) -> Result<()> {
         if self.head.as_deref() != Some(new) {
             set_recorded(git, self.head.as_deref(), new)?;
@@ -59,6 +72,9 @@ pub fn lock_reconciled(cfg: &Config, state: &State, wait: Duration) -> Result<Lo
     let dir = cfg.repo.join(".git");
     if let Some(head) = read_head(&dir) {
         if read_ref(&dir, RECORDED_REF).as_deref() == Some(head.as_str()) {
+            // Read once here, so an unreadable list stops every caller before
+            // it changes anything (a merge would otherwise run first).
+            sync::load_incoming(state)?;
             return Ok(Locked {
                 _lock: lock,
                 head: Some(head),
@@ -66,6 +82,7 @@ pub fn lock_reconciled(cfg: &Config, state: &State, wait: Duration) -> Result<Lo
         }
     }
     let Some(head) = git.commit_of("HEAD") else {
+        sync::load_incoming(state)?;
         return Ok(Locked {
             _lock: lock,
             head: None,
@@ -78,7 +95,7 @@ pub fn lock_reconciled(cfg: &Config, state: &State, wait: Duration) -> Result<Lo
         // clone): start from the last commit memsaga made or merged here,
         // when HEAD still contains it, so a change of HEAD made before the
         // upgrade is caught too.
-        None => match bootstrap_start(state, &git, &head) {
+        None => match bootstrap_start(state, &git, &head)? {
             Some(start) if start != head => reconcile(cfg, state, &git, None, &start, &head)?,
             _ => {
                 set_recorded(&git, None, &head)?;
@@ -86,6 +103,7 @@ pub fn lock_reconciled(cfg: &Config, state: &State, wait: Duration) -> Result<Lo
             }
         },
     }
+    sync::load_incoming(state)?;
     Ok(Locked {
         _lock: lock,
         head: Some(head),
@@ -111,7 +129,8 @@ pub fn unrecorded_move(cfg: &Config) -> bool {
 }
 
 /// `HEAD`'s commit from the files, when it names a branch (or a commit)
-/// that the files resolve.
+/// that the files resolve. A reftable repository keeps no ref files (its
+/// `HEAD` names `refs/heads/.invalid`), so this says None and git is asked.
 fn read_head(dir: &std::path::Path) -> Option<String> {
     let text = std::fs::read_to_string(dir.join("HEAD")).ok()?;
     let text = text.trim();
@@ -276,14 +295,15 @@ fn moved_elsewhere(
     if own == path {
         return Ok(false);
     }
+    let spec = format!("{to}:{own}");
+    if spec.contains('\n') {
+        // One request per line in a batch: asked on its own instead.
+        return Ok(git.object_type(&spec)?.is_some());
+    }
     if cat.is_none() {
         *cat = Some(CatFile::new(git)?);
     }
-    let found = cat
-        .as_mut()
-        .map(|c| c.read(&format!("{to}:{own}")))
-        .transpose()?
-        .flatten();
+    let found = cat.as_mut().map(|c| c.read(&spec)).transpose()?.flatten();
     Ok(found.is_some())
 }
 
@@ -370,11 +390,13 @@ fn reconcile(
     from: &str,
     head: &str,
 ) -> Result<()> {
-    let ancestor = git.is_ancestor(from, head);
+    // A git error stops here, with the recorded head left where it was: a
+    // wrong "unrelated history" would record HEAD without its changes.
+    let ancestor = git.is_ancestor(from, head)?;
     let side = if ancestor {
         Some(from.to_string())
     } else {
-        merge_base(git, from, head)
+        git.merge_base(from, head)?
     };
     let mut incoming = sync::load_incoming(state)?;
     let moved = match &side {
@@ -421,20 +443,23 @@ fn reconcile(
 }
 
 /// Where to start recording on the first run: the newest commit memsaga made,
-/// merged or recorded here (from the event log), if `HEAD` still contains it.
-fn bootstrap_start(state: &State, git: &Git, head: &str) -> Option<String> {
-    let sha = state.last_event_sha(&["commit", "merge", "recovered"])?;
-    let full = git.commit_of(&sha)?;
-    git.is_ancestor(&full, head).then_some(full)
+/// merged or recorded here (from the event log) that `HEAD` still contains.
+/// Newer ones `HEAD` does not contain were dropped by a reset, and a commit
+/// made by hand on top of the reset is still found from an older one. The
+/// newest `BOOTSTRAP_EVENTS` are tried, once per machine.
+fn bootstrap_start(state: &State, git: &Git, head: &str) -> Result<Option<String>> {
+    for sha in state.recent_event_shas(&["commit", "merge", "recovered"], BOOTSTRAP_EVENTS) {
+        let Some(full) = git.commit_of(&sha) else {
+            continue;
+        };
+        if git.is_ancestor(&full, head)? {
+            return Ok(Some(full));
+        }
+    }
+    Ok(None)
 }
 
-fn merge_base(git: &Git, a: &str, b: &str) -> Option<String> {
-    git.run(&["merge-base", a, b])
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty())
-}
+const BOOTSTRAP_EVENTS: usize = 50;
 
 /// Move the ref to `new`; with `old`, only if it still points there.
 fn set_recorded(git: &Git, old: Option<&str>, new: &str) -> Result<()> {
@@ -453,21 +478,66 @@ fn set_recorded(git: &Git, old: Option<&str>, new: &str) -> Result<()> {
 /// next sync merges again.
 fn check_not_busy(cfg: &Config, git: &Git, state: &State) -> Result<()> {
     let dir = cfg.repo.join(".git");
-    if dir.join("MERGE_HEAD").exists() {
-        let msg = std::fs::read_to_string(dir.join("MERGE_MSG")).unwrap_or_default();
-        if msg.starts_with("sync: merge origin/") {
-            git.run_ok(&["merge", "--abort"])
-                .context("aborting memsaga's unfinished merge")?;
-            let text = "aborted an unfinished merge of origin that memsaga had started; the next sync merges again";
-            state.log(text);
-            state.append_event(&Event {
-                ts: state::now_rfc3339(),
-                kind: "error".into(),
-                event: "sync".into(),
-                message: text.into(),
-                ..Default::default()
-            })?;
-        }
+    let mark = state.read_marker(MERGING);
+    if own_merge_stopped(&dir, mark.as_deref()) {
+        git.run_ok(&["merge", "--abort"])
+            .context("aborting memsaga's unfinished merge")?;
+        let text = "aborted an unfinished merge of origin that memsaga had started; the next sync merges again";
+        state.log(text);
+        state.append_event(&Event {
+            ts: state::now_rfc3339(),
+            kind: "error".into(),
+            event: "sync".into(),
+            message: text.into(),
+            ..Default::default()
+        })?;
+    }
+    if mark.is_some() && !dir.join("MERGE_HEAD").exists() {
+        state.remove(MERGING); // the merge finished or was aborted
+    }
+    match blocker(cfg, state) {
+        Some(reason) => bail!(reason),
+        None => Ok(()),
+    }
+}
+
+/// State file naming the commit memsaga is merging, written just before its
+/// `git merge` and removed after it: the only proof that a merge stopped
+/// half-way is memsaga's own, and so may be aborted.
+pub const MERGING: &str = "merging";
+
+/// Holding this value marks memsaga's merge of `sha` as running.
+pub struct MergeMark<'a> {
+    state: &'a State,
+}
+
+pub fn mark_merge<'a>(state: &'a State, sha: &str) -> Result<MergeMark<'a>> {
+    state.write_marker(MERGING, sha)?;
+    Ok(MergeMark { state })
+}
+
+impl Drop for MergeMark<'_> {
+    fn drop(&mut self) {
+        self.state.remove(MERGING);
+    }
+}
+
+/// A merge is in progress, and it is the one memsaga marked.
+fn own_merge_stopped(dir: &std::path::Path, mark: Option<&str>) -> bool {
+    let Some(mark) = mark.filter(|m| !m.is_empty()) else {
+        return false;
+    };
+    std::fs::read_to_string(dir.join("MERGE_HEAD")).is_ok_and(|h| h.trim() == mark)
+}
+
+/// Why memsaga would change nothing in the data repository now, if it would
+/// not: a git operation left half-way. Read-only, for `status` too.
+pub fn blocker(cfg: &Config, state: &State) -> Option<String> {
+    let dir = cfg.repo.join(".git");
+    if own_merge_stopped(&dir, state.read_marker(MERGING).as_deref()) {
+        return Some(
+            "memsaga's own merge of origin stopped half-way; the next sweep or sync aborts it and merges again".into(),
+        );
     }
     for (name, what) in [
         ("MERGE_HEAD", "a merge"),
@@ -475,15 +545,16 @@ fn check_not_busy(cfg: &Config, git: &Git, state: &State) -> Result<()> {
         ("rebase-apply", "a rebase or `git am`"),
         ("CHERRY_PICK_HEAD", "a cherry-pick"),
         ("REVERT_HEAD", "a revert"),
+        ("sequencer", "a cherry-pick or revert of several commits"),
     ] {
         if dir.join(name).exists() {
-            bail!(
+            return Some(format!(
                 "the data repository {} is in the middle of {what} (.git/{name} exists); memsaga changes nothing until it is finished or aborted",
                 cfg.repo.display()
-            );
+            ));
         }
     }
-    Ok(())
+    None
 }
 
 /// Refuse while the index holds unresolved conflicts (a `git stash pop` by
@@ -522,8 +593,17 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let git = Git::new(&dir);
+        // The files backend, whatever `init.defaultRefFormat` says (a
+        // reftable repository is read through git instead, see `read_head`).
         let run = |args: &[&str]| {
-            let mut a = vec!["-c", "user.name=t", "-c", "user.email=t@t"];
+            let mut a = vec![
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "init.defaultRefFormat=files",
+            ];
             a.extend_from_slice(args);
             git.run_ok(&a).unwrap()
         };

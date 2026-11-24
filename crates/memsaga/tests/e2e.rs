@@ -4965,12 +4965,34 @@ fn nothing_is_swept_while_the_data_repository_is_in_the_middle_of_a_merge() {
     let out = cmd(&fx).arg("sweep").output().unwrap();
     assert!(!out.status.success());
     assert_eq!(fs::read_to_string(live_one(&fx)).unwrap(), "fact\n");
-    // memsaga's own merge, stopped half-way, is aborted and work goes on.
+    let v = status_json(&fx);
+    assert!(
+        v["repo_blocked"]
+            .as_str()
+            .is_some_and(|r| r.contains("middle of a merge")),
+        "{v}"
+    );
+    // A merge by hand that happens to use memsaga's message is still the
+    // user's: never aborted.
     git(&fx, &["merge", "--abort"]);
     merge(&format!("sync: merge origin/{b}"));
+    let out = cmd(&fx).arg("sweep").output().unwrap();
+    assert!(!out.status.success());
+    assert!(fx.repo.join(".git/MERGE_HEAD").exists());
+    // memsaga's own merge, stopped half-way (its mark names the commit being
+    // merged), is aborted, and work goes on.
+    let merging = fs::read_to_string(fx.repo.join(".git/MERGE_HEAD")).unwrap();
+    write(&fx.repo.join(".git/memsaga/merging"), merging.trim());
     run(&fx, &["sweep"]);
     assert!(!fx.repo.join(".git/MERGE_HEAD").exists());
+    assert!(!fx.repo.join(".git/memsaga/merging").exists());
     assert!(commits(&fx) > before);
+    // A sequence of cherry-picks or reverts left half-way stops it too.
+    fs::create_dir_all(fx.repo.join(".git/sequencer")).unwrap();
+    let out = cmd(&fx).arg("sweep").output().unwrap();
+    assert!(!out.status.success());
+    fs::remove_dir_all(fx.repo.join(".git/sequencer")).unwrap();
+    run(&fx, &["sweep"]);
 }
 
 #[test]
@@ -5035,7 +5057,31 @@ fn nothing_is_swept_or_synced_while_a_conflict_is_unresolved() {
         String::from_utf8_lossy(&out.stderr).contains("unresolved conflicts"),
         "{out:?}"
     );
+    // `pull` reaches settle without a sweep first.
+    let out = cmd(&fx).arg("pull").output().unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("unresolved conflicts"),
+        "{out:?}"
+    );
     assert_eq!(fs::read_to_string(live_one(&fx)).unwrap(), "fact\n");
+    assert!(status_json(&fx)["repo_blocked"]
+        .as_str()
+        .is_some_and(|r| r.contains("unresolved conflicts")));
+    // A backfill would write over the conflicted file before staging it.
+    let transcript = format!(
+        "{{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:00.000Z\",\"sessionId\":\"s-old\",\"cwd\":\"/h/git/a\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Write\",\"input\":{{\"file_path\":\"{}\",\"content\":\"v1 fact\\n\"}}}}]}}}}\n",
+        live_one(&fx).display()
+    );
+    write(
+        &fx.claude.join("projects/-h-git-a/0000-session.jsonl"),
+        &transcript,
+    );
+    let out = cmd(&fx).arg("backfill").output().unwrap();
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("unresolved conflicts"),
+        "{out:?}"
+    );
 }
 
 #[test]
@@ -5217,4 +5263,100 @@ fn a_move_within_the_repository_that_git_cannot_see_as_a_rename_keeps_the_live_f
         "{out}"
     );
     assert!(!out.contains("deleted"), "{out}");
+}
+
+#[test]
+fn a_read_after_a_deletion_committed_by_hand_brings_the_deletion_in_first() {
+    let fx = fixture("turn", "");
+    let two = fx.claude.join("projects/-h-git-a/memory/two.md");
+    write(&two, "two\n");
+    run(&fx, &["init", "--no-backfill"]);
+    git_at(&fx.repo, &["rm", "-q", "claude/memory/-h-git-a/two.md"]);
+    git_at(&fx.repo, &["commit", "-q", "-m", "deleted by hand"]);
+    // The repository file is gone, so there is no newer mtime to notice.
+    hook(&fx, &pre_tool("Read", &two, "s1"));
+    assert!(
+        !two.exists(),
+        "the deletion did not reach the live side before the Read"
+    );
+}
+
+#[test]
+fn a_hand_edit_of_a_file_git_is_told_not_to_stat_is_still_kept() {
+    // `assume-unchanged` hides the edit from `git diff-files`; the guard
+    // must look at the content.
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let rel = "claude/memory/-h-git-a/one.md";
+    git(&fx, &["update-index", "--assume-unchanged", rel]);
+    fs::write(fx.repo.join(rel), "edited in the clone\n").unwrap();
+    run(&fx, &["sweep"]);
+    assert_eq!(
+        fs::read_to_string(fx.repo.join(rel)).unwrap(),
+        "edited in the clone\n"
+    );
+    assert!(status_json(&fx)["incoming"][rel].is_object());
+}
+
+#[test]
+fn an_unreadable_incoming_list_stops_a_merge_before_it_changes_the_repository() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "claude/CLAUDE.md", Some("# from elsewhere\n"));
+    write(&fx.repo.join(".git/memsaga/incoming.json"), "{\n  \"claude");
+    let head = git(&fx, &["rev-parse", "HEAD"]);
+    let out = cmd(&fx).arg("pull").output().unwrap();
+    assert!(!out.status.success());
+    assert_eq!(
+        git(&fx, &["rev-parse", "HEAD"]),
+        head,
+        "merged with an unreadable list"
+    );
+}
+
+#[test]
+fn the_first_run_after_an_upgrade_looks_past_commits_a_reset_dropped() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    touch_memory(&fx, "- idx\n- dropped later\n", "s1");
+    // Back to the import, then a commit by hand, all before the upgrade.
+    git(&fx, &["reset", "-q", "--hard", "HEAD~1"]);
+    let rel = "claude/memory/-h-git-a/one.md";
+    fs::write(fx.repo.join(rel), "committed by hand after the reset\n").unwrap();
+    git_at(&fx.repo, &["commit", "-q", "-am", "by hand"]);
+    git(&fx, &["update-ref", "-d", "refs/memsaga/recorded"]);
+    touch_memory(&fx, "- idx\n- after\n", "s2");
+    assert_eq!(
+        git(&fx, &["show", &format!("HEAD:{rel}")]),
+        "committed by hand after the reset\n"
+    );
+}
+
+#[test]
+fn a_deleted_file_is_named_as_deleted_even_in_a_large_pull() {
+    let fx = fixture("turn", "");
+    let two = fx.claude.join("projects/-h-git-a/memory/two.md");
+    write(&two, "two\n");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    hook(&fx, &pre_read(&two, "s1"));
+    // More files than a notice quotes, sorted before the deleted one.
+    for i in 0..60 {
+        write(
+            &other.join(format!("claude/memory/-h-git-a/a{i:02}.md")),
+            "new\n",
+        );
+    }
+    fs::remove_file(other.join("claude/memory/-h-git-a/two.md")).unwrap();
+    git_at(&other, &["add", "-A"]);
+    git_at(&other, &["commit", "-q", "-m", "many"]);
+    git_at(&other, &["push", "-q"]);
+    run(&fx, &["pull", "--check", "--max-age", "0"]);
+    let out = hook(
+        &fx,
+        &hook_json("UserPromptSubmit", "s1", ",\"prompt\":\"go on\""),
+    );
+    assert!(!two.exists());
+    assert!(out.contains("It was deleted"), "{out}");
 }

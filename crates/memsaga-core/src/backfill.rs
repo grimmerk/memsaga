@@ -95,6 +95,9 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
     // brought to the live files.
     let mut locked =
         crate::recorded::lock_reconciled(cfg, &state, std::time::Duration::from_secs(60))?;
+    // The replay writes files and stages everything: a conflicted file would
+    // be overwritten, and its markers staged.
+    crate::recorded::check_no_conflicts(cfg, &git)?;
     // Emit commits: ops of one session within the window form one commit,
     // whose tree holds the latest known version of every touched file.
     let mut latest: HashMap<PathBuf, String> = HashMap::new(); // rel -> content written so far
@@ -190,9 +193,10 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
             let shortstat = git.staged_shortstat()?;
             let msg =
                 crate::sweep::commit_message(cfg, &attrib, "", &files, &name_status, &shortstat);
-            let (full, _) = git.commit(&msg, Some(&last.ts))?;
-            locked.advance_to(&git, &full)?;
-            crate::sync::clear_uncommitted(&state);
+            let made = git.commit(&msg, Some(&last.ts))?;
+            if locked.advance_after_commit(&git, &made)? {
+                crate::sync::clear_uncommitted(&state);
+            }
             report.commits += 1;
         }
     }

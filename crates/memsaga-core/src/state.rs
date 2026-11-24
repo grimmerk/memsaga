@@ -248,24 +248,28 @@ impl State {
         (events, position)
     }
 
-    /// The sha of the newest event whose kind is one of `kinds` and that
-    /// names one, looking through the current log and then the rotated ones,
-    /// newest first.
-    pub fn last_event_sha(&self, kinds: &[&str]) -> Option<String> {
+    /// The shas of the newest `max` events whose kind is one of `kinds` and
+    /// that name one, newest first, through the current log and then the
+    /// rotated ones.
+    pub fn recent_event_shas(&self, kinds: &[&str], max: usize) -> Vec<String> {
         let mut files = vec![self.marker("events.jsonl")];
         files.extend(self.rotated_logs().into_iter().rev().map(|(p, _)| p));
+        let mut out = Vec::new();
         for f in files {
             let text = std::fs::read_to_string(&f).unwrap_or_default();
-            let found = text
+            for e in text
                 .lines()
                 .rev()
                 .filter_map(|l| serde_json::from_str::<Event>(l).ok())
-                .find(|e| kinds.contains(&e.kind.as_str()) && !e.sha.is_empty());
-            if let Some(e) = found {
-                return Some(e.sha);
+                .filter(|e| kinds.contains(&e.kind.as_str()) && !e.sha.is_empty())
+            {
+                if out.len() == max {
+                    return out;
+                }
+                out.push(e.sha);
             }
         }
-        None
+        out
     }
 
     /// Rotated logs (`events-*.jsonl`) with their inodes, oldest first.

@@ -39,6 +39,9 @@ pub struct Status {
     /// hand in the data repository, or a merge stopped before its record):
     /// the next sweep or sync records what it changed as incoming.
     pub unrecorded_head: bool,
+    /// Why sweeps and syncs change nothing now: a git operation left half-way
+    /// in the data repository, or unresolved conflicts.
+    pub repo_blocked: Option<String>,
     /// Files the last sweep held back because a new line looks like a secret
     /// (grimmerk/memsaga#60): path, line, rule and fingerprint, never the text.
     pub held: Vec<crate::secrets::Hit>,
@@ -229,6 +232,7 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
             incoming: Default::default(),
             incoming_error: None,
             unrecorded_head: false,
+            repo_blocked: None,
             held: Vec::new(),
             held_error: None,
             absent: Vec::new(),
@@ -273,6 +277,11 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
         incoming: incoming.as_ref().cloned().unwrap_or_default(),
         incoming_error: incoming.err().map(|e| format!("{e:#}")),
         unrecorded_head: crate::recorded::unrecorded_move(cfg),
+        repo_blocked: crate::recorded::blocker(cfg, &state).or_else(|| {
+            crate::recorded::check_no_conflicts(cfg, &git)
+                .err()
+                .map(|e| format!("{e:#}"))
+        }),
         held: crate::sweep::load_held(&state),
         held_error: crate::sweep::load_held_error(&state),
         absent: crate::sync::load_absent(&state),

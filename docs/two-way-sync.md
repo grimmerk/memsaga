@@ -116,8 +116,10 @@ moved. The read side (step 3) is where an up-front check belongs.
         └── merged
               │
   ⑤ add every live-mapped file the merge changed to the incoming list,
-     base = its version in ORIG_HEAD (the pre-merge commit); save the
-     list, then move the recorded head to the merge (§4.1)
+     base = its version in ORIG_HEAD (the pre-merge commit), by the one
+     rule of §4.1 step 4 (a file whose live copy already matches is left
+     out; one already on the list keeps its base, §5); save the list,
+     then move the recorded head to the merge
   ⑥ git push origin <branch>  (once; a second rejection is reported, not retried)
 ```
 
@@ -211,16 +213,23 @@ merge, settle and per-file check takes the sweep lock through one function,
 `recorded::lock_reconciled`, which does this first:
 
 1. Refuse while the data repository is half-way through a merge, a rebase, a
-   cherry-pick or a revert: its working tree then holds conflict markers or
-   half-applied commits. memsaga's own merge, stopped half-way, is aborted
-   instead, and the next sync merges again. A sweep and a settle also refuse
-   while the index holds unresolved conflicts (a `git stash pop` that
-   conflicted leaves no other trace).
+   cherry-pick or a revert (one commit or a sequence): its working tree then
+   holds conflict markers or half-applied commits. memsaga's own merge,
+   stopped half-way, is aborted instead, and the next sync merges again; it
+   is recognised by `.git/memsaga/merging`, which memsaga writes before its
+   `git merge` with the commit it merges and removes afterwards, so a merge
+   started by hand is never aborted, whatever its message. A sweep and a
+   settle also refuse while the index holds unresolved conflicts (a
+   `git stash pop` that conflicted leaves no other trace). `memsaga status`
+   names the reason.
 2. Recorded head equal to `HEAD`: nothing to do. Both are read from their
    files, without a git process.
 3. No recorded head yet (the first run after an upgrade, or a fresh clone):
    start from the newest commit memsaga made or merged on this machine, taken
-   from the event log, if `HEAD` still contains it; otherwise from `HEAD`.
+   from the event log, that `HEAD` still contains (newer ones a reset dropped
+   are passed over, so a commit made by hand after the reset is still
+   found); with none, from `HEAD`. A git error here, or anywhere in this
+   list, stops the run and leaves the recorded head where it was.
 4. Otherwise compare the recorded head with `HEAD` (one `git diff --raw`).
    Every changed file with a live side goes on the incoming list, with its
    version at the recorded head as base, exactly as a merge by memsaga lists
@@ -250,7 +259,9 @@ merge, settle and per-file check takes the sweep lock through one function,
 memsaga moves the recorded head itself right after each of its own commits
 and merges, a merge only once its incoming list is saved. A process stopped
 in between leaves the recorded head behind, and the next run lists the same
-files again. The list is written atomically (a temporary file renamed over
+files again. A commit is recorded only when its parent is the recorded head,
+so a commit made by hand in the same instant is never taken for memsaga's
+own. The list is written atomically (a temporary file renamed over
 it), and an unreadable list stops every sweep and sync with the reason,
 instead of reading as empty: an empty list would let the next sweep
 overwrite the very files it protected. `memsaga status` shows both cases.
@@ -261,9 +272,12 @@ and so does `memsaga sync`.
 
 The same work made the merge itself cheap enough for a hook: the incoming
 list of a merge comes from one `git diff --raw` instead of one git process
-per file, the guard reads `HEAD` once per sweep instead of twice per
-candidate file, and settle reads every base version through one
-`git cat-file --batch` process. Measured on 2026-11-25 with a throwaway data
+per file; the guard, at the first candidate of a sweep, reads `HEAD`'s
+blobs and hashes every repository file newer than the last sweep in one
+call each, instead of two git processes per candidate (it hashes content,
+so a file marked assume-unchanged or skip-worktree cannot hide an edit, and
+a file that changed after that moment is hashed again); and settle reads
+every base version through one `git cat-file --batch` process. Measured on 2026-11-25 with a throwaway data
 repository: a `memsaga sync` that brings in 300 changed and 300 new files
 went from 54 s and 2,731 git processes to 2.5 s and 91; a sweep that commits
 costs two more git processes than before (about 40 ms), and the idle hooks

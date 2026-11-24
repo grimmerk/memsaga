@@ -382,6 +382,8 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     }
     state.remove(HELD_ERROR);
     record_held(&state, attrib, &out.held)?;
+    // Whether this sweep's commit, if any, is recorded (`advance_after_commit`).
+    let mut recorded = true;
     if changed {
         let name_status = git.staged_name_status()?;
         let files: Vec<String> = name_status
@@ -405,13 +407,21 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
                 "layout: {renames} memory directories renamed home-relative (grimmerk/memsaga-private#25)\n{body}"
             );
         }
-        let (full, sha) = git.commit(&msg, None)?;
+        let made = git.commit(&msg, None)?;
         // Recorded before the uncommitted record is cleared below: stopped in
         // between, the next run finds this commit unrecorded, and the record
-        // still names every copy in it as memsaga's own.
-        locked.advance_to(&git, &full)?;
+        // still names every copy in it as memsaga's own. When someone else's
+        // commit landed on top in the same instant, nothing is recorded and
+        // the record is kept, so the next run sorts the two out.
+        recorded = locked.advance_after_commit(&git, &made)?;
+        if !recorded {
+            state.log(&format!(
+                "HEAD moved past commit {} while it was made; left for the next run to record",
+                made.short
+            ));
+        }
         out.committed = true;
-        out.sha = sha;
+        out.sha = made.short;
         out.files = files;
         out.shortstat = shortstat;
     }
@@ -419,7 +429,9 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     // replaced and committed, or kept as a hand edit made since: the record
     // has done its job. Not earlier: a sweep that fails before this point
     // leaves copies uncommitted, and they must still be recognised next time.
-    crate::sync::clear_uncommitted(&state);
+    if recorded {
+        crate::sync::clear_uncommitted(&state);
+    }
     // Promote the marker only after a successful pass; edits made during the
     // sweep have mtimes after `sweep_start` and are caught next time.
     set_marker(&state, sweep_start)?;

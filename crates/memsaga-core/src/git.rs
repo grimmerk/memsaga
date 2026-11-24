@@ -187,8 +187,11 @@ impl<'a> Git<'a> {
     }
 
     /// Commit the index. `date` (RFC 3339) backdates author and committer.
-    /// Returns the new commit's full and short ids (one git call for both).
-    pub fn commit(&self, message: &str, date: Option<&str>) -> Result<(String, String)> {
+    /// Returns what `HEAD` is right after: full id, short id and parents (one
+    /// git call). A commit made by someone else in the same instant would be
+    /// `HEAD` instead, so a caller that records the commit as its own checks
+    /// the parents first.
+    pub fn commit(&self, message: &str, date: Option<&str>) -> Result<Committed> {
         let mut c = self.cmd();
         c.args(["commit", "-q", "-F", "-"]);
         if let Some(d) = date {
@@ -208,11 +211,15 @@ impl<'a> Git<'a> {
                 String::from_utf8_lossy(&out.stderr).trim()
             );
         }
-        let ids = self.run_ok(&["rev-parse", "HEAD", "--short", "HEAD"])?;
-        let mut lines = ids.lines().map(str::trim);
-        match (lines.next(), lines.next()) {
-            (Some(full), Some(short)) => Ok((full.to_string(), short.to_string())),
-            _ => bail!("unexpected git rev-parse output: {ids}"),
+        let ids = self.run_ok(&["log", "-1", "--format=%H %h %P", "HEAD"])?;
+        let mut parts = ids.split_whitespace().map(str::to_string);
+        match (parts.next(), parts.next()) {
+            (Some(full), Some(short)) => Ok(Committed {
+                full,
+                short,
+                parents: parts.collect(),
+            }),
+            _ => bail!("unexpected git log output: {ids}"),
         }
     }
 
@@ -314,9 +321,34 @@ impl<'a> Git<'a> {
     }
 
     /// Is `a` an ancestor of `b` (or equal to it)?
-    pub fn is_ancestor(&self, a: &str, b: &str) -> bool {
-        self.run(&["merge-base", "--is-ancestor", a, b])
-            .is_ok_and(|o| o.status.success())
+    /// An error when git cannot tell (an object it cannot read), never a
+    /// "no": a wrong "no" would be taken as unrelated history.
+    pub fn is_ancestor(&self, a: &str, b: &str) -> Result<bool> {
+        let out = self.run(&["merge-base", "--is-ancestor", a, b])?;
+        match out.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => bail!(
+                "git merge-base --is-ancestor {a} {b} failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+        }
+    }
+
+    /// The merge base of two commits; None when they share no history, an
+    /// error when git cannot tell.
+    pub fn merge_base(&self, a: &str, b: &str) -> Result<Option<String>> {
+        let out = self.run(&["merge-base", a, b])?;
+        match out.status.code() {
+            Some(0) => Ok(Some(
+                String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            )),
+            Some(1) if out.stdout.is_empty() => Ok(None),
+            _ => bail!(
+                "git merge-base {a} {b} failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+        }
     }
 
     /// The paths that differ between two commits, with the blob on each
@@ -392,6 +424,14 @@ impl<'a> Git<'a> {
     }
 }
 
+/// What `Git::commit` made.
+#[derive(Debug, Clone)]
+pub struct Committed {
+    pub full: String,
+    pub short: String,
+    pub parents: Vec<String>,
+}
+
 /// One path that differs between two commits (`Git::changes`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Change {
@@ -447,16 +487,20 @@ impl CatFile {
         writeln!(stdin, "{id}")?;
         stdin.flush()?;
         let mut header = String::new();
-        self.stdout.read_line(&mut header)?;
+        if self.stdout.read_line(&mut header)? == 0 {
+            // The process ended without answering: not the same as "missing".
+            bail!("git cat-file --batch stopped before answering {id}");
+        }
         let header = header.trim_end();
-        if header.ends_with(" missing") || header.is_empty() {
+        if header == format!("{id} missing") {
             return Ok(None);
         }
-        let size: usize = header
-            .rsplit(' ')
-            .next()
-            .and_then(|s| s.parse().ok())
-            .with_context(|| format!("unexpected git cat-file header: {header}"))?;
+        let fields: Vec<&str> = header.split(' ').collect();
+        let size: usize = match fields.as_slice() {
+            [_, _, size] => size.parse().ok(),
+            _ => None,
+        }
+        .with_context(|| format!("unexpected git cat-file answer for {id}: {header}"))?;
         let mut buf = vec![0u8; size + 1]; // content, then a newline
         self.stdout.read_exact(&mut buf)?;
         buf.pop();

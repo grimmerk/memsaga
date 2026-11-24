@@ -469,55 +469,55 @@ pub struct Guard {
     head: std::cell::OnceCell<HeadView>,
 }
 
-/// `HEAD`'s blob per path, and the paths whose working-tree file may differ
-/// from it: three git processes for a whole sweep, instead of two per
-/// candidate (a catch-up of 6,700 merged files took a 735 s sweep).
+/// What the guard compares a candidate with, read once at the first
+/// candidate of a sweep: `HEAD`'s blob per path, and the blob of every
+/// repository file newer than the last sweep, hashed in one git call. Three
+/// git processes for a whole sweep instead of two per candidate (a catch-up
+/// of 6,700 merged files took a 735 s sweep). The content is hashed, never
+/// taken from git's stat cache, which skips files marked assume-unchanged or
+/// skip-worktree; a file whose mtime or size changed after the snapshot (an
+/// editor saving it during the sweep) is hashed again when it is checked.
 struct HeadView {
-    blobs: std::collections::HashMap<String, String>,
-    /// Listed by `git diff-files` (working tree vs index, by stat) or
-    /// `git diff-index --cached HEAD` (index vs HEAD). A path not listed holds
-    /// exactly `HEAD`'s blob; a listed one is hashed to find out.
-    maybe_changed: std::collections::HashSet<String>,
+    /// None when `git ls-tree` failed: each path is then asked on its own.
+    blobs: Option<std::collections::HashMap<String, String>>,
+    hashed: std::collections::HashMap<PathBuf, (SystemTime, u64, String)>,
 }
 
 impl HeadView {
-    fn read(git: &Git) -> HeadView {
-        let ids = git
+    fn read(git: &Git, repo: &Path, since: SystemTime) -> HeadView {
+        let blobs = git
             .run_ok(&["ls-tree", "-r", "-z", "--full-tree", "HEAD"])
-            .unwrap_or_default();
-        let mut map = std::collections::HashMap::new();
-        for l in ids.split('\0').filter(|l| !l.is_empty()) {
-            let Some((meta, path)) = l.split_once('\t') else {
-                continue;
-            };
-            let mut parts = meta.split_whitespace();
-            let (_, kind, id) = (parts.next(), parts.next(), parts.next());
-            if kind == Some("blob") {
-                if let Some(id) = id {
-                    map.insert(path.to_string(), id.to_string());
-                }
-            }
-        }
-        let mut maybe_changed = std::collections::HashSet::new();
-        for args in [
-            &["diff-files", "--name-only", "-z"][..],
-            &["diff-index", "--cached", "--name-only", "-z", "HEAD"][..],
-        ] {
-            match git.run(args) {
-                Ok(o) if o.status.success() => maybe_changed.extend(
-                    String::from_utf8_lossy(&o.stdout)
-                        .split('\0')
-                        .filter(|p| !p.is_empty())
-                        .map(str::to_string),
-                ),
-                // Unknown: every path is hashed, as before.
-                _ => map.clear(),
-            }
-        }
-        HeadView {
-            blobs: map,
-            maybe_changed,
-        }
+            .ok()
+            .map(|ids| {
+                ids.split('\0')
+                    .filter_map(|l| {
+                        let (meta, path) = l.split_once('\t')?;
+                        let mut parts = meta.split_whitespace();
+                        let (_, kind, id) = (parts.next(), parts.next()?, parts.next()?);
+                        (kind == "blob").then(|| (path.to_string(), id.to_string()))
+                    })
+                    .collect()
+            });
+        let newer: Vec<(PathBuf, SystemTime, u64)> = walkdir::WalkDir::new(repo)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|e| e.file_name() != ".git")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .filter_map(|e| {
+                let m = e.metadata().ok()?;
+                let t = m.modified().ok()?;
+                (t > since).then(|| (e.into_path(), t, m.len()))
+            })
+            .collect();
+        let paths: Vec<&PathBuf> = newer.iter().map(|(p, _, _)| p).collect();
+        let ids = hash_many(git, &paths);
+        let hashed = newer
+            .iter()
+            .zip(ids)
+            .filter_map(|((p, t, len), id)| Some((p.clone(), (*t, *len, id?))))
+            .collect();
+        HeadView { blobs, hashed }
     }
 }
 
@@ -545,14 +545,30 @@ impl Guard {
         }
     }
 
-    /// `HEAD`'s blob for `rel`, and whether the working-tree file is known to
-    /// hold exactly it.
-    fn at_head(&self, git: &Git, rel: &str) -> (Option<String>, bool) {
-        let view = self.head.get_or_init(|| HeadView::read(git));
-        match view.blobs.get(rel) {
-            Some(id) => (Some(id.clone()), !view.maybe_changed.contains(rel)),
-            None => (blob_at(git, "HEAD", rel), false),
-        }
+    /// `HEAD`'s blob for `rel`, and the blob the repository file `dst` holds
+    /// now.
+    fn at_head(
+        &self,
+        git: &Git,
+        rel: &str,
+        dst: &Path,
+        meta: &std::fs::Metadata,
+    ) -> (Option<String>, Option<String>) {
+        let since = self.since.unwrap_or(SystemTime::UNIX_EPOCH);
+        let view = self
+            .head
+            .get_or_init(|| HeadView::read(git, &self.repo, since));
+        let base = match &view.blobs {
+            Some(map) => map.get(rel).cloned(),
+            None => blob_at(git, "HEAD", rel),
+        };
+        let now = match view.hashed.get(dst) {
+            Some((t, len, id)) if meta.modified().ok() == Some(*t) && meta.len() == *len => {
+                Some(id.clone())
+            }
+            _ => hash_of(git, dst),
+        };
+        (base, now)
     }
 
     /// Has this machine had the live file of repository path `rel`? Listed in
@@ -589,7 +605,8 @@ impl Guard {
             return true;
         }
         // Fast path: not modified since the last sweep began, so not a hand
-        // edit. Only the rare candidate costs two git calls.
+        // edit. The first candidate of a sweep costs three git calls (the
+        // HEAD view), a later one none unless it changed since.
         // No sweep yet (a fresh clone): every file is a candidate, so a
         // hand edit made before the first sweep is protected too.
         let since = self.since.unwrap_or(SystemTime::UNIX_EPOCH);
@@ -602,11 +619,7 @@ impl Guard {
         };
         let rel = rel.to_string_lossy().to_string();
         let git = Git::new(&self.repo);
-        let (base, unchanged) = self.at_head(&git, &rel);
-        if unchanged {
-            return true; // equal to what memsaga committed (or recorded)
-        }
-        let now = hash_of(&git, dst);
+        let (base, now) = self.at_head(&git, &rel, dst, &meta);
         if base.is_some() && base == now {
             return true; // equal to what memsaga committed (or recorded)
         }
@@ -785,6 +798,11 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
         .context("no commit to merge into")?
         .to_string();
     let message = format!("sync: merge {remote}");
+    // Marks this merge as memsaga's until the function returns: one stopped
+    // half-way (MERGE_HEAD naming this commit) may then be aborted by the
+    // next run, and one started by hand never is.
+    let remote_sha = git.commit_of(&remote).context("reading origin's head")?;
+    let _merging = crate::recorded::mark_merge(&state, &remote_sha)?;
     let merge = git.run(&["merge", "--no-edit", "-q", "-m", &message, &remote])?;
     if !merge.status.success() {
         let conflicted: Vec<String> = git
@@ -919,8 +937,11 @@ pub fn settle_within(cfg: &Config, take: Option<(Take, &str)>, wait: Duration) -
     // Base versions are read through one `git cat-file --batch` process.
     let mut cat: Option<crate::git::CatFile> = None;
     for (i, rel) in keys.into_iter().enumerate() {
-        // Progress survives a hook stopped half-way through a long catch-up.
+        // Progress survives a hook stopped half-way through a long catch-up;
+        // what was written is recorded as had first, or a file deleted live
+        // before the next sweep would read as one this machine never had.
         if i > 0 && i % SETTLE_SAVE_EVERY == 0 {
+            mark_had(cfg, &state, &out)?;
             save_incoming(&state, &incoming)?;
         }
         let entry = incoming[&rel].clone();
@@ -952,15 +973,8 @@ pub fn settle_within(cfg: &Config, take: Option<(Take, &str)>, wait: Duration) -
             Err(e) => out.skipped.push((rel, format!("{e:#}"))),
         }
     }
+    mark_had(cfg, &state, &out)?;
     save_incoming(&state, &incoming)?;
-    // What a pull wrote, this machine has had (once, not once per file).
-    let had: Vec<PathBuf> = out
-        .written
-        .iter()
-        .chain(&out.merged)
-        .map(|r| cfg.repo.join(r))
-        .collect();
-    mark_seen(cfg, &state, &had)?;
     if !(out.written.is_empty()
         && out.merged.is_empty()
         && out.deleted.is_empty()
@@ -1000,6 +1014,17 @@ pub fn settle_within(cfg: &Config, take: Option<(Take, &str)>, wait: Duration) -
         })?;
     }
     Ok(out)
+}
+
+/// What a pull wrote, this machine has had (written once, not per file).
+fn mark_had(cfg: &Config, state: &State, out: &Settled) -> Result<()> {
+    let had: Vec<PathBuf> = out
+        .written
+        .iter()
+        .chain(&out.merged)
+        .map(|r| cfg.repo.join(r))
+        .collect();
+    mark_seen(cfg, state, &had)
 }
 
 enum Done {
@@ -1684,7 +1709,7 @@ fn notice(
     for f in files {
         let diff = settled.diffs.get(f).map(String::as_str).unwrap_or_default();
         let lines = diff.lines().count();
-        let what = if diff == "(deleted)" {
+        let what = if settled.deleted.contains(f) {
             "It was deleted.".to_string()
         } else if lines == 0 {
             "Read it again to see the change.".to_string()
@@ -1829,6 +1854,16 @@ pub fn before_tool(cfg: &Config, session: &str, live: &Path, tool: &str) -> Resu
     let writes = tool != "Read";
     let state = State::new(cfg.state_dir());
     note_session_file(&state, session, &rel);
+    // A change of HEAD memsaga did not record (a `git pull` or `git commit`
+    // by hand) is listed first, even when it left this file nothing to stat
+    // (a deletion) or kept its mtime (a mode change).
+    if crate::recorded::unrecorded_move(cfg) {
+        drop(crate::recorded::lock_reconciled(
+            cfg,
+            &state,
+            HOOK_LOCK_WAIT,
+        )?);
+    }
     // A hand edit in the clone since the last sweep.
     let repo_copy = cfg.repo.join(&rel);
     let edited = match (
@@ -1850,9 +1885,6 @@ pub fn before_tool(cfg: &Config, session: &str, live: &Path, tool: &str) -> Resu
         cached_check(&state)
     };
     let from_origin = check.changed.iter().any(|(f, _)| *f == rel);
-    // A change of HEAD memsaga did not record (a `git pull` by hand) gave the
-    // repository copy a new mtime, so `note_hand_edit` above reconciled and
-    // listed it.
     let waiting = from_origin || load_incoming(&state)?.contains_key(&rel);
     if !waiting {
         return Ok(ToolVerdict::Allow);
