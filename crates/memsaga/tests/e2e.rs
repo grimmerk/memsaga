@@ -5207,6 +5207,14 @@ fn a_move_within_the_repository_that_git_cannot_see_as_a_rename_keeps_the_live_f
     )
     .unwrap();
     git_at(&fx.repo, &["commit", "-q", "-am", "moved and rewritten"]);
-    run(&fx, &["pull"]);
-    assert!(live_one(&fx).exists(), "the live file was deleted");
+    // The move is an edit of the one live file: written, not a conflict,
+    // and never deleted on the way.
+    let out = run(&fx, &["pull"]);
+    assert!(!out.contains("conflict"), "{out}");
+    assert_eq!(
+        fs::read_to_string(live_one(&fx)).ok().as_deref(),
+        Some("an entirely different text\nwith nothing in common\n"),
+        "{out}"
+    );
+    assert!(!out.contains("deleted"), "{out}");
 }

@@ -363,7 +363,7 @@ impl<'a> Git<'a> {
                     new: id(parts[1], parts[3]),
                     old_mode: "000000".to_string(),
                     new_mode: parts[1].to_string(),
-                    moved_from: Some(path.to_string()),
+                    moved_from: Some((path.to_string(), id(parts[0], parts[2]))),
                 });
                 continue;
             }
@@ -402,8 +402,9 @@ pub struct Change {
     pub new: Option<String>,
     pub old_mode: String,
     pub new_mode: String,
-    /// For a rename: the path it moved from (listed nowhere else).
-    pub moved_from: Option<String>,
+    /// For a rename: the path it moved from (listed nowhere else) and that
+    /// path's blob before.
+    pub moved_from: Option<(String, Option<String>)>,
 }
 
 /// Reads many objects through one `git cat-file --batch` process, one at a

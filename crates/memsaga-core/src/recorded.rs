@@ -194,6 +194,24 @@ pub fn record_moves(
         .filter(|c| c.new.is_some())
         .filter_map(|c| target_of(&c.path).map(|t| t.live().to_path_buf()))
         .collect();
+    // For such a move, what the live file last agreed with is the version
+    // at the old path: the base of the new path, so settle takes the move
+    // as an edit of the live file (a rename by git's detection, or a
+    // deletion and an addition it could not pair).
+    let mut moved_base: std::collections::BTreeMap<std::path::PathBuf, Option<String>> =
+        std::collections::BTreeMap::new();
+    for c in &changes {
+        let (from_path, blob) = match (&c.moved_from, &c.new) {
+            (Some((p, b)), _) => (p.as_str(), b.clone()),
+            (None, None) => (c.path.as_str(), c.old.clone()),
+            _ => continue,
+        };
+        if let Some(t) = target_of(from_path) {
+            if kept_live.contains(t.live()) {
+                moved_base.insert(t.live().to_path_buf(), blob);
+            }
+        }
+    }
     let uncommitted = sync::load_uncommitted(state);
     let mut cat: Option<CatFile> = None;
     for c in changes {
@@ -223,10 +241,14 @@ pub fn record_moves(
         if live_equals(cfg, git, &mut cat, &target, &c)? {
             continue;
         }
+        let base = match &c.old {
+            None => moved_base.get(target.live()).cloned().flatten(),
+            old => old.clone(),
+        };
         incoming.insert(
             c.path.clone(),
             IncomingEntry {
-                base: c.old.clone(),
+                base,
                 from: label.to_string(),
             },
         );
