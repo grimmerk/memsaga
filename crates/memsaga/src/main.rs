@@ -1167,7 +1167,7 @@ fn cmd_status(n: usize, json: bool) -> Result<()> {
     }
     if !st.too_large.is_empty() {
         println!(
-            "not mirrored, larger than max_file_mb = {} ({} file(s)):",
+            "not mirrored, larger than max_file_mb at the last sweep (now {}; {} file(s)):",
             cfg.max_file_mb,
             st.too_large.len()
         );

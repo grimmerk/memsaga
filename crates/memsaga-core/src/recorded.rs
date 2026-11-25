@@ -324,7 +324,13 @@ pub(crate) fn in_nested_live(cfg: &Config, target: &sync::Target) -> bool {
     // top-level name.
     let rel = live.strip_prefix(&root.path).unwrap_or(live);
     let mut parts = rel.components();
+    let configured = cfg
+        .dirs
+        .iter()
+        .filter(|d| rel.starts_with(d.as_str()))
+        .max_by_key(|d| d.len());
     let entry = match parts.next().map(|c| c.as_os_str()) {
+        _ if configured.is_some() => root.path.join(configured.unwrap()),
         Some(first) if first == "projects" => {
             let (Some(slug), Some(memory)) = (parts.next(), parts.next()) else {
                 return false;

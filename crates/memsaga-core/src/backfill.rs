@@ -159,6 +159,13 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
                 report.waiting += 1;
                 continue;
             }
+            // Inside a git repository of its own: not mirrored, so not
+            // replayed either (invariant 8).
+            if crate::sync::live_target(cfg, &rel.to_string_lossy())
+                .is_some_and(|t| crate::recorded::in_nested_live(cfg, &t))
+            {
+                continue;
+            }
             // Over `max_file_mb`, as the mirror leaves such a file out: one
             // version in history would stop every push (GitHub's 100 MB).
             if cfg.max_file_mb > 0 && content.len() as u64 > cfg.max_file_mb.saturating_mul(1 << 20)
@@ -293,7 +300,15 @@ fn check_clean(cfg: &Config, git: &Git, state: &State) -> Result<()> {
             return Ok(false);
         };
         let now = git.run_ok(&["hash-object", "--", path]);
-        Ok(now.is_ok_and(|h| h.trim() == blob))
+        if !now.is_ok_and(|h| h.trim() == blob) {
+            return Ok(false);
+        }
+        // And nothing else staged: the index holds HEAD's version or the copy.
+        let staged = git.run(&["rev-parse", "-q", "--verify", &format!(":{path}")])?;
+        let staged = String::from_utf8_lossy(&staged.stdout).trim().to_string();
+        let head = git.run(&["rev-parse", "-q", "--verify", &format!("HEAD:{path}")])?;
+        let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
+        Ok(staged.is_empty() || staged == *blob || staged == head)
     };
     let incoming = crate::sync::load_incoming(state)?;
     let out = git.run_ok(&["status", "--porcelain=v1", "-z", "--untracked-files=all"])?;

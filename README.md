@@ -715,9 +715,11 @@ Claude reads or writes that file.
   scripts that `settings.json` runs but this machine lacks, and files held
   back because a new line looks like a key
   ([if a file is held back](#if-a-file-is-held-back)).
-- When sweeps fail, nothing is committed until the cause is fixed. The
-  notice at the end of a turn says so (once per error, and again once a
-  day while it lasts), and `memsaga status` shows since when and why.
+- When sweeps fail, the notice at the end of a turn says so (once per
+  error, and again once a day while it lasts), and `memsaga status` shows
+  since when and why. A sweep that failed before its commit committed
+  nothing; one that failed after it (recording the commit) leaves the
+  commit in history, and the next sweep records it.
 - A file that cannot be copied (no permission to read it, for example) does
   not stop the sweep: the rest is committed, the file is listed in
   `memsaga status`, and the sweep tries it again every ten minutes. Nothing

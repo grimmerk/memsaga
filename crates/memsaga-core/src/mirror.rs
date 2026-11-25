@@ -441,7 +441,10 @@ pub fn sync_dir(
         stats.nested.push(dst.to_path_buf());
         return Ok(());
     }
-    fs::create_dir_all(dst)?;
+    if let Err(e) = fs::create_dir_all(dst) {
+        stats.errors.push((dst.to_path_buf(), format!("{e}")));
+        return Ok(());
+    }
     let mut keep: BTreeSet<PathBuf> = BTreeSet::new();
     // Repository links found where the live side has a folder: nothing under
     // them is mirrored or counted as had.
@@ -525,6 +528,15 @@ pub fn sync_dir(
             }
             Ok(())
         })();
+        // A folder the live side turned into a file or link, left in place
+        // (over the limit, or the copy failed): its contents stay too.
+        if !ft.is_dir()
+            && target
+                .symlink_metadata()
+                .is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+        {
+            untouched.push(target.clone());
+        }
         if let Err(e) = done {
             stats.errors.push((target, format!("{e:#}")));
         }
@@ -571,8 +583,17 @@ fn copy_settings_stripped(
     }
     let sm = fs::metadata(src)?;
     put_in_place(scope, dst, |tmp| {
-        fs::write(tmp, &out).with_context(|| format!("writing {}", dst.display()))?;
-        // Keep the source's mode (a private settings file stays private).
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        // Private until the source's mode is applied (a private settings
+        // file stays private, also while it is written).
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(tmp)?;
+        f.write_all(out.as_bytes())
+            .with_context(|| format!("writing {}", dst.display()))?;
         owner_writable(tmp, &sm)
     })?;
     Ok(Copied::of(before.as_ref(), dst))
@@ -617,8 +638,15 @@ fn copy_if_changed(scope: &Scope, src: &Path, dst: &Path) -> Result<Copied> {
         }
     }
     put_in_place(scope, dst, |tmp| {
-        fs::copy(src, tmp)
+        let n = fs::copy(src, tmp)
             .with_context(|| format!("copying {} -> {}", src.display(), dst.display()))?;
+        let max = scope.cfg.max_file_mb;
+        if max > 0 && n > max.saturating_mul(1 << 20) {
+            anyhow::bail!(
+                "{} grew past max_file_mb while it was copied",
+                src.display()
+            );
+        }
         owner_writable(tmp, &sm)?;
         if let Ok(t) = sm.modified() {
             let f = fs::OpenOptions::new().write(true).open(tmp)?;
@@ -667,7 +695,7 @@ fn put_in_place(scope: &Scope, dst: &Path, write: impl FnOnce(&Path) -> Result<(
             .symlink_metadata()
             .is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
         {
-            clear_folder(scope, dst)?;
+            return replace_folder(scope, &tmp, dst);
         }
         fs::rename(&tmp, dst).with_context(|| format!("writing {}", dst.display()))?;
         Ok(())
@@ -678,9 +706,18 @@ fn put_in_place(scope: &Scope, dst: &Path, write: impl FnOnce(&Path) -> Result<(
     done
 }
 
-/// Remove a repository folder that a file or link replaces, after moving
-/// any `.git` copy inside it aside (invariant 8); refused when one cannot be.
-fn clear_folder(scope: &Scope, dir: &Path) -> Result<()> {
+/// Put `tmp` where the repository folder `dir` is (a live folder became a
+/// file or a link). Refused while a file under the folder waits for
+/// `memsaga sync`, or a `.git` copy in it cannot be moved aside (invariant
+/// 8). The folder is renamed beside itself first and removed only once the
+/// replacement is in place, so a rename that fails puts it back.
+fn replace_folder(scope: &Scope, tmp: &Path, dir: &Path) -> Result<()> {
+    if scope.guard.as_ref().is_some_and(|g| g.protects_under(dir)) {
+        anyhow::bail!(
+            "{} holds files waiting for `memsaga sync`; left as it is",
+            dir.display()
+        );
+    }
     let mut stats = Stats::default();
     let stuck = set_aside_git_copies(scope, dir, &mut stats);
     if let Some(first) = stuck.first() {
@@ -689,8 +726,17 @@ fn clear_folder(scope: &Scope, dir: &Path) -> Result<()> {
             first.display()
         );
     }
+    let name = dir.file_name().unwrap_or_default().to_string_lossy();
+    let old = dir.with_file_name(format!(".memsaga-old-{}-{name}", std::process::id()));
     if dir.symlink_metadata().is_ok() {
-        remove_any(dir)?;
+        fs::rename(dir, &old).with_context(|| format!("moving {} aside", dir.display()))?;
+    }
+    if let Err(e) = fs::rename(tmp, dir) {
+        let _ = fs::rename(&old, dir);
+        return Err(e).with_context(|| format!("writing {}", dir.display()));
+    }
+    if old.symlink_metadata().is_ok() {
+        remove_any(&old)?;
     }
     Ok(())
 }
@@ -847,6 +893,19 @@ fn prune_memory(scope: &Scope, root: &Root, repo: &Path, entries: &[Entry], stat
         for e in rd.filter_map(|e| e.ok()) {
             let name = e.file_name().to_string_lossy().to_string();
             if live.contains(name.as_str()) {
+                continue;
+            }
+            // Its live project folder exists but cannot be looked into: its
+            // memory is unknown, not gone.
+            let project = root
+                .path
+                .join("projects")
+                .join(crate::roots::slug_of_repo_name(&name));
+            if project.symlink_metadata().is_ok() && fs::read_dir(&project).is_err() {
+                stats.errors.push((
+                    e.path(),
+                    format!("cannot list {}; its memory is kept", project.display()),
+                ));
                 continue;
             }
             // Under an older name of a directory that is live under its new

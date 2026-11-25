@@ -425,7 +425,7 @@ pub fn report(cfg: &Config) -> Option<String> {
         notice,
         held_notice(&state),
         sweep_error_notice(&state),
-        mirror_notice(cfg, &state),
+        mirror_notice(&state),
         incoming_notice(&state),
     ]
     .into_iter()
@@ -511,7 +511,7 @@ fn sweep_error_notice(state: &State) -> Option<String> {
 /// What the last sweep left out: files it could not mirror (once per
 /// distinct set, and again once a day), files over `max_file_mb` and nested
 /// repositories (once per distinct set).
-fn mirror_notice(cfg: &Config, state: &State) -> Option<String> {
+fn mirror_notice(state: &State) -> Option<String> {
     // While sweeps fail, their notice says it; the list is the last
     // complete mirror's.
     let errors = if sweep::load_sweep_error(state).is_some() {
@@ -568,8 +568,7 @@ fn mirror_notice(cfg: &Config, state: &State) -> Option<String> {
         }),
         (!large.is_empty()).then(|| {
             format!(
-                "memsaga: not mirrored, larger than max_file_mb = {}: {}",
-                cfg.max_file_mb,
+                "memsaga: not mirrored, larger than max_file_mb at the last sweep: {}",
                 names(large.iter().map(|f| f.path.as_str()).collect())
             )
         }),

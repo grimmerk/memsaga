@@ -5609,6 +5609,17 @@ fn a_write_is_refused_while_a_change_to_the_file_cannot_be_brought_in() {
     assert_eq!(denied(&hook(&fx, &pre_tool("Read", &one, "s1"))), None);
 }
 
+/// Whether file modes are enforced here (a root user ignores them).
+fn modes_enforced(dir: &Path) -> bool {
+    let probe = dir.join(".mode-probe");
+    fs::write(&probe, "x").unwrap();
+    chmod(&probe, 0o000);
+    let enforced = fs::read(&probe).is_err();
+    chmod(&probe, 0o644);
+    fs::remove_file(&probe).unwrap();
+    enforced
+}
+
 fn chmod(p: &Path, mode: u32) {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(p, fs::Permissions::from_mode(mode)).unwrap();
@@ -5772,6 +5783,10 @@ fn read_only_files_are_mirrored_and_updated() {
 #[test]
 fn one_file_that_cannot_be_read_does_not_stop_the_sweep() {
     let fx = fixture("turn", "");
+    if !modes_enforced(fx.repo.parent().unwrap()) {
+        eprintln!("skipped: file modes are not enforced for this user");
+        return;
+    }
     write(&fx.claude.join("skills/locked/inside.md"), "inside\n");
     write(&fx.claude.join("skills/foo/secret.md"), "s\n");
     run(&fx, &["init", "--no-backfill"]);
@@ -5934,7 +5949,7 @@ fn a_file_over_the_size_limit_is_left_out_and_its_repository_copy_kept() {
         large,
         ["claude/skills/foo/big.bin", "claude/skills/foo/new-big.bin"]
     );
-    assert!(report(&fx).contains("larger than max_file_mb = 1"));
+    assert!(report(&fx).contains("larger than max_file_mb"));
     assert!(!report(&fx).contains("max_file_mb"), "said once");
 }
 
@@ -6150,6 +6165,10 @@ fn backfill_takes_an_edit_over_a_preview_copy_for_a_hand_edit() {
 #[test]
 fn a_root_that_cannot_be_listed_deletes_nothing_from_the_repository() {
     let fx = fixture("turn", "");
+    if !modes_enforced(fx.repo.parent().unwrap()) {
+        eprintln!("skipped: file modes are not enforced for this user");
+        return;
+    }
     run(&fx, &["init", "--no-backfill"]);
     let before = head_files(&fx);
     chmod(&fx.claude, 0o000);
@@ -6166,5 +6185,25 @@ fn a_root_that_cannot_be_listed_deletes_nothing_from_the_repository() {
     assert_eq!(
         git(&fx, &["show", "HEAD:claude-work/memory/-h-git-a/w.md"]),
         "work fact, changed\n"
+    );
+}
+
+#[test]
+fn a_folder_that_became_a_file_too_large_to_mirror_keeps_its_contents() {
+    let fx = fixture("turn", "max_file_mb = 1\n");
+    write(&fx.claude.join("skills/proj/notes.md"), "notes\n");
+    run(&fx, &["init", "--no-backfill"]);
+    fs::remove_dir_all(fx.claude.join("skills/proj")).unwrap();
+    fs::write(fx.claude.join("skills/proj"), vec![b'x'; (1 << 20) + 1]).unwrap();
+    write(&fx.claude.join("skills/foo/more.md"), "more\n");
+    hook(&fx, &stop("s1"));
+    let files = head_files(&fx);
+    assert!(
+        files.contains(&"claude/skills/foo/more.md".to_string()),
+        "{files:?}"
+    );
+    assert!(
+        files.contains(&"claude/skills/proj/notes.md".to_string()),
+        "{files:?}"
     );
 }

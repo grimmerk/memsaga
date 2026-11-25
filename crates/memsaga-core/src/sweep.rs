@@ -189,8 +189,19 @@ fn tree_newer_than(dir: &Path, marker: SystemTime) -> bool {
 /// knows every file written so far when this returns an error part-way.
 pub fn refresh_mirror(cfg: &Config, scope: &Scope, stats: &mut mirror::Stats) -> Result<()> {
     for root in &cfg.roots {
-        if !root.path.is_dir() {
-            continue;
+        // Missing: skipped. Unreachable (a folder above it without
+        // permission): reported, so the retry has something to retry.
+        match std::fs::metadata(&root.path) {
+            Ok(m) if m.is_dir() => {}
+            Ok(_) => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                stats.errors.push((
+                    cfg.repo.join(&root.label),
+                    format!("reading {}: {e}", root.path.display()),
+                ));
+                continue;
+            }
         }
         mirror::sync_root(scope, root, &cfg.repo, stats)
             .with_context(|| format!("mirroring {}", root.path.display()))?;
@@ -240,7 +251,7 @@ pub fn pending(
         event: "diff".into(),
         ..Default::default()
     };
-    log_set_aside(&state, &preview, &scope.take_set_aside())?;
+    log_set_aside(&state, &preview, &scope.take_set_aside());
     refreshed?;
     // Only after a complete mirror: a partial list would drop real entries.
     if let Some(g) = &scope.guard {
@@ -318,6 +329,7 @@ pub fn pending(
 /// overlapping sweep's result cannot overwrite a later one's.
 pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let started = Instant::now();
+    let started_at = SystemTime::now();
     let git = Git::new(&cfg.repo);
     let state = State::new(cfg.state_dir());
     if !git.is_repo() {
@@ -337,7 +349,13 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let mut locked = match crate::recorded::lock_reconciled(cfg, &state, Duration::from_secs(60)) {
         Ok(l) => l,
         Err(e) => {
-            record_sweep_error(&state, &e);
+            // Under the lock again, so a sweep that succeeded meanwhile is
+            // not overwritten with this older failure (busy: not recorded).
+            if let Ok(_lock) = state.lock(Duration::from_secs(5)) {
+                if state.mtime("last-sweep").is_none_or(|t| t < started_at) {
+                    record_sweep_error(&state, &e);
+                }
+            }
             return Err(e);
         }
     };
@@ -396,7 +414,7 @@ fn sweep_locked(
     // What exists live now, this machine has had: from here on its absence
     // is a deletion (grimmerk/memsaga#22).
     crate::sync::mark_seen(cfg, &state, &stats.present)?;
-    log_set_aside(&state, attrib, &scope.take_set_aside())?;
+    log_set_aside(&state, attrib, &scope.take_set_aside());
     refreshed?;
     if let Some(g) = &scope.guard {
         if crate::sync::record_hand_edits(&mut incoming, g.take_found()) > 0 {
@@ -738,11 +756,13 @@ fn save_mirror_lists(
 
 /// An event for repository folders holding a `.git` copy that the mirror
 /// moved aside (where to, in `message`).
-fn log_set_aside(state: &State, attrib: &Attribution, moved: &[(PathBuf, PathBuf)]) -> Result<()> {
+/// Best effort: a log that cannot be written goes to memsaga.log, and the
+/// sweep or preview goes on (the moves are done either way).
+fn log_set_aside(state: &State, attrib: &Attribution, moved: &[(PathBuf, PathBuf)]) {
     if moved.is_empty() {
-        return Ok(());
+        return;
     }
-    state.append_event(&Event {
+    let logged = state.append_event(&Event {
         ts: state::now_rfc3339(),
         kind: "set-aside".into(),
         event: attrib.event.clone(),
@@ -757,7 +777,10 @@ fn log_set_aside(state: &State, attrib: &Attribution, moved: &[(PathBuf, PathBuf
             .collect::<Vec<_>>()
             .join("; "),
         ..Default::default()
-    })
+    });
+    if let Err(e) = logged {
+        state.log(&format!("set-aside event not logged: {e:#}"));
+    }
 }
 
 /// Why the last sweep committed nothing because the secret check failed
