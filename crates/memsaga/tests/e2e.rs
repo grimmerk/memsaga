@@ -5820,13 +5820,15 @@ fn one_file_that_cannot_be_read_does_not_stop_the_sweep() {
         status_json(&fx)["mirror_errors"].as_array().unwrap().len(),
         2
     );
-    // Everything live, and the config, older than a marker 700 s old: only
+    // Everything live, the config and the repository's own top-level
+    // files older than a marker 700 s old: only
     // the retry can start this sweep.
     let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(800);
-    for p in walk(fx.claude.parent().unwrap())
-        .into_iter()
-        .chain([fx.claude.parent().unwrap().to_path_buf(), fx.cfg.clone()])
-    {
+    for p in walk(fx.claude.parent().unwrap()).into_iter().chain([
+        fx.claude.parent().unwrap().to_path_buf(),
+        fx.cfg.clone(),
+        fx.repo.join(".gitattributes"),
+    ]) {
         if p.symlink_metadata()
             .is_ok_and(|m| !m.file_type().is_symlink())
         {
@@ -5951,25 +5953,53 @@ fn a_pull_names_unresolved_conflicts_before_merging() {
     run(&fx, &["init", "--no-backfill"]);
     let (_origin, other) = with_origin(&fx);
     push_from_other(&other, "claude/CLAUDE.md", Some("# from github\n"));
-    // A `git stash pop` by hand that conflicted.
+    // Unresolved conflict entries in the index (what a `git stash pop` that
+    // conflicted leaves), with HEAD where memsaga recorded it, so nothing
+    // but the merge itself meets them.
     let rel = "claude/skills/foo/SKILL.md";
-    fs::write(fx.repo.join(rel), "stashed\n").unwrap();
-    git_at(&fx.repo, &["stash", "-q"]);
-    fs::write(fx.repo.join(rel), "committed\n").unwrap();
-    git_at(&fx.repo, &["commit", "-q", "-am", "by hand"]);
-    let _ = std::process::Command::new("git")
+    let blob = |text: &str| {
+        let mut c = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&fx.repo)
+            .args(["hash-object", "-w", "--stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        c.stdin.take().unwrap().write_all(text.as_bytes()).unwrap();
+        String::from_utf8(c.wait_with_output().unwrap().stdout)
+            .unwrap()
+            .trim()
+            .to_string()
+    };
+    let info = format!(
+        "0 {zero}\t{rel}\n100644 {} 1\t{rel}\n100644 {} 2\t{rel}\n100644 {} 3\t{rel}\n",
+        blob("base\n"),
+        blob("ours\n"),
+        blob("theirs\n"),
+        zero = "0".repeat(40)
+    );
+    let mut c = std::process::Command::new("git")
         .arg("-C")
         .arg(&fx.repo)
-        .args(["stash", "pop", "-q"])
-        .output()
+        .args(["update-index", "--index-info"])
+        .stdin(Stdio::piped())
+        .spawn()
         .unwrap();
+    {
+        use std::io::Write;
+        c.stdin.take().unwrap().write_all(info.as_bytes()).unwrap();
+    }
+    assert!(c.wait().unwrap().success());
     assert!(!git(&fx, &["ls-files", "-u"]).is_empty());
     // `pull` (what the hooks run) merges without sweeping first.
     let out = cmd(&fx).arg("pull").output().unwrap();
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("unresolved conflicts"), "{err}");
-    assert!(git(&fx, &["log", "-1", "--format=%s"]).contains("by hand"));
+    // Nothing merged.
+    assert!(!git(&fx, &["log", "-1", "--format=%s"]).contains("edited elsewhere"));
 }
 
 #[test]
