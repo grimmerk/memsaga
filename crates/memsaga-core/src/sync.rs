@@ -1110,6 +1110,11 @@ fn settle_one(
             ));
         }
     }
+    // Inside a git repository of its own here (one that became one after
+    // the entry was recorded): left alone on both sides, so the entry goes.
+    if crate::recorded::in_nested_live(cfg, &target) {
+        return Ok(Outcome::Done(Done::InStep));
+    }
     let repo_path = cfg.repo.join(rel);
     // Under a link in the repository the "repository file" is whatever the
     // link points at, often a live file (grimmerk/memsaga#29).

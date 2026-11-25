@@ -123,7 +123,7 @@ pub fn sync_self_and_extras(scope: &Scope, stats: &mut Stats) -> Result<()> {
             continue;
         }
         if scope.may_write(&dst, Some(&src)) {
-            match copy_if_changed(&src, &dst) {
+            match copy_if_changed(scope, &src, &dst) {
                 Ok(c) => stats.count(c, &dst),
                 Err(e) => stats.errors.push((dst, format!("{e:#}"))),
             }
@@ -300,9 +300,9 @@ fn sync_entry(
         }
         let is_settings = matches!(entry, Entry::File { rel } if rel == "settings.json");
         let copied = if is_settings && !scope.cfg.settings_ignore_keys.is_empty() {
-            copy_settings_stripped(&src, &dst, &scope.cfg.settings_ignore_keys)
+            copy_settings_stripped(scope, &src, &dst, &scope.cfg.settings_ignore_keys)
         } else {
-            copy_if_changed(&src, &dst)
+            copy_if_changed(scope, &src, &dst)
         };
         match copied {
             Ok(c) => stats.count(c, &dst),
@@ -469,7 +469,7 @@ pub fn sync_dir(
                 } else {
                     resolved
                 };
-                if scope.may_write(&target, None) && replace_symlink(&target, &link)? {
+                if scope.may_write(&target, None) && replace_symlink(scope, &target, &link)? {
                     stats.linked += 1;
                 }
             } else if ft.is_file() {
@@ -477,7 +477,7 @@ pub fn sync_dir(
                 if !over_limit(scope, &target, len, stats)
                     && scope.may_write(&target, Some(item.path()))
                 {
-                    stats.count(copy_if_changed(item.path(), &target)?, &target);
+                    stats.count(copy_if_changed(scope, item.path(), &target)?, &target);
                 }
             }
             Ok(())
@@ -509,10 +509,15 @@ pub fn sync_dir(
 /// Mirror `settings.json` without the volatile top-level keys, so toggling
 /// `/model` or `/effort` does not produce a commit. Falls back to a plain
 /// copy when the file is not a JSON object. Compared by content, not mtime.
-fn copy_settings_stripped(src: &Path, dst: &Path, ignore: &[String]) -> Result<Copied> {
+fn copy_settings_stripped(
+    scope: &Scope,
+    src: &Path,
+    dst: &Path,
+    ignore: &[String],
+) -> Result<Copied> {
     let text = fs::read_to_string(src)?;
     let Some(out) = strip_settings(&text, ignore) else {
-        return copy_if_changed(src, dst);
+        return copy_if_changed(scope, src, dst);
     };
     // Only a regular file counts as "already current"; a symlink is replaced.
     let before = fs::symlink_metadata(dst).ok();
@@ -520,18 +525,13 @@ fn copy_settings_stripped(src: &Path, dst: &Path, ignore: &[String]) -> Result<C
         if dm.is_file() && fs::read_to_string(dst).map(|d| d == out).unwrap_or(false) {
             return Ok(Copied::No);
         }
-        if !dm.is_file() || read_only(dm) {
-            remove_any(dst)?;
-        }
     }
-    if let Some(p) = dst.parent() {
-        fs::create_dir_all(p)?;
-    }
-    fs::write(dst, out).with_context(|| format!("writing {}", dst.display()))?;
-    // Keep the source's mode (a private settings file stays private).
-    if let Ok(sm) = fs::metadata(src) {
-        owner_writable(dst, &sm)?;
-    }
+    let sm = fs::metadata(src)?;
+    put_in_place(scope, dst, |tmp| {
+        fs::write(tmp, &out).with_context(|| format!("writing {}", dst.display()))?;
+        // Keep the source's mode (a private settings file stays private).
+        owner_writable(tmp, &sm)
+    })?;
     Ok(Copied::of(before.as_ref(), dst))
 }
 
@@ -553,7 +553,7 @@ pub fn strip_settings(text: &str, ignore: &[String]) -> Option<String> {
     Some(serde_json::to_string_pretty(&value).ok()? + "\n")
 }
 
-fn copy_if_changed(src: &Path, dst: &Path) -> Result<Copied> {
+fn copy_if_changed(scope: &Scope, src: &Path, dst: &Path) -> Result<Copied> {
     let sm = fs::metadata(src)?;
     let before = fs::symlink_metadata(dst).ok();
     if let Some(dm) = &before {
@@ -572,29 +572,73 @@ fn copy_if_changed(src: &Path, dst: &Path) -> Result<Copied> {
                 return Ok(Copied::No);
             }
         }
-        // A copy of a read-only file (a git clone's packs are 0444): it
-        // cannot be opened for writing, but it can be replaced.
-        if !dm.is_file() || read_only(dm) {
-            remove_any(dst)?;
+    }
+    put_in_place(scope, dst, |tmp| {
+        fs::copy(src, tmp)
+            .with_context(|| format!("copying {} -> {}", src.display(), dst.display()))?;
+        owner_writable(tmp, &sm)?;
+        if let Ok(t) = sm.modified() {
+            let f = fs::OpenOptions::new().write(true).open(tmp)?;
+            let _ = f.set_modified(t);
         }
-    }
-    if let Some(p) = dst.parent() {
-        fs::create_dir_all(p)?;
-    }
-    fs::copy(src, dst)
-        .with_context(|| format!("copying {} -> {}", src.display(), dst.display()))?;
-    owner_writable(dst, &sm)?;
-    if let Ok(t) = sm.modified() {
-        let f = fs::OpenOptions::new().write(true).open(dst)?;
-        let _ = f.set_modified(t);
-    }
+        Ok(())
+    })?;
     Ok(Copied::of(before.as_ref(), dst))
 }
 
-/// Is `m` a file its owner may not write?
-fn read_only(m: &fs::Metadata) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    m.permissions().mode() & 0o200 == 0
+/// Write `dst` by writing a temporary file in the state directory (the same
+/// file system) and renaming it over `dst` only once it is complete. A copy
+/// that fails (a source that cannot be read, a full disk) leaves the old
+/// repository copy as it was: the sweep goes on past one failed path and
+/// stages everything, so a missing or half-written copy would be committed
+/// as a deletion or a damaged file. A rename also replaces a read-only copy
+/// (a git clone's packs are 0444), which cannot be opened for writing. A
+/// folder in the way is cleared first, its `.git` copies moved aside.
+fn put_in_place(scope: &Scope, dst: &Path, write: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let dir = scope.cfg.state_dir().join("tmp");
+    fs::create_dir_all(&dir)?;
+    let tmp = dir.join(format!(
+        "copy-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = fs::remove_file(&tmp);
+    let done = write(&tmp).and_then(|()| {
+        if let Some(p) = dst.parent() {
+            fs::create_dir_all(p)?;
+        }
+        if dst
+            .symlink_metadata()
+            .is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+        {
+            clear_folder(scope, dst)?;
+        }
+        fs::rename(&tmp, dst).with_context(|| format!("writing {}", dst.display()))?;
+        Ok(())
+    });
+    if done.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    done
+}
+
+/// Remove a repository folder that a file or link replaces, after moving
+/// any `.git` copy inside it aside (invariant 8); refused when one cannot be.
+fn clear_folder(scope: &Scope, dir: &Path) -> Result<()> {
+    let mut stats = Stats::default();
+    let stuck = set_aside_git_copies(scope, dir, &mut stats);
+    if let Some(first) = stuck.first() {
+        anyhow::bail!(
+            "{} holds a .git copy that could not be moved aside",
+            first.display()
+        );
+    }
+    if dir.symlink_metadata().is_ok() {
+        remove_any(dir)?;
+    }
+    Ok(())
 }
 
 /// Give a mirror copy the source's mode plus owner-write: git keeps only the
@@ -693,19 +737,25 @@ fn mirror_symlink(scope: &Scope, src: &Path, dst: &Path, repo: &Path) -> Result<
     if let Some(p) = dst.parent() {
         fs::create_dir_all(p)?;
     }
-    Ok(if replace_symlink(dst, &link)? { 1 } else { 0 })
+    Ok(if replace_symlink(scope, dst, &link)? {
+        1
+    } else {
+        0
+    })
 }
 
 /// Create or replace a symlink at `dst` pointing to `link`. Returns whether it changed.
-fn replace_symlink(dst: &Path, link: &Path) -> Result<bool> {
+fn replace_symlink(scope: &Scope, dst: &Path, link: &Path) -> Result<bool> {
     if let Ok(m) = dst.symlink_metadata() {
         if m.file_type().is_symlink() && fs::read_link(dst).map(|l| l == link).unwrap_or(false) {
             return Ok(false);
         }
-        remove_any(dst)?;
     }
-    std::os::unix::fs::symlink(link, dst)
-        .with_context(|| format!("symlink {} -> {}", dst.display(), link.display()))?;
+    put_in_place(scope, dst, |tmp| {
+        std::os::unix::fs::symlink(link, tmp)
+            .with_context(|| format!("symlink {} -> {}", dst.display(), link.display()))?;
+        Ok(())
+    })?;
     Ok(true)
 }
 

@@ -5779,6 +5779,8 @@ fn one_file_that_cannot_be_read_does_not_stop_the_sweep() {
     let secret = fx.claude.join("skills/foo/secret.md");
     write(&secret, "s, changed\n");
     chmod(&secret, 0o000);
+    // Its repository copy read-only too: replacing it must not lose it.
+    chmod(&fx.repo.join("claude/skills/foo/secret.md"), 0o444);
     chmod(&locked, 0o000);
     write(&fx.claude.join("skills/foo/more.md"), "more\n");
     hook(&fx, &stop("s1"));
@@ -6048,4 +6050,59 @@ fn a_backfill_group_that_fails_to_commit_puts_its_files_back() {
     let rel = "claude/memory/-h-git-a/one.md";
     assert_eq!(fs::read_to_string(fx.repo.join(rel)).unwrap(), "fact\n");
     assert_eq!(git(&fx, &["status", "--porcelain"]), "");
+}
+
+#[test]
+fn a_folder_replaced_by_a_link_keeps_the_git_copy_inside_it() {
+    let fx = fixture("turn", "");
+    write(&fx.claude.join("agents/a.md"), "a\n");
+    run(&fx, &["init", "--no-backfill"]);
+    // What an older version left deep inside a mirrored folder.
+    write(
+        &fx.repo.join("claude/agents/sub/.git/HEAD"),
+        "ref: refs/heads/main\n",
+    );
+    // The live folder becomes a link (as the second account's skills are).
+    fs::remove_dir_all(fx.claude.join("agents")).unwrap();
+    fs::create_dir_all(fx.claude.join("elsewhere")).unwrap();
+    std::os::unix::fs::symlink(fx.claude.join("elsewhere"), fx.claude.join("agents")).unwrap();
+    hook(&fx, &stop("s1"));
+    assert!(fx
+        .repo
+        .join("claude/agents")
+        .symlink_metadata()
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    let moved = walk(&fx.repo.join(".git/memsaga/stale"));
+    assert!(
+        moved
+            .iter()
+            .any(|p| p.ends_with("claude/agents/sub/.git/HEAD")),
+        "{moved:?}"
+    );
+}
+
+#[test]
+fn a_change_queued_before_its_folder_became_a_repository_is_dropped() {
+    let fx = fixture("turn", "");
+    write(&fx.claude.join("skills/proj/a.md"), "a\n");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "claude/skills/proj/a.md", Some("from elsewhere\n"));
+    // A pull by hand, recorded by the next sweep: queued for the live side.
+    git_at(&fx.repo, &["pull", "-q", "--no-rebase", "origin", "HEAD"]);
+    run(&fx, &["sweep"]);
+    assert!(status_json(&fx)["incoming"]["claude/skills/proj/a.md"].is_object());
+    // Then the live folder becomes a clone.
+    write(
+        &fx.claude.join("skills/proj/.git/HEAD"),
+        "ref: refs/heads/main\n",
+    );
+    run(&fx, &["sync"]);
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("skills/proj/a.md")).unwrap(),
+        "a\n"
+    );
+    assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
 }

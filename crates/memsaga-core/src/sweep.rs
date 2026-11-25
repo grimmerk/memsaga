@@ -313,17 +313,9 @@ pub fn pending(
 /// Mirror, index, commit. Returns what happened. Never writes into a root.
 /// A failure is kept in `sweep-error` until a sweep succeeds, so the reporter
 /// and `status` say so: a hook's error otherwise reaches only memsaga.log.
+/// The marker is written while the sweep lock is still held, so an
+/// overlapping sweep's result cannot overwrite a later one's.
 pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
-    let state = State::new(cfg.state_dir());
-    let result = sweep_once(cfg, attrib);
-    match &result {
-        Ok(_) => state.remove(SWEEP_ERROR),
-        Err(e) => record_sweep_error(&state, e),
-    }
-    result
-}
-
-fn sweep_once(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let started = Instant::now();
     let git = Git::new(&cfg.repo);
     if !git.is_repo() {
@@ -335,7 +327,30 @@ fn sweep_once(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let state = State::new(cfg.state_dir());
     // A change of HEAD memsaga did not record is recorded first, so the
     // guard below protects what it brought (docs/two-way-sync.md).
-    let mut locked = crate::recorded::lock_reconciled(cfg, &state, Duration::from_secs(60))?;
+    let mut locked = match crate::recorded::lock_reconciled(cfg, &state, Duration::from_secs(60)) {
+        Ok(l) => l,
+        Err(e) => {
+            record_sweep_error(&state, &e);
+            return Err(e);
+        }
+    };
+    let result = sweep_locked(cfg, attrib, started, &mut locked);
+    match &result {
+        Ok(_) => state.remove(SWEEP_ERROR),
+        Err(e) => record_sweep_error(&state, e),
+    }
+    drop(locked);
+    result
+}
+
+fn sweep_locked(
+    cfg: &Config,
+    attrib: &Attribution,
+    started: Instant,
+    locked: &mut crate::recorded::Locked,
+) -> Result<Outcome> {
+    let git = Git::new(&cfg.repo);
+    let state = State::new(cfg.state_dir());
     // `git add -A` below would stage a conflicted file, markers and all.
     crate::recorded::check_no_conflicts(cfg, &git)?;
     let sweep_start = SystemTime::now();

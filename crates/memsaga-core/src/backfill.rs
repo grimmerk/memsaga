@@ -60,6 +60,8 @@ pub struct Report {
     /// Versions left out because the file waits on the incoming list: the
     /// newer repository version is delivered to the live side instead.
     pub waiting: usize,
+    /// Versions left out because they are larger than `max_file_mb`.
+    pub too_large: usize,
     pub first_ts: String,
     pub last_ts: String,
 }
@@ -157,6 +159,13 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
                 .clone();
             if live.is_some_and(|l| waiting.contains(&l)) {
                 report.waiting += 1;
+                continue;
+            }
+            // Over `max_file_mb`, as the mirror leaves such a file out: one
+            // version in history would stop every push (GitHub's 100 MB).
+            if cfg.max_file_mb > 0 && content.len() as u64 > cfg.max_file_mb.saturating_mul(1 << 20)
+            {
+                report.too_large += 1;
                 continue;
             }
             let dst = cfg.repo.join(&rel);
@@ -283,13 +292,18 @@ fn check_clean(cfg: &Config, git: &Git, state: &State) -> Result<()> {
     let mut fields = out.split('\0').filter(|f| !f.is_empty());
     while let Some(f) = fields.next() {
         let (code, path) = f.split_at(3.min(f.len()));
+        let mut paths = vec![path];
         if code.starts_with('R') || code.starts_with('C') {
-            fields.next(); // the old path of a rename
+            // The old path of a rename: a mirrored file moved out by hand.
+            paths.extend(fields.next());
         }
-        if !own.contains_key(path)
-            && !incoming.contains_key(path)
-            && crate::sync::live_target(cfg, path).is_some()
-        {
+        for path in paths {
+            if own.contains_key(path)
+                || incoming.contains_key(path)
+                || crate::sync::live_target(cfg, path).is_none()
+            {
+                continue;
+            }
             anyhow::bail!(
                 "the data repository {} has changes no sweep has recorded yet ({path}, …); run `memsaga sweep` first, which commits them (a file the secret check holds back has to be committed or removed by hand)",
                 cfg.repo.display()

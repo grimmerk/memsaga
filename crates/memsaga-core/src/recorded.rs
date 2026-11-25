@@ -305,7 +305,7 @@ pub fn record_moves(
 }
 
 /// Is the live file of `target` inside a folder that holds `.git`?
-fn in_nested_live(cfg: &Config, target: &sync::Target) -> bool {
+pub(crate) fn in_nested_live(cfg: &Config, target: &sync::Target) -> bool {
     let sync::Target::Root(_) = target else {
         return false;
     };
