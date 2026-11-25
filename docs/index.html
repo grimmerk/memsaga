@@ -400,7 +400,7 @@ Claude:  decides to keep it,
       </div>
       <div class="copy">
         <h3>Find the session behind any change</h3>
-        <p>Each commit carries the session's title and ID; memsaga never copies the conversation itself. Go from a line in <code>CLAUDE.md</code> to the session its commit names (usually the one that wrote it), or from a session to everything committed under it, and reopen it with <code>claude --resume</code> while Claude Code still keeps it (30 days by default, <code>cleanupPeriodDays</code>).</p>
+        <p>Each commit a session makes carries its ID, and its title when it has one; memsaga never copies the conversation itself. Go from a line in <code>CLAUDE.md</code> to the session its commit names (usually the one that wrote it), or from a session to everything committed under it, and reopen it with <code>claude --resume</code> while Claude Code still keeps it (30 days by default, <code>cleanupPeriodDays</code>).</p>
         <pre class="cmd">git log -S 'run the tests first'
 git log --grep 'Session-Title: .*login'</pre>
         <p class="small">Recorded on example data. <a href="https://github.com/grimmerk/memsaga-example/commits/main">The same history on GitHub</a></p>
