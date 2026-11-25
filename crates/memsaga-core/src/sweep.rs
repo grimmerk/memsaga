@@ -202,14 +202,17 @@ pub fn pending(
         );
     }
     let state = State::new(cfg.state_dir());
-    let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
+    let locked = crate::recorded::lock_reconciled(cfg, &state, Duration::from_secs(60))?;
+    // The preview writes the working tree too: not over a conflict.
+    crate::recorded::check_no_conflicts(cfg, &git)?;
     // The same guard as a sweep, so a preview never overwrites a repository-side
     // edit either; what it finds is recorded by the next sweep, not here.
-    let incoming = crate::sync::load_incoming(&state);
+    let incoming = crate::sync::load_incoming(&state)?;
     let scope = Scope::new(cfg).with_guard(crate::sync::Guard::new(
         cfg,
         state.mtime("last-sweep"),
         &incoming,
+        &locked,
     ));
     let mut stats = mirror::Stats::default();
     let refreshed = refresh_mirror(cfg, &scope, &mut stats);
@@ -299,19 +302,24 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         );
     }
     let state = State::new(cfg.state_dir());
-    let _guard = state.lock(Duration::from_secs(60)).context("sweep lock")?;
+    // A change of HEAD memsaga did not record is recorded first, so the
+    // guard below protects what it brought (docs/two-way-sync.md).
+    let mut locked = crate::recorded::lock_reconciled(cfg, &state, Duration::from_secs(60))?;
+    // `git add -A` below would stage a conflicted file, markers and all.
+    crate::recorded::check_no_conflicts(cfg, &git)?;
     let sweep_start = SystemTime::now();
 
     // Files changed on the repository side are not overwritten (step 1b of
     // docs/two-way-sync.md); hand edits found on the way join the list.
-    let mut incoming = crate::sync::load_incoming(&state);
-    if crate::sync::rename_incoming(&cfg.repo, &mut incoming)? {
+    let mut incoming = crate::sync::load_incoming(&state)?;
+    if crate::sync::rename_incoming(cfg, &mut incoming)? {
         crate::sync::save_incoming(&state, &incoming)?;
     }
     let scope = Scope::new(cfg).with_guard(crate::sync::Guard::new(
         cfg,
         state.mtime("last-sweep"),
         &incoming,
+        &locked,
     ));
     let renames: usize = cfg
         .roots
@@ -376,6 +384,8 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     }
     state.remove(HELD_ERROR);
     record_held(&state, attrib, &out.held)?;
+    // Whether this sweep's commit, if any, is recorded (`advance_after_commit`).
+    let mut recorded = true;
     if changed {
         let name_status = git.staged_name_status()?;
         let files: Vec<String> = name_status
@@ -399,9 +409,21 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
                 "layout: {renames} memory directories renamed home-relative (grimmerk/memsaga-private#25)\n{body}"
             );
         }
-        let sha = git.commit(&msg, None)?;
+        let made = git.commit(&msg, None)?;
+        // Recorded before the uncommitted record is cleared below: stopped in
+        // between, the next run finds this commit unrecorded, and the record
+        // still names every copy in it as memsaga's own. When someone else's
+        // commit landed on top in the same instant, nothing is recorded and
+        // the record is kept, so the next run sorts the two out.
+        recorded = locked.advance_after_commit(&git, &made)?;
+        if !recorded {
+            state.log(&format!(
+                "HEAD moved past commit {} while it was made; left for the next run to record",
+                made.short
+            ));
+        }
         out.committed = true;
-        out.sha = sha;
+        out.sha = made.short;
         out.files = files;
         out.shortstat = shortstat;
     }
@@ -409,7 +431,9 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     // replaced and committed, or kept as a hand edit made since: the record
     // has done its job. Not earlier: a sweep that fails before this point
     // leaves copies uncommitted, and they must still be recognised next time.
-    crate::sync::clear_uncommitted(&state);
+    if recorded {
+        crate::sync::clear_uncommitted(&state);
+    }
     // Promote the marker only after a successful pass; edits made during the
     // sweep have mtimes after `sweep_start` and are caught next time.
     set_marker(&state, sweep_start)?;

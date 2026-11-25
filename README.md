@@ -722,6 +722,15 @@ Claude reads or writes that file.
 - An edit from elsewhere that conflicts with yours waits, and `memsaga sync`
   reports it. Pick a side with `memsaga sync --take live <path>` or
   `--take repo <path>`, or edit the live file and run `memsaga sync` again.
+- Sweeps and syncs stop, with the reason in `memsaga status` and the log,
+  while the data repository is half-way through a merge, rebase, cherry-pick
+  or revert, has unresolved conflicts, or when
+  `<data repository>/.git/memsaga/incoming.json` cannot be read. Finish or
+  abort the git command (`status` names it). Conflicts with no git command
+  in progress (a `git stash pop` that conflicted) are resolved by editing
+  the files and staging them with `git add`. A damaged list is better fixed
+  by hand than removed, since removing it lets the next sweep overwrite the
+  files it listed.
 - To stop, `memsaga uninstall` removes the hooks. The repository and its
   history stay.
 - Questions and ideas go to
@@ -965,7 +974,18 @@ deleted in the repository is deleted live when the live file was unchanged.
 The other way round, a live file counts as deleted only on a machine that has
 had it: a file the repository has but this machine never had (a fresh clone, a
 folder another machine added to the config) is kept, and `memsaga status`
-lists it.
+lists it. When such a file changes elsewhere, the new version is written
+here, as a new file is; so is a file deleted here that changed elsewhere
+before the deletion was synced (the edit wins and the file comes back;
+delete it again if that was meant).
+
+Git commands you run by hand in the data repository count as edits from
+elsewhere: after a `git pull`, `git merge`, `git commit` or `git revert`
+there, the next prompt, session start or `memsaga sync` brings what changed
+to the live files, and no sweep copies the older live files over it. After a
+`git reset` to an older commit the live files win, as before. While a merge,
+rebase, cherry-pick or revert is half-way there, or a conflict is
+unresolved, memsaga changes nothing until you finish or abort it.
 
 Inside Claude Code sessions, the hooks of [use case 10](#10-edit-from-anywhere)
 do this on their own, at the moments in [timing](#timing). Before a Write or

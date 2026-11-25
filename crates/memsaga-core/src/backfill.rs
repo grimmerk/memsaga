@@ -57,6 +57,9 @@ pub struct Report {
     /// (grimmerk/memsaga#60): a key pasted once and removed long ago would
     /// otherwise enter history through the replay.
     pub held: usize,
+    /// Versions left out because the file waits on the incoming list: the
+    /// newer repository version is delivered to the live side instead.
+    pub waiting: usize,
     pub first_ts: String,
     pub last_ts: String,
 }
@@ -89,6 +92,23 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
     report.known_versions = after.iter().filter(|a| a.is_some()).count();
     report.unknown_versions = after.len() - report.known_versions;
 
+    // Commits move HEAD: under the sweep lock, with the recorded head moved
+    // after each one. Otherwise a commit of old versions here would later
+    // read as a change of HEAD from elsewhere, and its old versions would be
+    // brought to the live files.
+    let mut locked =
+        crate::recorded::lock_reconciled(cfg, &state, std::time::Duration::from_secs(60))?;
+    // The replay writes files and stages everything: a conflicted file would
+    // be overwritten, and its markers staged.
+    crate::recorded::check_no_conflicts(cfg, &git)?;
+    // A file waiting for the live side holds the newer version: a replayed
+    // old one over it would be what sync then writes live. Left out, by live
+    // file, so an entry kept under an older name of its directory counts.
+    let waiting: HashSet<PathBuf> = crate::sync::load_incoming(&state)?
+        .keys()
+        .filter_map(|k| crate::sync::live_target(cfg, k).map(|t| t.live().to_path_buf()))
+        .collect();
+    let mut live_of: HashMap<PathBuf, Option<PathBuf>> = HashMap::new();
     // Emit commits: ops of one session within the window form one commit,
     // whose tree holds the latest known version of every touched file.
     let mut latest: HashMap<PathBuf, String> = HashMap::new(); // rel -> content written so far
@@ -119,6 +139,19 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
             if latest.get(&rel) == Some(&content) {
                 continue;
             }
+            // Each path's live file resolved once: `live_target` builds the
+            // scope's matchers on every call.
+            let live = live_of
+                .entry(rel.clone())
+                .or_insert_with(|| {
+                    crate::sync::live_target(cfg, &rel.to_string_lossy())
+                        .map(|t| t.live().to_path_buf())
+                })
+                .clone();
+            if live.is_some_and(|l| waiting.contains(&l)) {
+                report.waiting += 1;
+                continue;
+            }
             let dst = cfg.repo.join(&rel);
             if let Some(p) = dst.parent() {
                 std::fs::create_dir_all(p)?;
@@ -128,6 +161,11 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
             latest.insert(rel, content);
             wrote = true;
         }
+        // memsaga's own copies until committed: stopped before the commit,
+        // the next sweep overwrites them with the live files instead of
+        // taking them for hand edits.
+        let own: Vec<PathBuf> = written_now.iter().map(|r| cfg.repo.join(r)).collect();
+        crate::sync::record_uncommitted(cfg, &state, &own)?;
         let mut changed = wrote && git.add_all_and_check()?;
         if changed && cfg.scan_secrets {
             let run = |a: &[&str]| git.run(a);
@@ -179,7 +217,10 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
             let shortstat = git.staged_shortstat()?;
             let msg =
                 crate::sweep::commit_message(cfg, &attrib, "", &files, &name_status, &shortstat);
-            git.commit(&msg, Some(&last.ts))?;
+            let made = git.commit(&msg, Some(&last.ts))?;
+            if locked.advance_after_commit(&git, &made)? {
+                crate::sync::clear_uncommitted(&state);
+            }
             report.commits += 1;
         }
     }
@@ -189,10 +230,11 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
         kind: "backfill".into(),
         event: "init".into(),
         message: format!(
-            "ops={} commits={} held={} known={} unknown={} dropped={} range={}..{}",
+            "ops={} commits={} held={} waiting={} known={} unknown={} dropped={} range={}..{}",
             report.ops,
             report.commits,
             report.held,
+            report.waiting,
             report.known_versions,
             report.unknown_versions,
             report.failed_dropped,

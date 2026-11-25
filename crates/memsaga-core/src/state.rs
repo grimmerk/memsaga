@@ -139,10 +139,22 @@ impl State {
             .map(|s| s.trim().to_string())
     }
 
-    /// Replace a marker file's contents.
+    /// Replace a marker file's contents atomically: written to a temporary
+    /// file beside it, then renamed over it, so a process killed half-way
+    /// (a hook past its time limit) leaves the old contents or the new ones,
+    /// never a truncated file. A truncated `incoming.json` used to read as an
+    /// empty list, and the next sweep then overwrote the repository files it
+    /// protected with stale live copies.
     pub fn write_marker(&self, name: &str, value: &str) -> Result<()> {
         self.ensure()?;
-        std::fs::write(self.marker(name), value)?;
+        let dest = self.marker(name);
+        let file = dest
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let tmp = dest.with_file_name(format!(".{file}.tmp-{}", std::process::id()));
+        std::fs::write(&tmp, value).with_context(|| format!("writing {}", tmp.display()))?;
+        std::fs::rename(&tmp, &dest).with_context(|| format!("writing {}", dest.display()))?;
         Ok(())
     }
 
@@ -234,6 +246,32 @@ impl State {
             None => position.unwrap_or_else(|| from.to_string()),
         };
         (events, position)
+    }
+
+    /// The shas of the events whose kind is one of `kinds` and that name one,
+    /// newest first, through the current log and then the rotated ones. A
+    /// log that exists but cannot be read is an error, not an empty history.
+    pub fn event_shas(&self, kinds: &[&str]) -> Result<Vec<String>> {
+        // A directory that cannot be listed would hide the rotated logs.
+        std::fs::read_dir(&self.dir).with_context(|| format!("listing {}", self.dir.display()))?;
+        let mut files = vec![self.marker("events.jsonl")];
+        files.extend(self.rotated_logs().into_iter().rev().map(|(p, _)| p));
+        let mut out = Vec::new();
+        for f in files {
+            let text = match std::fs::read(&f) {
+                Ok(b) => String::from_utf8_lossy(&b).to_string(),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e).with_context(|| format!("reading {}", f.display())),
+            };
+            out.extend(
+                text.lines()
+                    .rev()
+                    .filter_map(|l| serde_json::from_str::<Event>(l).ok())
+                    .filter(|e| kinds.contains(&e.kind.as_str()) && !e.sha.is_empty())
+                    .map(|e| e.sha),
+            );
+        }
+        Ok(out)
     }
 
     /// Rotated logs (`events-*.jsonl`) with their inodes, oldest first.

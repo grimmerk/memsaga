@@ -21,6 +21,7 @@
 //! - `secrets`  holding back a file whose new lines look like a key
 //! - `sweep`    the orchestration: lock, mirror, index, commit, events
 //! - `sync`     repository-side edits back to the live files (two-way sync)
+//! - `recorded` the recorded head: changes of HEAD memsaga did not make, as incoming
 //! - `hook`     parsing a hook event and deciding what to do
 //! - `index`    `index.md` and `paths.json` generation
 //! - `install`  registering the hooks in a root's settings.json
@@ -37,6 +38,7 @@ pub mod hook;
 pub mod index;
 pub mod install;
 pub mod mirror;
+pub mod recorded;
 pub mod restore;
 pub mod roots;
 pub mod secrets;

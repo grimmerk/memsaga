@@ -12,6 +12,7 @@ the decisions of §9 are settled (2026-10-06).
 - [3. Step 1a: push, and merge only when rejected](#3-step-1a-push-and-merge-only-when-rejected)
   - Diagram D1: the push path (ASCII)
 - [4. Step 1b: the sweep stops overwriting repository-side edits](#4-step-1b-the-sweep-stops-overwriting-repository-side-edits)
+  - [4.1 When HEAD moves without a record](#41-when-head-moves-without-a-record)
 - [5. The incoming list](#5-the-incoming-list)
 - [6. Step 2: `memsaga sync` and `memsaga pull`](#6-step-2-memsaga-sync-and-memsaga-pull)
   - Diagram D2: deciding one file (ASCII)
@@ -47,6 +48,7 @@ than the live file (the *incoming list*). Steps 2 and 3 only read that list.
 | Mirror form | What the live file looks like in the repository. Equal to the live file, except `settings.json`, whose volatile keys (`settings_ignore_keys`) are removed and whose memsaga hook commands run `$HOME/.cargo/bin/memsaga` whatever path this machine registered (grimmerk/memsaga#55). With `settings_ignore_keys = []`, neither: the file is stored as it is. |
 | Base | The version of a file that the live side and the repository side last agreed on. A three-way decision compares the live file and the repository file with the base. |
 | Incoming list | `.git/memsaga/incoming.json`: each repository file that is newer than its live file, with its base. Defined in §5. |
+| Recorded head | The ref `refs/memsaga/recorded`: the commit up to which memsaga has put on the incoming list every change that came from outside the live files. Never pushed. Defined in §4.1. |
 | Sweep | memsaga's copy-and-commit pass at the end of each turn (the Stop hook). |
 | Mod | A Claude Code plugin with TypeScript function hooks (Claude Code 2.1.287 and later). The context-steward mod is one. |
 | `prompt.context` | A mod hook that runs when Claude Code builds the context of the first message (and again after `/compact`); it receives CLAUDE.md and the memory files already loaded and may replace their text. Only §7.2 uses it. |
@@ -98,7 +100,8 @@ moved. The read side (step 3) is where an up-front check belongs.
         │
         └── rejected: non-fast-forward
               │
-  ② take the sweep lock (the merge touches the working tree)
+  ② take the sweep lock (the merge touches the working tree), and first
+     record any change of HEAD memsaga did not make (§4.1)
   ③ git fetch origin
   ④ git merge --no-edit origin/<branch>
         │
@@ -113,7 +116,10 @@ moved. The read side (step 3) is where an up-front check belongs.
         └── merged
               │
   ⑤ add every live-mapped file the merge changed to the incoming list,
-     base = its version in ORIG_HEAD (the pre-merge commit)
+     base = its version in ORIG_HEAD (the pre-merge commit), by the one
+     rule of §4.1 step 4 (a file whose live copy already matches is left
+     out; one already on the list keeps its base, §5); save the list,
+     then move the recorded head to the merge
   ⑥ git push origin <branch>  (once; a second rejection is reported, not retried)
 ```
 
@@ -141,7 +147,8 @@ overwrites or deletes any repository file:
    not touched since: go ahead. memsaga's own copies carry their source's
    mtime, so this is the common case, and it costs one `stat`.
 3. A newer file is a candidate. It is not a hand edit when its content equals
-   `HEAD` (memsaga committed it), equals a copy memsaga wrote there and has not
+   `HEAD` (memsaga committed it, or recorded it: §4.1 is what makes that
+   true), equals a copy memsaga wrote there and has not
    committed yet (a `memsaga diff` preview and every sweep record each file
    the mirror writes by its blob in `.git/memsaga/preview.json`, and a sweep
    clears the record once it has committed; needed because a live file that
@@ -186,6 +193,104 @@ removed without this check. When a merge changes `memsaga/config.toml`, the
 files it brings are chosen with the merged config's scope as well, so a file
 only the new scope covers is queued and written live once the new config is
 in place.
+
+### 4.1 When HEAD moves without a record
+
+Rule 3 of the guard trusts one thing: a repository file equal to `HEAD` is
+memsaga's own committed copy, or a change that is already on the incoming
+list. That holds only while every change of `HEAD` goes through memsaga and
+memsaga records it. It failed on 2026-11-24. A hook merged origin after a
+month away (about 6,700 changed files), and the hook's time limit stopped it
+after the merge and before it saved the incoming list. The next sweep found
+the merged files equal to `HEAD`, took them for its own, copied the
+machine's month-old live files over them, and pushed the revert (77 files).
+A `git pull`, `git merge` or `git commit` run by hand in the data repository
+breaks the rule in the same way.
+
+So memsaga keeps the commit it has accounted for in the ref
+`refs/memsaga/recorded` (the *recorded head*). Every sweep, `memsaga diff`,
+merge, settle and per-file check takes the sweep lock through one function,
+`recorded::lock_reconciled`, which does this first:
+
+1. Refuse while the data repository is half-way through a merge, a rebase, a
+   cherry-pick or a revert (one commit or a sequence): its working tree then
+   holds conflict markers or half-applied commits. A sweep and a settle also
+   refuse while the index holds unresolved conflicts (a `git stash pop` that
+   conflicted leaves no other trace). `memsaga status` names the reason and
+   the git command that ends it. A merge is never aborted for the user, not
+   even one memsaga started and was stopped in (killed in the moment between
+   a conflict and its own `git merge --abort`; its `.git/MERGE_MSG` begins
+   `sync: merge origin/`): nothing proves which process started a merge,
+   and aborting someone else's would throw away their conflict
+   resolutions.
+2. Recorded head equal to `HEAD`: nothing to do. Both are read from their
+   files, without a git process.
+3. No recorded head yet (the first run after an upgrade, or a fresh clone):
+   start from the newest commit memsaga made, merged or recorded on this
+   machine (its `commit`, `merge` and `recovered` events) that `HEAD` still
+   contains (every event is tried,
+   against one `git rev-list` of `HEAD`; newer ones a reset dropped are
+   passed over, so a commit made by hand after the reset is still found);
+   with none, from `HEAD`. An event log that cannot be read, or a git error
+   here or anywhere in this list, stops the run and leaves the recorded
+   head where it was.
+4. Otherwise compare the recorded head with `HEAD` (one `git diff --raw`).
+   Every changed file with a live side goes on the incoming list, with its
+   version at the recorded head as base, exactly as a merge by memsaga lists
+   it. Left out:
+   - a file whose live copy already equals `HEAD`'s version, text and
+     executable bit;
+   - a version equal to memsaga's own uncommitted copy (`preview.json`): a
+     sweep stopped between its commit and moving the recorded head;
+   - a deletion of a path whose live file another repository path still
+     stands for: the file moved within the repository (an older layout, a
+     renamed memory directory), and its live file stays. A rename is found
+     by git's own detection, asked for explicitly (another machine moving a
+     memory directory to the name it uses is a rename, not a deletion here);
+     a move git cannot pair (the file was also rewritten) is found by the
+     two paths standing for one live file. Either way the new path's base
+     is the old path's version, so settle takes the move as an edit of the
+     live file;
+   - a nested repository (a gitlink), which has no file to write.
+5. When `HEAD` no longer contains the recorded head (history rewritten by a
+   `git reset` or a `git pull --rebase`), only the files changed on `HEAD`'s
+   side of the two commits' merge base count. A reset back to an older
+   commit therefore takes nothing (the merge base is `HEAD` itself), and the
+   live files win, as before; a rebase onto origin takes origin's changes,
+   its deletions included, so the next push does not undo them. What the
+   recorded head had and `HEAD` lacks without a change on `HEAD`'s side
+   (commits a rewrite dropped) is not taken: the live files keep it. With no
+   common history at all (a switch to an unrelated branch) the run stops
+   and says how to start recording from `HEAD` on purpose.
+6. Save the list, then move the recorded head to `HEAD`, and log a
+   `recovered` event with the files.
+
+memsaga moves the recorded head itself right after each of its own commits
+and merges, a merge only once its incoming list is saved. A process stopped
+in between leaves the recorded head behind, and the next run lists the same
+files again. A commit is recorded only when its parent is the recorded head,
+so a commit made by hand in the same instant is never taken for memsaga's
+own. The list is written atomically (a temporary file renamed over
+it), and an unreadable list stops every sweep and sync with the reason,
+instead of reading as empty: an empty list would let the next sweep
+overwrite the very files it protected. `memsaga status` shows both cases.
+
+A change made by hand therefore reaches the live files like a change from
+origin: the next prompt or session start sees that `HEAD` moved and pulls,
+and so does `memsaga sync`.
+
+The same work made the merge itself cheap enough for a hook: the incoming
+list of a merge comes from one `git diff --raw` instead of one git process
+per file; the guard, at the first candidate of a sweep, reads `HEAD`'s
+blobs and hashes every repository file newer than the last sweep in one
+call each, instead of two git processes per candidate (it hashes content,
+so a file marked assume-unchanged or skip-worktree cannot hide an edit, and
+a file that changed after that moment is hashed again); and settle reads
+every base version through one `git cat-file --batch` process. Measured on 2026-11-25 with a throwaway data
+repository: a `memsaga sync` that brings in 300 changed and 300 new files
+went from 49.9 s and 2,731 git processes to 3.1 s and 91; a sweep that
+commits costs two more git processes than before (about 37 ms), and the idle
+hooks cost the same.
 
 ## 5. The incoming list
 
@@ -247,6 +352,12 @@ B = base, R = repository file.
      │                write R to the live file, or delete the live file
      │                when the repository deleted it
      │ no
+  L missing? ── R != B ──▶ write R: an edit elsewhere wins over a
+     │          │           deletion here (the file comes back)
+     │          └─ R == B ─▶ only the deletion here: drop the entry; the next
+     │                       sweep takes it as any live deletion (committed
+     │                       if this machine had the file, else absent, §4)
+     │ no
   both changed:
      git merge-file L B R ── clean ──▶ write the merged text to the live file
      │                                  (the next sweep commits it)
@@ -265,6 +376,13 @@ How it writes:
   dropped. `memsaga sync --take live|repo <path>` settles one file explicitly.
 - A both-sides change in a file that is not text (no line structure that
   `git merge-file` can use) is a conflict.
+- A file missing live that changed elsewhere is written, whether this
+  machine never had it (a fresh clone, a file left in the repository only,
+  §4) or deleted it here before the change arrived: an edit is never lost to
+  a deletion. The file comes back with the other side's text (a deletion no
+  sweep committed yet is in no history); delete it again to delete it
+  everywhere. This does not depend on `.git/memsaga/seen.json`, so a damaged
+  or incomplete record cannot change the outcome.
 
 ## 7. Step 3: read before use, through command hooks
 
@@ -371,6 +489,12 @@ so they can be called from a mod unchanged.
   project has a different directory on each machine and nothing is shared
   between them. Two-way sync does not change that; mapping those names across
   machines is separate work.
+- **Git commands run by hand in the data repository.** A `git pull`,
+  `git merge`, `git commit` or `git revert` reaches the live files as a
+  change from elsewhere (§4.1); a `git reset` to an older commit is taken as
+  nothing, so the live files win. While a merge, rebase, cherry-pick or
+  revert is half-way, or a conflict is unresolved, memsaga changes nothing,
+  and its hooks log why.
 - **Two sessions at once.** Every write to the working tree, the incoming list
   and the live files happens under the sweep lock; pushes keep their own push
   lock, which is taken after the sweep lock and never the other way round.
@@ -420,5 +544,17 @@ second clone standing in for GitHub or another machine:
   naming CLAUDE.md; a Read of a file origin changed waits for the pull; a
   Read of an unchanged file does not; a prompt after a change to a file the
   session used returns a notice naming it.
+- A change of `HEAD` without a record (§4.1): a merge made by hand, as a
+  stopped hook leaves it, is not overwritten by the next sweep and reaches
+  the live files through `memsaga sync`, new files included; the first run
+  after an upgrade starts from the event log; a pull by hand reaches the live
+  files at the next prompt and at session start, and a Write right after it
+  is refused until the file is read again; a commit by hand reaches the live
+  file; a reset lets the live files win, and a `pull --rebase` keeps origin's
+  change; a sweep stopped between its commit and moving the recorded head
+  lists nothing; a merge half-way or an unresolved conflict stops sweeps and
+  syncs; an unreadable list stops sweeps; an explicit backfill never brings
+  old versions to the live files; deleting a second copy of a file never
+  deletes its live file.
 
 Each guard is mutation-verified: remove it, see its test fail, restore it.
