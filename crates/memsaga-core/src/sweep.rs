@@ -365,7 +365,7 @@ fn sweep_locked(
         cfg,
         state.mtime("last-sweep"),
         &incoming,
-        &locked,
+        locked,
     ));
     let renames: usize = cfg
         .roots

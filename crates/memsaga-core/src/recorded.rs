@@ -310,10 +310,28 @@ pub(crate) fn in_nested_live(cfg: &Config, target: &sync::Target) -> bool {
         return false;
     };
     let live = target.live();
-    cfg.roots
-        .iter()
-        .find(|r| live.starts_with(&r.path))
-        .is_some_and(|r| crate::mirror::in_nested_repo(&r.path, live))
+    let Some(root) = cfg.roots.iter().find(|r| live.starts_with(&r.path)) else {
+        return false;
+    };
+    // Looked for within the mirrored entry only, as `sync_dir` does: a
+    // memory folder's entry is `projects/<slug>/memory`, a folder's its
+    // top-level name.
+    let rel = live.strip_prefix(&root.path).unwrap_or(live);
+    let mut parts = rel.components();
+    let entry = match parts.next().map(|c| c.as_os_str()) {
+        Some(first) if first == "projects" => {
+            let (Some(slug), Some(memory)) = (parts.next(), parts.next()) else {
+                return false;
+            };
+            root.path
+                .join("projects")
+                .join(slug.as_os_str())
+                .join(memory.as_os_str())
+        }
+        Some(first) => root.path.join(first),
+        None => return false,
+    };
+    crate::mirror::is_nested_repo(&entry) || crate::mirror::in_nested_repo(&entry, live)
 }
 
 /// Is `path`, deleted at `to`, a second copy of a live file whose own

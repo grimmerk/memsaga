@@ -107,9 +107,7 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
     // there) is not on the incoming list yet: the replay would write an old
     // version over it, or commit it under a backfill commit. A sweep first
     // records it and commits it.
-    if git.has_head() {
-        check_clean(cfg, &git, &state)?;
-    }
+    check_clean(cfg, &git, &state)?;
     // A file waiting for the live side holds the newer version: a replayed
     // old one over it would be what sync then writes live. Left out, by live
     // file, so an entry kept under an older name of its directory counts.
@@ -169,11 +167,16 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
                 continue;
             }
             let dst = cfg.repo.join(&rel);
-            if let Some(p) = dst.parent() {
-                std::fs::create_dir_all(p)?;
-            }
-            std::fs::write(&dst, &content)?;
+            // Counted before the write: one that fails half-way is put back too.
             written_now.insert(rel.clone());
+            let wrote_it = dst
+                .parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .and_then(|()| std::fs::write(&dst, &content));
+            if let Err(e) = wrote_it {
+                let e = anyhow::Error::from(e).context(format!("writing {}", dst.display()));
+                return Err(with_put_back(cfg, &git, &written_now, e));
+            }
             latest.insert(rel, content);
             wrote = true;
         }
@@ -252,12 +255,7 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
             Ok(())
         })();
         if let Err(e) = finished {
-            if let Err(undo) = put_back(cfg, &git, &written_now) {
-                return Err(e.context(format!(
-                    "and putting this group's files back to HEAD failed too: {undo:#}"
-                )));
-            }
-            return Err(e);
+            return Err(with_put_back(cfg, &git, &written_now, e));
         }
     }
 
@@ -287,6 +285,15 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
 /// with no live side (`manual/`, `companion/`) are never replayed over.
 fn check_clean(cfg: &Config, git: &Git, state: &State) -> Result<()> {
     let own = crate::sync::load_uncommitted(state);
+    // memsaga's own copy only while it still holds what memsaga wrote: an
+    // edit made over a preview's copy is a hand edit.
+    let is_own = |path: &str| -> Result<bool> {
+        let Some(blob) = own.get(path) else {
+            return Ok(false);
+        };
+        let now = git.run_ok(&["hash-object", "--", path]);
+        Ok(now.is_ok_and(|h| h.trim() == blob))
+    };
     let incoming = crate::sync::load_incoming(state)?;
     let out = git.run_ok(&["status", "--porcelain=v1", "-z", "--untracked-files=all"])?;
     let mut fields = out.split('\0').filter(|f| !f.is_empty());
@@ -298,9 +305,9 @@ fn check_clean(cfg: &Config, git: &Git, state: &State) -> Result<()> {
             paths.extend(fields.next());
         }
         for path in paths {
-            if own.contains_key(path)
-                || incoming.contains_key(path)
+            if incoming.contains_key(path)
                 || crate::sync::live_target(cfg, path).is_none()
+                || is_own(path)?
             {
                 continue;
             }
@@ -313,23 +320,47 @@ fn check_clean(cfg: &Config, git: &Git, state: &State) -> Result<()> {
     Ok(())
 }
 
+/// `e`, after putting the group's files back to HEAD; a failure there is
+/// added to the error.
+fn with_put_back(
+    cfg: &Config,
+    git: &Git,
+    paths: &HashSet<PathBuf>,
+    e: anyhow::Error,
+) -> anyhow::Error {
+    match put_back(cfg, git, paths) {
+        Ok(()) => e,
+        Err(undo) => e.context(format!(
+            "and putting this group's files back to HEAD failed too: {undo:#}"
+        )),
+    }
+}
+
 /// Put `paths` (repository-relative) back to HEAD, index and working tree;
-/// one that HEAD lacks is removed.
+/// one that HEAD lacks is removed. Every path is tried; the first failure
+/// is returned.
 fn put_back(cfg: &Config, git: &Git, paths: &HashSet<PathBuf>) -> Result<()> {
+    let mut first: Option<anyhow::Error> = None;
     for rel in paths {
         let rel = rel.to_string_lossy();
         let spec = format!(":(literal){rel}");
-        if git.object_type(&format!("HEAD:{rel}"))?.is_some() {
-            git.run_ok(&["checkout", "-q", "HEAD", "--", &spec])?;
-        } else {
-            git.run_ok(&["rm", "-q", "--cached", "--ignore-unmatch", "--", &spec])?;
-            match std::fs::remove_file(cfg.repo.join(rel.as_ref())) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
-                _ => {}
+        let one = (|| -> Result<()> {
+            if git.object_type(&format!("HEAD:{rel}"))?.is_some() {
+                git.run_ok(&["checkout", "-q", "HEAD", "--", &spec])?;
+            } else {
+                git.run_ok(&["rm", "-q", "--cached", "--ignore-unmatch", "--", &spec])?;
+                match std::fs::remove_file(cfg.repo.join(rel.as_ref())) {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                    _ => {}
+                }
             }
+            Ok(())
+        })();
+        if let Err(e) = one {
+            first.get_or_insert(e.context(format!("putting back {rel}")));
         }
     }
-    Ok(())
+    first.map_or(Ok(()), Err)
 }
 
 /// Per-op "content after this op", from a forward pass anchored on Writes and

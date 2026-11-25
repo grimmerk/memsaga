@@ -171,6 +171,15 @@ pub fn in_nested_repo(root: &Path, live: &Path) -> bool {
 /// `stats` as each file is written, so the caller still has the list of
 /// files written so far when a later step fails.
 pub fn sync_root(scope: &Scope, root: &Root, repo: &Path, stats: &mut Stats) -> Result<()> {
+    // A root that cannot be listed would read as empty, and everything
+    // mirrored from it as deleted.
+    if let Err(e) = fs::read_dir(&root.path) {
+        stats.errors.push((
+            repo.join(&root.label),
+            format!("listing {}: {e}", root.path.display()),
+        ));
+        return Ok(());
+    }
     let entries = scope.entries(root);
     for e in &entries {
         sync_entry(scope, root, e, repo, stats)?;
@@ -179,7 +188,12 @@ pub fn sync_root(scope: &Scope, root: &Root, repo: &Path, stats: &mut Stats) -> 
     let base = repo.join(&root.label);
     for name in scope.cfg.files.iter().chain(&scope.cfg.dirs) {
         let src = root.path.join(name);
-        if src.symlink_metadata().is_err() {
+        // Gone only when the file system says so: a permission error must
+        // not delete the repository copy.
+        if src
+            .symlink_metadata()
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+        {
             let dst = base.join(name);
             if dst.symlink_metadata().is_ok() && scope.may_remove(&dst) {
                 remove_path(scope, &dst, stats);
@@ -232,6 +246,20 @@ fn set_aside_git_copies(scope: &Scope, top: &Path, stats: &mut Stats) -> Vec<Pat
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     let base = scope.cfg.state_dir().join("stale").join(stamp);
     for from in found {
+        // Files under it wait for the live side: moved, they would read as
+        // deleted in the repository.
+        if scope
+            .guard
+            .as_ref()
+            .is_some_and(|g| g.protects_under(&from))
+        {
+            stats.errors.push((
+                from.clone(),
+                "holds a .git copy and files waiting for `memsaga sync`; left as it is".into(),
+            ));
+            failed.push(from);
+            continue;
+        }
         // Only inside a root's subtree (`<repo>/<label>/…`): never the data
         // repository itself, whose own `.git` this would otherwise match.
         let Some(rel) = from
@@ -767,6 +795,16 @@ fn prune_memory(scope: &Scope, root: &Root, repo: &Path, entries: &[Entry], stat
     let legacy = repo.join(&root.label).join("projects");
     if legacy.symlink_metadata().is_ok() && scope.may_remove_moved(&legacy) {
         remove_path(scope, &legacy, stats);
+    }
+    // Live memory folders that cannot be listed would read as gone.
+    if let Err(e) = fs::read_dir(root.path.join("projects")) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            stats.errors.push((
+                repo.join(&root.label).join(crate::roots::MEMORY_DIR),
+                format!("listing {}: {e}", root.path.join("projects").display()),
+            ));
+            return;
+        }
     }
     let projects = repo.join(&root.label).join(crate::roots::MEMORY_DIR);
     // Repository names: a directory under an older name (its live name, as

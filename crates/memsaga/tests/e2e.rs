@@ -5885,6 +5885,16 @@ fn a_failing_sweep_is_reported_until_one_succeeds() {
     assert!(status_json(&fx)["sweep_error"].is_null());
     assert!(report(&fx).contains("sweeps are committing again"));
     assert!(head_files(&fx).contains(&"claude/skills/foo/more.md".to_string()));
+    // A failure past the lock (the index cannot be written) is kept too.
+    let index = fx.repo.join("index.md");
+    fs::remove_file(&index).unwrap();
+    write(&index.join("in-the-way"), "x\n");
+    write(&fx.claude.join("skills/foo/more.md"), "more, again\n");
+    hook(&fx, &stop("s1"));
+    assert!(status_json(&fx)["sweep_error"].is_object());
+    fs::remove_dir_all(&index).unwrap();
+    hook(&fx, &stop("s1"));
+    assert!(status_json(&fx)["sweep_error"].is_null());
 }
 
 #[test]
@@ -5940,6 +5950,10 @@ fn a_change_from_elsewhere_inside_a_nested_repository_is_not_brought_in() {
         "ref: refs/heads/main\n",
     );
     push_from_other(&other, "claude/skills/proj/a.md", Some("from elsewhere\n"));
+    // Recorded by a sweep after a pull by hand: nothing queued.
+    git_at(&fx.repo, &["pull", "-q", "--no-rebase", "origin", "HEAD"]);
+    run(&fx, &["sweep"]);
+    assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
     run(&fx, &["sync"]);
     assert_eq!(
         fs::read_to_string(fx.claude.join("skills/proj/a.md")).unwrap(),
@@ -6105,4 +6119,51 @@ fn a_change_queued_before_its_folder_became_a_repository_is_dropped() {
         "a\n"
     );
     assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
+}
+
+#[test]
+fn backfill_takes_an_edit_over_a_preview_copy_for_a_hand_edit() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let one = live_one(&fx);
+    fs::write(&one, "fact, newer\n").unwrap();
+    run(&fx, &["diff"]); // leaves memsaga's own uncommitted copy
+    let rel = "claude/memory/-h-git-a/one.md";
+    fs::write(fx.repo.join(rel), "edited over the preview\n").unwrap();
+    let transcript = format!(
+        "{{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:00.000Z\",\"sessionId\":\"s-old\",\"cwd\":\"/h/git/a\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Write\",\"input\":{{\"file_path\":\"{}\",\"content\":\"v1 fact\\n\"}}}}]}}}}\n",
+        one.display()
+    );
+    write(
+        &fx.claude.join("projects/-h-git-a/0000-session.jsonl"),
+        &transcript,
+    );
+    let out = cmd(&fx).arg("backfill").output().unwrap();
+    assert!(!out.status.success());
+    assert_eq!(
+        fs::read_to_string(fx.repo.join(rel)).unwrap(),
+        "edited over the preview\n"
+    );
+}
+
+#[test]
+fn a_root_that_cannot_be_listed_deletes_nothing_from_the_repository() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let before = head_files(&fx);
+    chmod(&fx.claude, 0o000);
+    write(
+        &fx.work.join("projects/-h-git-a/memory/w.md"),
+        "work fact, changed\n",
+    );
+    hook(&fx, &stop("s1"));
+    chmod(&fx.claude, 0o755);
+    let after = head_files(&fx);
+    for f in before.iter().filter(|f| f.starts_with("claude/")) {
+        assert!(after.contains(f), "{f} deleted: {after:?}");
+    }
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude-work/memory/-h-git-a/w.md"]),
+        "work fact, changed\n"
+    );
 }
