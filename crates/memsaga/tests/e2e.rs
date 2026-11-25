@@ -6234,4 +6234,42 @@ fn a_memory_folder_that_cannot_be_listed_is_kept_in_the_repository() {
         files.contains(&"claude/memory/-h-git-a/one.md".to_string()),
         "{files:?}"
     );
+    // A project folder that can be read but not searched (0400): its
+    // memory folder's kind cannot be read.
+    let project = fx.claude.join("projects/-h-git-a");
+    chmod(&project, 0o400);
+    write(&fx.claude.join("skills/foo/more.md"), "more, again\n");
+    hook(&fx, &stop("s1"));
+    chmod(&project, 0o755);
+    let files = head_files(&fx);
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/skills/foo/more.md"]),
+        "more, again\n"
+    );
+    assert!(
+        files.contains(&"claude/memory/-h-git-a/one.md".to_string()),
+        "{files:?}"
+    );
+}
+
+#[test]
+fn backfill_refuses_over_a_deletion_staged_by_hand() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let one = live_one(&fx);
+    fs::write(&one, "fact, newer\n").unwrap();
+    run(&fx, &["diff"]); // memsaga's own uncommitted copy
+    let rel = "claude/memory/-h-git-a/one.md";
+    git(&fx, &["rm", "-q", "--cached", rel]);
+    let transcript = format!(
+        "{{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:00.000Z\",\"sessionId\":\"s-old\",\"cwd\":\"/h/git/a\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Write\",\"input\":{{\"file_path\":\"{}\",\"content\":\"v1 fact\\n\"}}}}]}}}}\n",
+        one.display()
+    );
+    write(
+        &fx.claude.join("projects/-h-git-a/0000-session.jsonl"),
+        &transcript,
+    );
+    let out = cmd(&fx).arg("backfill").output().unwrap();
+    assert!(!out.status.success());
+    assert!(!git(&fx, &["ls-files", "--", rel]).contains("one.md"));
 }

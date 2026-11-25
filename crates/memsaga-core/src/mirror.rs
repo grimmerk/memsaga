@@ -720,10 +720,16 @@ fn replace_folder(scope: &Scope, tmp: &Path, dir: &Path) -> Result<()> {
     }
     let mut stats = Stats::default();
     let stuck = set_aside_git_copies(scope, dir, &mut stats);
-    if let Some(first) = stuck.first() {
+    if !stuck.is_empty() {
+        let why: Vec<String> = stats
+            .errors
+            .iter()
+            .map(|(p, e)| format!("{}: {e}", p.display()))
+            .collect();
         anyhow::bail!(
-            "{} holds a .git copy that could not be moved aside",
-            first.display()
+            "{} not replaced: a .git copy in it could not be moved aside ({})",
+            dir.display(),
+            why.join("; ")
         );
     }
     let name = dir.file_name().unwrap_or_default().to_string_lossy();
@@ -921,8 +927,16 @@ fn prune_memory(scope: &Scope, root: &Root, repo: &Path, entries: &[Entry], stat
                 .path
                 .join("projects")
                 .join(crate::roots::slug_of_repo_name(&name));
-            let unlistable =
-                |d: &Path| fs::metadata(d).is_ok_and(|m| m.is_dir()) && fs::read_dir(d).is_err();
+            // Unknown: a folder that cannot be listed, or a path whose kind
+            // cannot be read (no search permission above it). Absent, or
+            // under a file, is known.
+            let unlistable = |d: &Path| match fs::metadata(d) {
+                Ok(m) => m.is_dir() && fs::read_dir(d).is_err(),
+                Err(e) => !matches!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ),
+            };
             if let Some(d) = [project.clone(), project.join("memory")]
                 .into_iter()
                 .find(|d| unlistable(d))
