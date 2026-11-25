@@ -6273,3 +6273,36 @@ fn backfill_refuses_over_a_deletion_staged_by_hand() {
     assert!(!out.status.success());
     assert!(!git(&fx, &["ls-files", "--", rel]).contains("one.md"));
 }
+
+#[test]
+fn memsagas_own_leftovers_are_never_committed_and_are_removed() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    // What a stop at the wrong moment, or a cleanup that failed, leaves.
+    write(
+        &fx.repo.join("claude/skills/.memsaga-old-1-proj/notes.md"),
+        "old\n",
+    );
+    write(
+        &fx.repo.join("claude/skills/foo/.memsaga-tmp-1-2"),
+        "half\n",
+    );
+    write(&fx.repo.join("claude/.memsaga-old-1-agents/a.md"), "old\n");
+    // One no sweep cleans (outside every root's subtree): staging alone keeps it out.
+    write(&fx.repo.join(".memsaga-tmp-9-9"), "half\n");
+    write(&fx.claude.join("skills/foo/more.md"), "more\n");
+    hook(&fx, &stop("s1"));
+    let files = head_files(&fx);
+    assert!(
+        files.contains(&"claude/skills/foo/more.md".to_string()),
+        "{files:?}"
+    );
+    assert!(!files.iter().any(|f| f.contains(".memsaga-")), "{files:?}");
+    for p in [
+        "claude/skills/.memsaga-old-1-proj",
+        "claude/skills/foo/.memsaga-tmp-1-2",
+        "claude/.memsaga-old-1-agents",
+    ] {
+        assert!(!fx.repo.join(p).exists(), "{p} left behind");
+    }
+}
