@@ -625,18 +625,29 @@ fn copy_if_changed(scope: &Scope, src: &Path, dst: &Path) -> Result<Copied> {
 fn put_in_place(scope: &Scope, dst: &Path, write: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static N: AtomicUsize = AtomicUsize::new(0);
+    use std::os::unix::fs::MetadataExt;
+    let parent = dst.parent().unwrap_or(Path::new("/"));
+    fs::create_dir_all(parent)?;
     let dir = scope.cfg.state_dir().join("tmp");
     fs::create_dir_all(&dir)?;
-    let tmp = dir.join(format!(
-        "copy-{}-{}",
+    // The rename must not cross file systems: with `.git` elsewhere (a link
+    // to another volume), the copy is written beside its destination.
+    let same_fs = match (fs::metadata(&dir), fs::metadata(parent)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev(),
+        _ => false,
+    };
+    let name = format!(
+        ".memsaga-tmp-{}-{}",
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed)
-    ));
+    );
+    let tmp = if same_fs {
+        dir.join(name)
+    } else {
+        parent.join(name)
+    };
     let _ = fs::remove_file(&tmp);
     let done = write(&tmp).and_then(|()| {
-        if let Some(p) = dst.parent() {
-            fs::create_dir_all(p)?;
-        }
         if dst
             .symlink_metadata()
             .is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())

@@ -306,11 +306,17 @@ pub fn record_moves(
 
 /// Is the live file of `target` inside a folder that holds `.git`?
 pub(crate) fn in_nested_live(cfg: &Config, target: &sync::Target) -> bool {
-    let sync::Target::Root(_) = target else {
+    let sync::Target::Root(loc) = target else {
         return false;
     };
     let live = target.live();
-    let Some(root) = cfg.roots.iter().find(|r| live.starts_with(&r.path)) else {
+    // The root the repository path names: roots may nest in one another.
+    let label = loc.repo_rel.components().next().map(|c| c.as_os_str());
+    let Some(root) = cfg
+        .roots
+        .iter()
+        .find(|r| Some(std::ffi::OsStr::new(&r.label)) == label)
+    else {
         return false;
     };
     // Looked for within the mirrored entry only, as `sync_dir` does: a

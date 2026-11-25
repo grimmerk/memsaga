@@ -318,13 +318,19 @@ pub fn pending(
 pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let started = Instant::now();
     let git = Git::new(&cfg.repo);
+    let state = State::new(cfg.state_dir());
     if !git.is_repo() {
-        anyhow::bail!(
+        let e = anyhow::anyhow!(
             "{} is not a git repository; run `memsaga init` first",
             cfg.repo.display()
         );
+        // Kept only where a state directory already exists (a damaged
+        // repository); never created for a folder that is not one.
+        if cfg.state_dir().is_dir() {
+            record_sweep_error(&state, &e);
+        }
+        return Err(e);
     }
-    let state = State::new(cfg.state_dir());
     // A change of HEAD memsaga did not record is recorded first, so the
     // guard below protects what it brought (docs/two-way-sync.md).
     let mut locked = match crate::recorded::lock_reconciled(cfg, &state, Duration::from_secs(60)) {
