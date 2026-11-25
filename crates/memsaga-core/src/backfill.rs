@@ -329,6 +329,9 @@ fn check_clean(cfg: &Config, git: &Git, state: &State) -> Result<()> {
             paths.extend(fields.next());
         }
         for path in paths {
+            if crate::mirror::is_temp_path(Path::new(path)) {
+                continue; // memsaga's own leftover: never staged
+            }
             if incoming.contains_key(path)
                 || crate::sync::live_target(cfg, path).is_none()
                 || is_own(path)?
@@ -336,7 +339,7 @@ fn check_clean(cfg: &Config, git: &Git, state: &State) -> Result<()> {
                 continue;
             }
             anyhow::bail!(
-                "the data repository {} has changes no sweep has recorded yet ({path}, …); run `memsaga sweep` first, which commits them (a file the secret check holds back has to be committed or removed by hand)",
+                "the data repository {} has changes no sweep has recorded yet ({path}, …); run `memsaga sweep` first, which commits the files as they are in the working tree. A version staged by hand that differs from its file would be replaced by that sweep (it stages the working tree): commit it, or unstage it, first. A file the secret check holds back has to be committed or removed by hand",
                 cfg.repo.display()
             );
         }

@@ -147,6 +147,48 @@ fn over_limit(scope: &Scope, dst: &Path, len: u64, stats: &mut Stats) -> bool {
     true
 }
 
+/// Name prefixes of memsaga's own temporary files and folders in the
+/// repository tree (`put_in_place` writes beside a destination on another
+/// file system; `replace_folder` keeps the old folder until its
+/// replacement is in). Never staged (`git::add_all_args`, which spells the
+/// same prefixes), and removed by the next sweep.
+pub const TEMP_PREFIXES: [&str; 2] = [".memsaga-tmp-", ".memsaga-old-"];
+
+/// Is `p`, or a folder above it, one of memsaga's temporary names?
+pub fn is_temp_path(p: &Path) -> bool {
+    p.components().any(|c| {
+        let n = c.as_os_str().to_string_lossy();
+        TEMP_PREFIXES.iter().any(|t| n.starts_with(t))
+    })
+}
+
+/// Remove memsaga's temporary files and folders directly in `dir` (best
+/// effort; a failure is listed and they stay out of every commit anyway).
+fn clean_temp(dir: &Path, stats: &mut Stats) {
+    let rd = match fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            stats.errors.push((
+                dir.to_path_buf(),
+                format!("looking for leftover temporary copies: {e}"),
+            ));
+            return;
+        }
+    };
+    for e in rd.filter_map(|e| e.ok()) {
+        let n = e.file_name().to_string_lossy().to_string();
+        if TEMP_PREFIXES.iter().any(|t| n.starts_with(t)) {
+            if let Err(err) = remove_any(&e.path()) {
+                stats.errors.push((
+                    e.path(),
+                    format!("removing a leftover temporary copy: {err:#}"),
+                ));
+            }
+        }
+    }
+}
+
 /// A folder holding `.git` (a folder, or a file as in a worktree or a
 /// submodule): a git repository of its own. The mirror leaves it out on both
 /// sides (docs/architecture.md, invariant 8).
@@ -190,6 +232,14 @@ pub fn sync_root(scope: &Scope, root: &Root, repo: &Path, stats: &mut Stats) -> 
     }
     // Files/dirs in the allowlist that disappeared from the root: remove copies.
     let base = repo.join(&root.label);
+    // A folder an entry replaced, left beside it by a stop or a failed
+    // cleanup. Never through a link: it could point outside the repository.
+    let base_is_link = base
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink());
+    if !base_is_link && !scope.through_link(&base) {
+        clean_temp(&base, stats);
+    }
     for name in scope.cfg.files.iter().chain(&scope.cfg.dirs) {
         let src = root.path.join(name);
         // Gone only when the file system says so: a permission error must
@@ -542,6 +592,26 @@ pub fn sync_dir(
         }
     }
     // Delete what is no longer in the source. Deepest first so dirs empty out.
+    // memsaga's own leftovers go first, without the guard: they were never
+    // committed, so no other machine has them and nothing here is lost.
+    let temps: Vec<PathBuf> = WalkDir::new(dst)
+        .follow_links(false)
+        .follow_root_links(false)
+        .min_depth(1)
+        .into_iter()
+        .filter_entry(|e| !is_temp_path(e.path().parent().unwrap_or(Path::new(""))))
+        .filter_map(|e| e.ok())
+        .filter(|e| is_temp_path(Path::new(e.file_name())))
+        .map(|e| e.path().to_path_buf())
+        .collect();
+    for t in &temps {
+        if let Err(err) = remove_any(t) {
+            stats.errors.push((
+                t.clone(),
+                format!("removing a leftover temporary copy: {err:#}"),
+            ));
+        }
+    }
     let mut extra: Vec<PathBuf> = WalkDir::new(dst)
         .follow_links(false)
         .follow_root_links(false)
@@ -550,6 +620,7 @@ pub fn sync_dir(
         .filter_map(|e| e.ok())
         .map(|e| e.path().to_path_buf())
         .filter(|p| !keep.contains(p) && !untouched.iter().any(|u| p.starts_with(u)))
+        .filter(|p| !is_temp_path(p.strip_prefix(dst).unwrap_or(p)))
         .collect();
     extra.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
     for p in extra {
@@ -571,6 +642,12 @@ fn copy_settings_stripped(
     ignore: &[String],
 ) -> Result<Copied> {
     let text = fs::read_to_string(src)?;
+    // Read after the size check: a file that grew past the limit meanwhile
+    // is not installed (the old copy stays), as in `copy_if_changed`.
+    let max = scope.cfg.max_file_mb;
+    if max > 0 && text.len() as u64 > max.saturating_mul(1 << 20) {
+        anyhow::bail!("{} grew past max_file_mb while it was read", src.display());
+    }
     let Some(out) = strip_settings(&text, ignore) else {
         return copy_if_changed(scope, src, dst);
     };

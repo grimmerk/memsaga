@@ -246,7 +246,7 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
             repo_blocked: None,
             held: Vec::new(),
             held_error: None,
-            sweep_error: crate::sweep::load_sweep_error(&state),
+            sweep_error: None,
             mirror_errors: Vec::new(),
             too_large: Vec::new(),
             nested_repos: Vec::new(),
