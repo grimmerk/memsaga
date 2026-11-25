@@ -132,7 +132,9 @@ from three places, told apart by where a file lives:
    anywhere. memsaga commits what you add and never deletes it.
 
 One repository can hold every Claude Code account and machine you use, and
-each commit names the session it came from.
+each commit a session makes names it (a command you run yourself, such as
+`memsaga sync`, makes commits with `Session: none`; see
+[Commit messages](#commit-messages)).
 
 ## Do you need memsaga?
 
@@ -1041,13 +1043,14 @@ or `manual:`. A commit made by a command you run yourself, such as
 the merge memsaga makes when origin moved is just
 `sync: merge origin/<branch>`.
 
-A commit holds everything in scope that changed since the last one, so an
-edit you make by hand, a Bash command, or another session's edit made in the
-same moment lands under the session whose turn ended; that session's
-conversation shows which edits it made itself. memsaga records the session's
-title and ID, never the conversation: `claude --resume <Session>` reopens it
-while Claude Code still keeps the transcript (`cleanupPeriodDays`, 30 days by
-default).
+A commit holds everything in scope that changed since the last one (except a
+file the secret check holds back), so an edit you make by hand, a Bash
+command, or another session's edit made in the same moment lands under the
+session whose turn ended. A commit names the session whose turn made it, not
+necessarily the author of every line; that session's conversation shows which
+edits it made itself. memsaga records the session's title and ID, never the
+conversation: `claude --resume <Session>` reopens it while Claude Code still
+keeps the transcript (`cleanupPeriodDays`, 30 days by default).
 
 ### Uninstalling
 
