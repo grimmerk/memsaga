@@ -576,13 +576,7 @@ impl Guard {
 
     /// `HEAD`'s blob for `rel`, and the blob the repository file `dst` holds
     /// now.
-    fn at_head(
-        &self,
-        git: &Git,
-        rel: &str,
-        dst: &Path,
-        meta: &std::fs::Metadata,
-    ) -> (Option<String>, Option<String>) {
+    fn at_head(&self, git: &Git, rel: &str, dst: &Path) -> (Option<String>, Option<String>) {
         let since = self.since.unwrap_or(SystemTime::UNIX_EPOCH);
         let head = self.reconciled.as_deref().unwrap_or("HEAD");
         let view = self
@@ -592,8 +586,12 @@ impl Guard {
             Some(map) => map.get(rel).cloned(),
             None => blob_at(git, head, rel),
         };
-        let now = match view.hashed.get(dst) {
-            Some((t, len, id)) if meta.modified().ok() == Some(*t) && meta.len() == *len => {
+        // The file as it is now, read after the view: a write during the
+        // view's batch hash (the first candidate's) fails the check and is
+        // hashed again instead of matching the snapshot.
+        let fresh = std::fs::symlink_metadata(dst).ok();
+        let now = match (view.hashed.get(dst), fresh) {
+            (Some((t, len, id)), Some(m)) if m.modified().ok() == Some(*t) && m.len() == *len => {
                 Some(id.clone())
             }
             _ => hash_of(git, dst),
@@ -649,7 +647,7 @@ impl Guard {
         };
         let rel = rel.to_string_lossy().to_string();
         let git = Git::new(&self.repo);
-        let (base, now) = self.at_head(&git, &rel, dst, &meta);
+        let (base, now) = self.at_head(&git, &rel, dst);
         if base.is_some() && base == now {
             return true; // equal to what memsaga committed (or recorded)
         }
