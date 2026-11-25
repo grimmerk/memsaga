@@ -735,8 +735,27 @@ fn replace_folder(scope: &Scope, tmp: &Path, dir: &Path) -> Result<()> {
         let _ = fs::rename(&old, dir);
         return Err(e).with_context(|| format!("writing {}", dir.display()));
     }
-    if old.symlink_metadata().is_ok() {
-        remove_any(&old)?;
+    // The replacement is in. The old folder must not stay in the tree
+    // (the sweep would commit it): removed, or else moved aside.
+    if old.symlink_metadata().is_ok() && remove_any(&old).is_err() {
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+        let to = scope
+            .cfg
+            .state_dir()
+            .join("stale")
+            .join(stamp)
+            .join(old.file_name().unwrap_or_default());
+        let moved = to
+            .parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| fs::rename(&old, &to));
+        if let Err(e) = moved {
+            anyhow::bail!(
+                "{} replaced, but its old folder {} could not be removed or moved aside: {e}",
+                dir.display(),
+                old.display()
+            );
+        }
     }
     Ok(())
 }
@@ -895,16 +914,22 @@ fn prune_memory(scope: &Scope, root: &Root, repo: &Path, entries: &[Entry], stat
             if live.contains(name.as_str()) {
                 continue;
             }
-            // Its live project folder exists but cannot be looked into: its
+            // Its live project folder, or the memory folder in it, exists but
+            // cannot be looked into (`Scope::entries` then leaves it out): its
             // memory is unknown, not gone.
             let project = root
                 .path
                 .join("projects")
                 .join(crate::roots::slug_of_repo_name(&name));
-            if project.symlink_metadata().is_ok() && fs::read_dir(&project).is_err() {
+            let unlistable =
+                |d: &Path| fs::metadata(d).is_ok_and(|m| m.is_dir()) && fs::read_dir(d).is_err();
+            if let Some(d) = [project.clone(), project.join("memory")]
+                .into_iter()
+                .find(|d| unlistable(d))
+            {
                 stats.errors.push((
                     e.path(),
-                    format!("cannot list {}; its memory is kept", project.display()),
+                    format!("cannot list {}; its memory is kept", d.display()),
                 ));
                 continue;
             }

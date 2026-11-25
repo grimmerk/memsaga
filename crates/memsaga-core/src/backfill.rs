@@ -62,6 +62,8 @@ pub struct Report {
     pub waiting: usize,
     /// Versions left out because they are larger than `max_file_mb`.
     pub too_large: usize,
+    /// Versions left out because their file is inside a nested repository.
+    pub nested: usize,
     pub first_ts: String,
     pub last_ts: String,
 }
@@ -115,7 +117,7 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
         .keys()
         .filter_map(|k| crate::sync::live_target(cfg, k).map(|t| t.live().to_path_buf()))
         .collect();
-    let mut live_of: HashMap<PathBuf, Option<PathBuf>> = HashMap::new();
+    let mut live_of: HashMap<PathBuf, Option<crate::sync::Target>> = HashMap::new();
     // Emit commits: ops of one session within the window form one commit,
     // whose tree holds the latest known version of every touched file.
     let mut latest: HashMap<PathBuf, String> = HashMap::new(); // rel -> content written so far
@@ -148,22 +150,21 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
             }
             // Each path's live file resolved once: `live_target` builds the
             // scope's matchers on every call.
-            let live = live_of
+            let target = live_of
                 .entry(rel.clone())
-                .or_insert_with(|| {
-                    crate::sync::live_target(cfg, &rel.to_string_lossy())
-                        .map(|t| t.live().to_path_buf())
-                })
+                .or_insert_with(|| crate::sync::live_target(cfg, &rel.to_string_lossy()))
                 .clone();
-            if live.is_some_and(|l| waiting.contains(&l)) {
+            if target.as_ref().is_some_and(|t| waiting.contains(t.live())) {
                 report.waiting += 1;
                 continue;
             }
             // Inside a git repository of its own: not mirrored, so not
             // replayed either (invariant 8).
-            if crate::sync::live_target(cfg, &rel.to_string_lossy())
-                .is_some_and(|t| crate::recorded::in_nested_live(cfg, &t))
+            if target
+                .as_ref()
+                .is_some_and(|t| crate::recorded::in_nested_live(cfg, t))
             {
+                report.nested += 1;
                 continue;
             }
             // Over `max_file_mb`, as the mirror leaves such a file out: one
@@ -271,12 +272,13 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
         kind: "backfill".into(),
         event: "init".into(),
         message: format!(
-            "ops={} commits={} held={} waiting={} too_large={} known={} unknown={} dropped={} range={}..{}",
+            "ops={} commits={} held={} waiting={} too_large={} nested={} known={} unknown={} dropped={} range={}..{}",
             report.ops,
             report.commits,
             report.held,
             report.waiting,
             report.too_large,
+            report.nested,
             report.known_versions,
             report.unknown_versions,
             report.failed_dropped,
@@ -308,7 +310,13 @@ fn check_clean(cfg: &Config, git: &Git, state: &State) -> Result<()> {
         let staged = String::from_utf8_lossy(&staged.stdout).trim().to_string();
         let head = git.run(&["rev-parse", "-q", "--verify", &format!("HEAD:{path}")])?;
         let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
-        Ok(staged.is_empty() || staged == *blob || staged == head)
+        // No staged version: fine only when HEAD has none either (else a
+        // deletion was staged by hand).
+        Ok(if staged.is_empty() {
+            head.is_empty()
+        } else {
+            staged == *blob || staged == head
+        })
     };
     let incoming = crate::sync::load_incoming(state)?;
     let out = git.run_ok(&["status", "--porcelain=v1", "-z", "--untracked-files=all"])?;

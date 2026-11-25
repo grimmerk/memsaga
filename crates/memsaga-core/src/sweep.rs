@@ -350,7 +350,12 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         Ok(l) => l,
         Err(e) => {
             // Under the lock again, so a sweep that succeeded meanwhile is
-            // not overwritten with this older failure (busy: not recorded).
+            // not overwritten with this older failure. A lock that was busy
+            // is not a failure (`record_sweep_error` skips it): no second wait.
+            let busy = format!("{e:#}").contains("could not acquire sweep lock");
+            if busy {
+                return Err(e);
+            }
             if let Ok(_lock) = state.lock(Duration::from_secs(5)) {
                 if state.mtime("last-sweep").is_none_or(|t| t < started_at) {
                     record_sweep_error(&state, &e);

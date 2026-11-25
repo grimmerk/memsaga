@@ -5609,7 +5609,10 @@ fn a_write_is_refused_while_a_change_to_the_file_cannot_be_brought_in() {
     assert_eq!(denied(&hook(&fx, &pre_tool("Read", &one, "s1"))), None);
 }
 
-/// Whether file modes are enforced here (a root user ignores them).
+/// Whether file modes are enforced here. A root user ignores them, so the
+/// permission tests cannot test anything: they fail, unless
+/// `MEMSAGA_TEST_AS_ROOT=1` says to skip them on purpose (a passing test
+/// must not hide that it tested nothing).
 fn modes_enforced(dir: &Path) -> bool {
     let probe = dir.join(".mode-probe");
     fs::write(&probe, "x").unwrap();
@@ -5617,6 +5620,10 @@ fn modes_enforced(dir: &Path) -> bool {
     let enforced = fs::read(&probe).is_err();
     chmod(&probe, 0o644);
     fs::remove_file(&probe).unwrap();
+    assert!(
+        enforced || std::env::var_os("MEMSAGA_TEST_AS_ROOT").is_some(),
+        "file modes are not enforced for this user (root?): run as a normal user, or set MEMSAGA_TEST_AS_ROOT=1 to skip the permission tests"
+    );
     enforced
 }
 
@@ -5784,8 +5791,7 @@ fn read_only_files_are_mirrored_and_updated() {
 fn one_file_that_cannot_be_read_does_not_stop_the_sweep() {
     let fx = fixture("turn", "");
     if !modes_enforced(fx.repo.parent().unwrap()) {
-        eprintln!("skipped: file modes are not enforced for this user");
-        return;
+        return; // a root user, with MEMSAGA_TEST_AS_ROOT set (see modes_enforced)
     }
     write(&fx.claude.join("skills/locked/inside.md"), "inside\n");
     write(&fx.claude.join("skills/foo/secret.md"), "s\n");
@@ -6166,8 +6172,7 @@ fn backfill_takes_an_edit_over_a_preview_copy_for_a_hand_edit() {
 fn a_root_that_cannot_be_listed_deletes_nothing_from_the_repository() {
     let fx = fixture("turn", "");
     if !modes_enforced(fx.repo.parent().unwrap()) {
-        eprintln!("skipped: file modes are not enforced for this user");
-        return;
+        return; // a root user, with MEMSAGA_TEST_AS_ROOT set (see modes_enforced)
     }
     run(&fx, &["init", "--no-backfill"]);
     let before = head_files(&fx);
@@ -6204,6 +6209,29 @@ fn a_folder_that_became_a_file_too_large_to_mirror_keeps_its_contents() {
     );
     assert!(
         files.contains(&"claude/skills/proj/notes.md".to_string()),
+        "{files:?}"
+    );
+}
+
+#[test]
+fn a_memory_folder_that_cannot_be_listed_is_kept_in_the_repository() {
+    let fx = fixture("turn", "");
+    if !modes_enforced(fx.repo.parent().unwrap()) {
+        return; // a root user, with MEMSAGA_TEST_AS_ROOT set (see modes_enforced)
+    }
+    run(&fx, &["init", "--no-backfill"]);
+    let memory = fx.claude.join("projects/-h-git-a/memory");
+    chmod(&memory, 0o000);
+    write(&fx.claude.join("skills/foo/more.md"), "more\n");
+    hook(&fx, &stop("s1"));
+    chmod(&memory, 0o755);
+    let files = head_files(&fx);
+    assert!(
+        files.contains(&"claude/skills/foo/more.md".to_string()),
+        "{files:?}"
+    );
+    assert!(
+        files.contains(&"claude/memory/-h-git-a/one.md".to_string()),
         "{files:?}"
     );
 }

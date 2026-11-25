@@ -308,7 +308,7 @@ impl<'a> Scope<'a> {
             .insert(rel.to_string_lossy().to_string());
     }
 
-    /// The links recorded so far.
+    /// Record a repository folder the mirror moved aside, and where to.
     pub fn note_set_aside(&self, from: PathBuf, to: PathBuf) {
         self.set_aside.borrow_mut().push((from, to));
     }
@@ -318,6 +318,7 @@ impl<'a> Scope<'a> {
         std::mem::take(&mut *self.set_aside.borrow_mut())
     }
 
+    /// The links recorded so far.
     pub fn take_link_over_folder(&self) -> Vec<String> {
         std::mem::take(&mut *self.link_over_folder.borrow_mut())
             .into_iter()
