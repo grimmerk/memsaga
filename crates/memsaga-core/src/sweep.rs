@@ -289,7 +289,7 @@ pub fn pending(
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
     };
     let _ = temp_index; // keep the helper for callers that need a single command
-    run(&["add", "-A", "--", "."])?;
+    run(&crate::git::add_all_args())?;
     for args in crate::git::renormalize_args(&cfg.repo, &restat) {
         let out = git_cmd().args(&args).output()?;
         if !out.status.success() {

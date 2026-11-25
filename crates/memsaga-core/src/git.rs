@@ -12,6 +12,23 @@ use std::process::{Command, Output};
 /// `git add --renormalize` argument lists for `paths` (files inside `repo`),
 /// at most 200 paths each. Each path is a literal pathspec built from the raw
 /// OS bytes, so a name holding `*`, `[` or invalid UTF-8 means exactly that
+/// `git add -A` over the whole repository, leaving out memsaga's own
+/// temporary files and folders (`mirror::TEMP_PREFIXES`): one left in the
+/// tree by a stop at the wrong moment, or a cleanup that failed, is never
+/// committed. One place for every `add -A` (sweep, backfill, `diff`).
+pub fn add_all_args() -> Vec<&'static str> {
+    vec![
+        "add",
+        "-A",
+        "--",
+        ".",
+        ":(exclude,glob)**/.memsaga-tmp-*",
+        ":(exclude,glob)**/.memsaga-tmp-*/**",
+        ":(exclude,glob)**/.memsaga-old-*",
+        ":(exclude,glob)**/.memsaga-old-*/**",
+    ]
+}
+
 /// file. Shared by the sweep and the `diff` preview.
 pub fn renormalize_args(repo: &Path, paths: &[PathBuf]) -> Vec<Vec<OsString>> {
     let specs: Vec<OsString> = paths
@@ -155,7 +172,7 @@ impl<'a> Git<'a> {
 
     /// Stage everything and report whether the index differs from HEAD.
     pub fn add_all_and_check(&self) -> Result<bool> {
-        self.run_ok(&["add", "-A", "--", "."])?;
+        self.run_ok(&add_all_args())?;
         self.has_staged_changes()
     }
 
