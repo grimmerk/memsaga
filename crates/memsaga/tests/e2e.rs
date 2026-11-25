@@ -668,13 +668,25 @@ fn install_registers_the_stable_path_link_not_a_versioned_folder() {
 
     let settings = fx.claude.join("settings.json");
     let registered = |exe: &Path, path: &str| -> String {
-        let out = Command::new(exe)
-            .env("MEMSAGA_CONFIG", &fx.cfg)
-            .env("PATH", path)
-            .args(["install", "--root"])
-            .arg(&fx.claude)
-            .output()
-            .unwrap();
+        // Linux refuses to run a file that is still open for writing ("Text
+        // file busy"): another test's process, forked while `fs::copy` above
+        // had the copy open, can hold that descriptor for a moment. Retry.
+        let mut tries = 0;
+        let out = loop {
+            match Command::new(exe)
+                .env("MEMSAGA_CONFIG", &fx.cfg)
+                .env("PATH", path)
+                .args(["install", "--root"])
+                .arg(&fx.claude)
+                .output()
+            {
+                Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < 20 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                other => break other.unwrap(),
+            }
+        };
         assert!(
             out.status.success(),
             "{}",
