@@ -32,7 +32,7 @@ memsaga keeps them as history:
         │
 ② when Claude's reply ends (a turn), a memsaga hook copies what changed into a git
   repository you own (the data repository) and commits it, named after the
-  conversation
+  session
         │
 ③ with an `origin` remote (on GitHub, for example), the commit is pushed
   there on its own; your other machines pull it, and an edit made on another
@@ -132,7 +132,7 @@ from three places, told apart by where a file lives:
    anywhere. memsaga commits what you add and never deletes it.
 
 One repository can hold every Claude Code account and machine you use, and
-each commit names the conversation that made it.
+each commit names the session it came from.
 
 ## Do you need memsaga?
 
@@ -1040,6 +1040,14 @@ or `manual:`. A commit made by a command you run yourself, such as
 `memsaga sync`, belongs to no session, so `Session:` and `Cwd:` read `none`;
 the merge memsaga makes when origin moved is just
 `sync: merge origin/<branch>`.
+
+A commit holds everything in scope that changed since the last one, so an
+edit you make by hand, a Bash command, or another session's edit made in the
+same moment lands under the session whose turn ended; that session's
+conversation shows which edits it made itself. memsaga records the session's
+title and ID, never the conversation: `claude --resume <Session>` reopens it
+while Claude Code still keeps the transcript (`cleanupPeriodDays`, 30 days by
+default).
 
 ### Uninstalling
 
