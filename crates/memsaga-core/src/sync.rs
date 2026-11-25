@@ -831,7 +831,8 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
         bail!(reason);
     }
     // Unresolved conflicts (a `git stash pop` by hand): git refuses the
-    // merge anyway; say why instead of git's message.
+    // merge anyway, before touching anything; this only names the reason
+    // in memsaga's words (a hook's log, `pull --json`'s merge_error).
     crate::recorded::check_no_conflicts(cfg, &git)?;
     let merge = git.run(&["merge", "--no-edit", "-q", "-m", &message, &remote])?;
     if !merge.status.success() {

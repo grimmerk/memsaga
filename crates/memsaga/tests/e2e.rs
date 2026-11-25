@@ -5948,7 +5948,7 @@ fn a_change_from_elsewhere_inside_a_nested_repository_is_not_brought_in() {
 }
 
 #[test]
-fn a_pull_names_unresolved_conflicts_before_merging() {
+fn a_pull_over_unresolved_conflicts_merges_nothing_and_names_them() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
     let (_origin, other) = with_origin(&fx);
