@@ -1098,10 +1098,6 @@ fn cmd_status(n: usize, json: bool) -> Result<()> {
     }
     println!("repo: {}", st.repo.display());
     if !st.initialised {
-        // A damaged repository keeps its state directory: say what failed.
-        if let Some(e) = &st.sweep_error {
-            println!("sweeps have been failing since {}: {}", e.since, e.message);
-        }
         println!("not initialised (run memsaga init)");
         return Ok(());
     }

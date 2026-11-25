@@ -289,7 +289,10 @@ pub fn pending(
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
     };
     let _ = temp_index; // keep the helper for callers that need a single command
-    run(&crate::git::add_all_args())?;
+    let unstage = crate::git::unstage_temp_args();
+    run(&unstage.iter().map(String::as_str).collect::<Vec<_>>())?;
+    let add = crate::git::add_all_args();
+    run(&add.iter().map(String::as_str).collect::<Vec<_>>())?;
     for args in crate::git::renormalize_args(&cfg.repo, &restat) {
         let out = git_cmd().args(&args).output()?;
         if !out.status.success() {
@@ -332,17 +335,14 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let started_at = SystemTime::now();
     let git = Git::new(&cfg.repo);
     let state = State::new(cfg.state_dir());
+    // No `.git` folder means no state folder either: nothing to record. A
+    // damaged repository still has its `.git` folder, and its failure is
+    // recorded below like any other.
     if !git.is_repo() {
-        let e = anyhow::anyhow!(
+        anyhow::bail!(
             "{} is not a git repository; run `memsaga init` first",
             cfg.repo.display()
         );
-        // Kept only where a state directory already exists (a damaged
-        // repository); never created for a folder that is not one.
-        if cfg.state_dir().is_dir() {
-            record_sweep_error(&state, &e);
-        }
-        return Err(e);
     }
     // A change of HEAD memsaga did not record is recorded first, so the
     // guard below protects what it brought (docs/two-way-sync.md).

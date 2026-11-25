@@ -9,26 +9,40 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// `git add --renormalize` argument lists for `paths` (files inside `repo`),
-/// at most 200 paths each. Each path is a literal pathspec built from the raw
-/// OS bytes, so a name holding `*`, `[` or invalid UTF-8 means exactly that
+/// memsaga's own temporary names (`mirror::TEMP_PREFIXES`) as pathspecs.
+const TEMP_GLOBS: [&str; 4] = [
+    "**/.memsaga-tmp-*",
+    "**/.memsaga-tmp-*/**",
+    "**/.memsaga-old-*",
+    "**/.memsaga-old-*/**",
+];
+
+/// `git rm --cached` of memsaga's temporary names already in the index (a
+/// sweep of an earlier version, stopped between its `add -A` and its
+/// commit, can leave one staged): run before `add_all_args`, whose
+/// exclusions leave an index entry as it is.
+pub fn unstage_temp_args() -> Vec<String> {
+    let mut v: Vec<String> = ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--"]
+        .map(String::from)
+        .to_vec();
+    v.extend(TEMP_GLOBS.iter().map(|g| format!(":(glob){g}")));
+    v
+}
+
 /// `git add -A` over the whole repository, leaving out memsaga's own
 /// temporary files and folders (`mirror::TEMP_PREFIXES`): one left in the
 /// tree by a stop at the wrong moment, or a cleanup that failed, is never
-/// committed. One place for every `add -A` (sweep, backfill, `diff`).
-pub fn add_all_args() -> Vec<&'static str> {
-    vec![
-        "add",
-        "-A",
-        "--",
-        ".",
-        ":(exclude,glob)**/.memsaga-tmp-*",
-        ":(exclude,glob)**/.memsaga-tmp-*/**",
-        ":(exclude,glob)**/.memsaga-old-*",
-        ":(exclude,glob)**/.memsaga-old-*/**",
-    ]
+/// committed. One place for every `add -A` (sweep, backfill, `diff`);
+/// `unstage_temp_args` runs first.
+pub fn add_all_args() -> Vec<String> {
+    let mut v: Vec<String> = ["add", "-A", "--", "."].map(String::from).to_vec();
+    v.extend(TEMP_GLOBS.iter().map(|g| format!(":(exclude,glob){g}")));
+    v
 }
 
+/// `git add --renormalize` argument lists for `paths` (files inside `repo`),
+/// at most 200 paths each. Each path is a literal pathspec built from the raw
+/// OS bytes, so a name holding `*`, `[` or invalid UTF-8 means exactly that
 /// file. Shared by the sweep and the `diff` preview.
 pub fn renormalize_args(repo: &Path, paths: &[PathBuf]) -> Vec<Vec<OsString>> {
     let specs: Vec<OsString> = paths
@@ -172,7 +186,10 @@ impl<'a> Git<'a> {
 
     /// Stage everything and report whether the index differs from HEAD.
     pub fn add_all_and_check(&self) -> Result<bool> {
-        self.run_ok(&add_all_args())?;
+        let unstage = unstage_temp_args();
+        self.run_ok(&unstage.iter().map(String::as_str).collect::<Vec<_>>())?;
+        let add = add_all_args();
+        self.run_ok(&add.iter().map(String::as_str).collect::<Vec<_>>())?;
         self.has_staged_changes()
     }
 

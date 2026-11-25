@@ -6306,3 +6306,22 @@ fn memsagas_own_leftovers_are_never_committed_and_are_removed() {
         assert!(!fx.repo.join(p).exists(), "{p} left behind");
     }
 }
+
+#[test]
+fn a_leftover_already_staged_is_taken_out_of_the_index() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    // An earlier version's sweep staged a leftover, then stopped before its commit.
+    let rel = "claude/skills/.memsaga-old-1-proj/notes.md";
+    write(&fx.repo.join(rel), "old\n");
+    git(&fx, &["add", "--", rel]);
+    write(&fx.claude.join("skills/foo/more.md"), "more\n");
+    hook(&fx, &stop("s1"));
+    let files = head_files(&fx);
+    assert!(
+        files.contains(&"claude/skills/foo/more.md".to_string()),
+        "{files:?}"
+    );
+    assert!(!files.iter().any(|f| f.contains(".memsaga-")), "{files:?}");
+    assert_eq!(git(&fx, &["diff", "--cached", "--name-only"]), "");
+}

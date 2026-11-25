@@ -165,8 +165,16 @@ pub fn is_temp_path(p: &Path) -> bool {
 /// Remove memsaga's temporary files and folders directly in `dir` (best
 /// effort; a failure is listed and they stay out of every commit anyway).
 fn clean_temp(dir: &Path, stats: &mut Stats) {
-    let Ok(rd) = fs::read_dir(dir) else {
-        return;
+    let rd = match fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            stats.errors.push((
+                dir.to_path_buf(),
+                format!("looking for leftover temporary copies: {e}"),
+            ));
+            return;
+        }
     };
     for e in rd.filter_map(|e| e.ok()) {
         let n = e.file_name().to_string_lossy().to_string();
@@ -224,8 +232,14 @@ pub fn sync_root(scope: &Scope, root: &Root, repo: &Path, stats: &mut Stats) -> 
     }
     // Files/dirs in the allowlist that disappeared from the root: remove copies.
     let base = repo.join(&root.label);
-    // A folder an entry replaced, left beside it by a stop or a failed cleanup.
-    clean_temp(&base, stats);
+    // A folder an entry replaced, left beside it by a stop or a failed
+    // cleanup. Never through a link: it could point outside the repository.
+    let base_is_link = base
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink());
+    if !base_is_link && !scope.through_link(&base) {
+        clean_temp(&base, stats);
+    }
     for name in scope.cfg.files.iter().chain(&scope.cfg.dirs) {
         let src = root.path.join(name);
         // Gone only when the file system says so: a permission error must
