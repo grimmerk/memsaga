@@ -5641,6 +5641,12 @@ fn a_nested_git_repository_is_mirrored_on_neither_side() {
         "ref: refs/heads/main\n",
     );
     write(&fx.claude.join("skills/clone/a.md"), "a\n");
+    // A configured folder that is a repository itself.
+    write(
+        &fx.claude.join("agents/.git/HEAD"),
+        "ref: refs/heads/main\n",
+    );
+    write(&fx.claude.join("agents/x.md"), "x\n");
     write(&fx.claude.join("skills/foo/more.md"), "more\n");
     hook(&fx, &stop("s1"));
     let files = head_files(&fx);
@@ -5649,7 +5655,9 @@ fn a_nested_git_repository_is_mirrored_on_neither_side() {
         "{files:?}"
     );
     assert!(
-        !files.iter().any(|f| f.starts_with("claude/skills/clone")),
+        !files
+            .iter()
+            .any(|f| f.starts_with("claude/skills/clone") || f.starts_with("claude/agents")),
         "{files:?}"
     );
     // Neither copied into nor deleted from.
@@ -5669,12 +5677,19 @@ fn a_nested_git_repository_is_mirrored_on_neither_side() {
         .iter()
         .map(|x| x.as_str().unwrap())
         .collect();
-    assert_eq!(nested, ["claude/skills/clone", "claude/skills/proj"]);
+    assert_eq!(
+        nested,
+        ["claude/agents", "claude/skills/clone", "claude/skills/proj"]
+    );
     assert!(report(&fx).contains("git repositories of their own"));
-    // The second account links to the same skills: nothing new to commit.
-    let before = commits(&fx);
+    // Work inside a clone (a fetch, an edit) does not start a sweep.
+    let events = || fs::read_to_string(fx.repo.join(".git/memsaga/events.jsonl")).unwrap();
+    let before = events();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    write(&fx.claude.join("skills/clone/a.md"), "a, edited\n");
+    write(&fx.claude.join("skills/clone/.git/FETCH_HEAD"), "x\n");
     hook(&fx, &stop("s1"));
-    assert_eq!(commits(&fx), before);
+    assert_eq!(events(), before);
 }
 
 #[test]
