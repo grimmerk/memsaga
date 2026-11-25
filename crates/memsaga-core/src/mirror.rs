@@ -41,9 +41,6 @@ pub struct Stats {
     /// Live folders holding `.git` (git repositories of their own), not
     /// mirrored: their repository paths, left as they are.
     pub nested: Vec<PathBuf>,
-    /// Repository folders holding a `.git` copy (made by versions that copied
-    /// one), moved aside instead of deleted: from, to.
-    pub set_aside: Vec<(PathBuf, PathBuf)>,
 }
 
 impl Stats {
@@ -116,8 +113,15 @@ pub fn sync_self_and_extras(scope: &Scope, stats: &mut Stats) -> Result<()> {
         sources.push((src, dst));
     }
     for (src, dst) in sources {
-        let Ok(meta) = fs::metadata(&src) else {
-            continue;
+        let meta = match fs::metadata(&src) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                stats
+                    .errors
+                    .push((dst, format!("reading {}: {e}", src.display())));
+                continue;
+            }
         };
         if !meta.is_file() || over_limit(scope, &dst, meta.len(), stats) {
             continue;
@@ -234,7 +238,18 @@ fn set_aside_git_copies(scope: &Scope, top: &Path, stats: &mut Stats) -> Vec<Pat
     let mut found: Vec<PathBuf> = Vec::new();
     let mut walk = WalkDir::new(top).follow_links(false).into_iter();
     while let Some(item) = walk.next() {
-        let Ok(item) = item else { continue };
+        let item = match item {
+            Ok(item) => item,
+            Err(e) => {
+                // Unknown below here: a `.git` copy may be there; left as it is.
+                let at = e.path().unwrap_or(top).to_path_buf();
+                stats
+                    .errors
+                    .push((at.clone(), format!("looking for .git copies: {e}")));
+                failed.push(at);
+                continue;
+            }
+        };
         if item.file_type().is_dir() && is_nested_repo(item.path()) {
             found.push(item.path().to_path_buf());
             walk.skip_current_dir();
@@ -285,7 +300,7 @@ fn set_aside_git_copies(scope: &Scope, top: &Path, stats: &mut Stats) -> Vec<Pat
             .map_or(Ok(()), fs::create_dir_all)
             .and_then(|()| fs::rename(&from, &to));
         match moved {
-            Ok(()) => stats.set_aside.push((from, to)),
+            Ok(()) => scope.note_set_aside(from, to),
             Err(e) => {
                 stats.errors.push((
                     from.clone(),

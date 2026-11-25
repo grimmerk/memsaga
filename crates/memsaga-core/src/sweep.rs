@@ -240,13 +240,14 @@ pub fn pending(
         event: "diff".into(),
         ..Default::default()
     };
-    log_set_aside(&state, &preview, &stats.set_aside)?;
+    log_set_aside(&state, &preview, &scope.take_set_aside())?;
     refreshed?;
     // Only after a complete mirror: a partial list would drop real entries.
     if let Some(g) = &scope.guard {
         crate::sync::save_absent(&state, &g.take_absent())?;
     }
     crate::sync::save_link_over_folder(&state, &scope.take_link_over_folder())?;
+    save_mirror_lists(cfg, &state, &preview, &stats)?;
     let restat = stats.restat;
     // Stage into a throwaway index so new files show up in the diff without
     // touching whatever the user may have staged in the real one.
@@ -395,7 +396,7 @@ fn sweep_locked(
     // What exists live now, this machine has had: from here on its absence
     // is a deletion (grimmerk/memsaga#22).
     crate::sync::mark_seen(cfg, &state, &stats.present)?;
-    log_set_aside(&state, attrib, &stats.set_aside)?;
+    log_set_aside(&state, attrib, &scope.take_set_aside())?;
     refreshed?;
     if let Some(g) = &scope.guard {
         if crate::sync::record_hand_edits(&mut incoming, g.take_found()) > 0 {

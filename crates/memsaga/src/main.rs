@@ -673,6 +673,14 @@ fn cmd_init(
                 if r.held == 1 { "" } else { "s" }
             );
         }
+        if r.too_large > 0 {
+            println!(
+                "backfill: {} old version{} left out because larger than max_file_mb = {}",
+                r.too_large,
+                if r.too_large == 1 { "" } else { "s" },
+                cfg.max_file_mb
+            );
+        }
     } else if !no_backfill {
         println!("repo already has commits; skipping backfill (run `memsaga backfill` explicitly to append)");
     }
@@ -1146,14 +1154,11 @@ fn cmd_status(n: usize, json: bool) -> Result<()> {
         println!("nothing committed by the last sweep: {e}");
     }
     if let Some(e) = &st.sweep_error {
-        println!(
-            "sweeps are failing since {}, nothing is committed: {}",
-            e.since, e.message
-        );
+        println!("sweeps have been failing since {}: {}", e.since, e.message);
     }
     if !st.mirror_errors.is_empty() {
         println!(
-            "could not be mirrored by the last sweep, which committed the rest ({} path(s); tried again every 10 minutes):",
+            "could not be mirrored by the last complete mirror, which went on with the rest ({} path(s); tried again every 10 minutes):",
             st.mirror_errors.len()
         );
         for e in &st.mirror_errors {

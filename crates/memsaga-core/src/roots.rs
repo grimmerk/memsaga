@@ -241,6 +241,9 @@ pub struct Scope<'a> {
     /// Repository links (repo-relative) the mirror did not write under,
     /// because the live side has a folder there (grimmerk/memsaga#29).
     link_over_folder: RefCell<BTreeSet<String>>,
+    /// Repository folders holding a `.git` copy that the mirror moved aside:
+    /// from, to (`mirror::set_aside_git_copies`).
+    set_aside: RefCell<Vec<(PathBuf, PathBuf)>>,
 }
 
 impl<'a> Scope<'a> {
@@ -252,6 +255,7 @@ impl<'a> Scope<'a> {
             exclude_paths: build_globset(&cfg.exclude_paths),
             guard: None,
             link_over_folder: RefCell::new(BTreeSet::new()),
+            set_aside: RefCell::new(Vec::new()),
         }
     }
 
@@ -305,6 +309,15 @@ impl<'a> Scope<'a> {
     }
 
     /// The links recorded so far.
+    pub fn note_set_aside(&self, from: PathBuf, to: PathBuf) {
+        self.set_aside.borrow_mut().push((from, to));
+    }
+
+    /// The folders moved aside so far.
+    pub fn take_set_aside(&self) -> Vec<(PathBuf, PathBuf)> {
+        std::mem::take(&mut *self.set_aside.borrow_mut())
+    }
+
     pub fn take_link_over_folder(&self) -> Vec<String> {
         std::mem::take(&mut *self.link_over_folder.borrow_mut())
             .into_iter()

@@ -6014,8 +6014,9 @@ fn a_pull_over_unresolved_conflicts_merges_nothing_and_names_them() {
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("unresolved conflicts"), "{err}");
-    // Nothing merged.
-    assert!(!git(&fx, &["log", "-1", "--format=%s"]).contains("edited elsewhere"));
+    // Nothing merged, and the conflict is left as it was.
+    assert!(!git(&fx, &["ls-files", "-u"]).is_empty());
+    assert!(!git(&fx, &["show", "HEAD:claude/CLAUDE.md"]).contains("# from github"));
 }
 
 #[test]

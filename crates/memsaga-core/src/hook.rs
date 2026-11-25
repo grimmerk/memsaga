@@ -500,7 +500,7 @@ fn sweep_error_notice(state: &State) -> Option<String> {
     }
     match err {
         Some(e) => Some(format!(
-            "memsaga: sweeps have been failing since {}, nothing is committed: {}; see `memsaga status` and memsaga.log",
+            "memsaga: sweeps have been failing since {}: {}; see `memsaga status` and memsaga.log",
             e.since,
             cut(&e.message, 300)
         )),
@@ -512,20 +512,42 @@ fn sweep_error_notice(state: &State) -> Option<String> {
 /// distinct set, and again once a day), files over `max_file_mb` and nested
 /// repositories (once per distinct set).
 fn mirror_notice(cfg: &Config, state: &State) -> Option<String> {
-    let errors = sweep::load_mirror_errors(state);
+    // While sweeps fail, their notice says it; the list is the last
+    // complete mirror's.
+    let errors = if sweep::load_sweep_error(state).is_some() {
+        Vec::new()
+    } else {
+        sweep::load_mirror_errors(state)
+    };
     let large = sweep::load_too_large(state);
     let nested = sweep::load_nested(state);
-    let key = serde_json::to_string(&(
-        errors.iter().map(|e| &e.path).collect::<Vec<_>>(),
-        (!errors.is_empty()).then(today),
-        large.iter().map(|f| &f.path).collect::<Vec<_>>(),
-        &nested,
-    ))
-    .unwrap_or_default();
-    if state.read_marker("mirror-reported").unwrap_or_default() == key {
-        return None;
-    }
-    let _ = state.write_marker("mirror-reported", &key);
+    // Two keys: the errors repeat daily, the left-out sets only on a change.
+    let changed = |marker: &str, key: String| {
+        if state.read_marker(marker).unwrap_or_default() == key {
+            return false;
+        }
+        let _ = state.write_marker(marker, &key);
+        true
+    };
+    let errors_new = changed(
+        "mirror-reported",
+        serde_json::to_string(&(
+            errors.iter().map(|e| &e.path).collect::<Vec<_>>(),
+            (!errors.is_empty()).then(today),
+        ))
+        .unwrap_or_default(),
+    );
+    let left_out_new = changed(
+        "left-out-reported",
+        serde_json::to_string(&(large.iter().map(|f| &f.path).collect::<Vec<_>>(), &nested))
+            .unwrap_or_default(),
+    );
+    let errors = if errors_new { errors } else { Vec::new() };
+    let (large, nested) = if left_out_new {
+        (large, nested)
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let names = |v: Vec<&str>| {
         let n = v.len();
         let mut s = v.into_iter().take(3).collect::<Vec<_>>().join(", ");
@@ -537,7 +559,7 @@ fn mirror_notice(cfg: &Config, state: &State) -> Option<String> {
     let lines: Vec<String> = [
         errors.first().map(|first| {
             format!(
-                "memsaga: {} path{} could not be mirrored, the rest was committed ({}: {}); see `memsaga status`",
+                "memsaga: {} path{} could not be mirrored, the sweep went on with the rest ({}: {}); see `memsaga status`",
                 errors.len(),
                 if errors.len() == 1 { "" } else { "s" },
                 first.path,

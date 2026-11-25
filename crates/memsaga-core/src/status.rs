@@ -51,8 +51,9 @@ pub struct Status {
     /// Set while sweeps fail: since when, and the latest error. Removed by
     /// the next sweep that succeeds.
     pub sweep_error: Option<crate::sweep::SweepError>,
-    /// Repository paths the last sweep could not mirror (it committed the
-    /// rest): path and reason. Tried again every 10 minutes.
+    /// Repository paths the last complete mirror could not copy, link or
+    /// delete (it went on with the rest): path and reason. Tried again every
+    /// 10 minutes.
     pub mirror_errors: Vec<crate::sweep::MirrorError>,
     /// Live files over `max_file_mb`, not mirrored: repository path and size.
     pub too_large: Vec<crate::sweep::TooLarge>,

@@ -107,7 +107,10 @@ Claude Code ─────────┬────────────�
    `.git` copy (versions before 0.1.6 copied it; git then sees a gitlink, or
    fails to add a repository with no commit) is moved whole to
    `.git/memsaga/stale/<time>/`, since its `.git` may hold the only copy of
-   commits. Tests: `a_nested_git_repository_is_mirrored_on_neither_side`,
+   commits, also before a file or link replaces the folder. It is left in
+   place, and listed as a mirror error, when it holds files waiting for
+   `memsaga sync`, when it is not inside a root's subtree, when part of it
+   cannot be read, or when the move fails. Tests: `a_nested_git_repository_is_mirrored_on_neither_side`,
    `a_git_copy_left_in_the_repository_is_moved_aside_and_sweeps_go_on`,
    `a_change_from_elsewhere_inside_a_nested_repository_is_not_brought_in`.
 

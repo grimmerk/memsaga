@@ -676,13 +676,13 @@ impl Guard {
                 .is_some_and(|stripped| stripped.as_bytes() == d.as_slice())
     }
 
-    /// May the mirror delete `path` (a file, or a directory and everything
-    /// under it)? Refused when any file under it is protected or hand-edited.
     /// Is any repository file at or under `path` on the incoming list?
     pub fn protects_under(&self, path: &Path) -> bool {
         self.protected.iter().any(|p| p.starts_with(path))
     }
 
+    /// May the mirror delete `path` (a file, or a directory and everything
+    /// under it)? Refused when any file under it is protected or hand-edited.
     pub fn allows_remove(&self, path: &Path) -> bool {
         self.allows_remove_checked(path, true)
     }

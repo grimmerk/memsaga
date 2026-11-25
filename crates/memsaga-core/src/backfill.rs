@@ -264,11 +264,12 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
         kind: "backfill".into(),
         event: "init".into(),
         message: format!(
-            "ops={} commits={} held={} waiting={} known={} unknown={} dropped={} range={}..{}",
+            "ops={} commits={} held={} waiting={} too_large={} known={} unknown={} dropped={} range={}..{}",
             report.ops,
             report.commits,
             report.held,
             report.waiting,
+            report.too_large,
             report.known_versions,
             report.unknown_versions,
             report.failed_dropped,
