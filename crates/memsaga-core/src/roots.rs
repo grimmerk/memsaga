@@ -61,7 +61,7 @@ impl Entry {
 /// stored as `HOME-git-webapp`, so the same project shares one directory on
 /// machines whose home differs (another user name, Linux's `/home/...`).
 /// A live name always starts with `-` (an absolute path starts with `/`), so
-/// a name starting with the token is never a live one. grimmerk/memsaga-private#25.
+/// a name starting with the token is never a live one.
 pub const HOME_TOKEN: &str = "HOME";
 
 struct HomeNames {
@@ -190,7 +190,7 @@ pub fn repo_rel_of_live(rel: &Path) -> PathBuf {
 }
 
 /// Inverse of `repo_rel_of_live`: `memory/<name>/x.md` -> `projects/<slug>/memory/x.md`.
-/// A name stored before grimmerk/memsaga-private#25 (a live name) maps to itself.
+/// A name stored before the home-relative names (a live name) maps to itself.
 pub fn live_rel_of_repo(rel: &Path) -> PathBuf {
     let parts: Vec<_> = rel.iter().collect();
     if parts.len() >= 2 && parts[0] == MEMORY_DIR {
@@ -204,8 +204,8 @@ pub fn live_rel_of_repo(rel: &Path) -> PathBuf {
 }
 
 /// Where a memory file was stored in older layouts, so revisions from before
-/// a change can still be read: under its live name (before grimmerk/memsaga-private#25), and
-/// at `<label>/projects/<slug>/memory/x.md` (before 2026-09-18). Empty for
+/// a change can still be read: under its live name (before the home-relative
+/// names), and at `<label>/projects/<slug>/memory/x.md` (before 2026-09-18). Empty for
 /// anything that is not memory.
 pub fn legacy_repo_paths(repo_rel: &Path) -> Vec<PathBuf> {
     let parts: Vec<_> = repo_rel.iter().collect();
@@ -241,6 +241,9 @@ pub struct Scope<'a> {
     /// Repository links (repo-relative) the mirror did not write under,
     /// because the live side has a folder there (grimmerk/memsaga#29).
     link_over_folder: RefCell<BTreeSet<String>>,
+    /// Repository folders holding a `.git` copy that the mirror moved aside:
+    /// from, to (`mirror::set_aside_git_copies`).
+    set_aside: RefCell<Vec<(PathBuf, PathBuf)>>,
 }
 
 impl<'a> Scope<'a> {
@@ -252,6 +255,7 @@ impl<'a> Scope<'a> {
             exclude_paths: build_globset(&cfg.exclude_paths),
             guard: None,
             link_over_folder: RefCell::new(BTreeSet::new()),
+            set_aside: RefCell::new(Vec::new()),
         }
     }
 
@@ -302,6 +306,16 @@ impl<'a> Scope<'a> {
         self.link_over_folder
             .borrow_mut()
             .insert(rel.to_string_lossy().to_string());
+    }
+
+    /// Record a repository folder the mirror moved aside, and where to.
+    pub fn note_set_aside(&self, from: PathBuf, to: PathBuf) {
+        self.set_aside.borrow_mut().push((from, to));
+    }
+
+    /// The folders moved aside so far.
+    pub fn take_set_aside(&self) -> Vec<(PathBuf, PathBuf)> {
+        std::mem::take(&mut *self.set_aside.borrow_mut())
     }
 
     /// The links recorded so far.

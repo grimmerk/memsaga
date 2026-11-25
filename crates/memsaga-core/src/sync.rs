@@ -60,7 +60,7 @@ pub fn load_incoming(state: &State) -> Result<Incoming> {
 }
 
 /// Rewrite entries recorded under a memory directory's live name to its
-/// repository name (grimmerk/memsaga-private#25), so the sweep that renames the directory
+/// home-relative repository name, so the sweep that renames the directory
 /// protects and settles the same files. The waiting repository file moves
 /// with its entry: the mirror never writes a protected path, and it prunes
 /// the old directory, so a file left there would be lost and settle would
@@ -676,6 +676,11 @@ impl Guard {
                 .is_some_and(|stripped| stripped.as_bytes() == d.as_slice())
     }
 
+    /// Is any repository file at or under `path` on the incoming list?
+    pub fn protects_under(&self, path: &Path) -> bool {
+        self.protected.iter().any(|p| p.starts_with(path))
+    }
+
     /// May the mirror delete `path` (a file, or a directory and everything
     /// under it)? Refused when any file under it is protected or hand-edited.
     pub fn allows_remove(&self, path: &Path) -> bool {
@@ -830,6 +835,10 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
     if let Some(reason) = crate::recorded::blocker(cfg) {
         bail!(reason);
     }
+    // Unresolved conflicts (a `git stash pop` by hand): git refuses the
+    // merge anyway, before touching anything; this only names the reason
+    // in memsaga's words (a hook's log, `pull --json`'s merge_error).
+    crate::recorded::check_no_conflicts(cfg, &git)?;
     let merge = git.run(&["merge", "--no-edit", "-q", "-m", &message, &remote])?;
     if !merge.status.success() {
         let conflicted: Vec<String> = git
@@ -1105,6 +1114,11 @@ fn settle_one(
                 "its root does not exist on this machine".into(),
             ));
         }
+    }
+    // Inside a git repository of its own here (one that became one after
+    // the entry was recorded): left alone on both sides, so the entry goes.
+    if crate::recorded::in_nested_live(cfg, &target) {
+        return Ok(Outcome::Done(Done::InStep));
     }
     let repo_path = cfg.repo.join(rel);
     // Under a link in the repository the "repository file" is whatever the

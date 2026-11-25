@@ -251,7 +251,14 @@ merge, settle and per-file check takes the sweep lock through one function,
      two paths standing for one live file. Either way the new path's base
      is the old path's version, so settle takes the move as an edit of the
      live file;
-   - a nested repository (a gitlink), which has no file to write.
+   - a nested repository (a gitlink), which has no file to write;
+   - a file inside a live folder that is a git repository of its own on
+     this machine (it holds `.git`): the mirror never copies from the live
+     folder or deletes what the repository holds under its name
+     (`architecture.md`, invariant 8; only a `.git` copy an older version
+     put in the repository is moved aside), so a change from elsewhere does
+     not reach its working tree either; settle drops an entry recorded
+     before the folder became a repository.
 5. When `HEAD` no longer contains the recorded head (history rewritten by a
    `git reset` or a `git pull --rebase`), only the files changed on `HEAD`'s
    side of the two commits' merge base count. A reset back to an older

@@ -445,7 +445,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Backfill { group_window } => {
             let cfg = Config::load()?;
             let r = backfill::backfill(&cfg, group_window)?;
-            println!("backfill: {} ops, {} commits, {} versions known / {} unknown, {} failed calls dropped, {} held back, {} left out (waiting for the live side), {} .. {}", r.ops, r.commits, r.known_versions, r.unknown_versions, r.failed_dropped, r.held, r.waiting, r.first_ts, r.last_ts);
+            println!("backfill: {} ops, {} commits, {} versions known / {} unknown, {} failed calls dropped, {} held back, {} left out (waiting for the live side), {} over max_file_mb, {} in nested repositories, {} .. {}", r.ops, r.commits, r.known_versions, r.unknown_versions, r.failed_dropped, r.held, r.waiting, r.too_large, r.nested, r.first_ts, r.last_ts);
             Ok(())
         }
         Cmd::Companions { repo } => {
@@ -671,6 +671,21 @@ fn cmd_init(
                 "backfill: {} old version{} left out because a new line looked like a secret",
                 r.held,
                 if r.held == 1 { "" } else { "s" }
+            );
+        }
+        if r.nested > 0 {
+            println!(
+                "backfill: {} old version{} left out because inside a git repository of its own",
+                r.nested,
+                if r.nested == 1 { "" } else { "s" }
+            );
+        }
+        if r.too_large > 0 {
+            println!(
+                "backfill: {} old version{} left out because larger than max_file_mb = {}",
+                r.too_large,
+                if r.too_large == 1 { "" } else { "s" },
+                cfg.max_file_mb
             );
         }
     } else if !no_backfill {
@@ -1144,6 +1159,41 @@ fn cmd_status(n: usize, json: bool) -> Result<()> {
     }
     if let Some(e) = &st.held_error {
         println!("nothing committed by the last sweep: {e}");
+    }
+    if let Some(e) = &st.sweep_error {
+        println!("sweeps have been failing since {}: {}", e.since, e.message);
+    }
+    if !st.mirror_errors.is_empty() {
+        println!(
+            "could not be mirrored by the last complete mirror, which went on with the rest ({} path(s); tried again every 10 minutes):",
+            st.mirror_errors.len()
+        );
+        for e in &st.mirror_errors {
+            println!("  {}: {}", e.path, e.error);
+        }
+    }
+    if !st.too_large.is_empty() {
+        println!(
+            "not mirrored, larger than max_file_mb at the last sweep (now {}; {} file(s)):",
+            cfg.max_file_mb,
+            st.too_large.len()
+        );
+        for f in &st.too_large {
+            println!(
+                "  {}  ({:.1} MB)",
+                f.path,
+                f.bytes as f64 / (1u64 << 20) as f64
+            );
+        }
+    }
+    if !st.nested_repos.is_empty() {
+        println!(
+            "not mirrored, git repositories of their own (a folder holding .git; {}):",
+            st.nested_repos.len()
+        );
+        for f in &st.nested_repos {
+            println!("  {f}");
+        }
     }
     if !st.held.is_empty() {
         println!(

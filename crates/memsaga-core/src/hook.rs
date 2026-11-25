@@ -424,6 +424,8 @@ pub fn report(cfg: &Config) -> Option<String> {
         warning,
         notice,
         held_notice(&state),
+        sweep_error_notice(&state),
+        mirror_notice(&state),
         incoming_notice(&state),
     ]
     .into_iter()
@@ -475,6 +477,124 @@ fn held_notice(state: &State) -> Option<String> {
     .flatten()
     .collect();
     (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+/// While sweeps fail: one line per distinct error, and again once a day
+/// while it lasts; one line when they work again.
+fn sweep_error_notice(state: &State) -> Option<String> {
+    let err = sweep::load_sweep_error(state);
+    let key = err
+        .as_ref()
+        .map(|e| format!("{}\n{}", e.message, today()))
+        .unwrap_or_default();
+    let before = state
+        .read_marker("sweep-error-reported")
+        .unwrap_or_default();
+    if before == key {
+        return None;
+    }
+    if key.is_empty() {
+        state.remove("sweep-error-reported");
+    } else {
+        let _ = state.write_marker("sweep-error-reported", &key);
+    }
+    match err {
+        Some(e) => Some(format!(
+            "memsaga: sweeps have been failing since {}: {}; see `memsaga status` and memsaga.log",
+            e.since,
+            cut(&e.message, 300)
+        )),
+        None => Some("memsaga: sweeps are committing again".to_string()),
+    }
+}
+
+/// What the last sweep left out: files it could not mirror (once per
+/// distinct set, and again once a day), files over `max_file_mb` and nested
+/// repositories (once per distinct set).
+fn mirror_notice(state: &State) -> Option<String> {
+    // While sweeps fail, their notice says it; the list is the last
+    // complete mirror's.
+    let errors = if sweep::load_sweep_error(state).is_some() {
+        Vec::new()
+    } else {
+        sweep::load_mirror_errors(state)
+    };
+    let large = sweep::load_too_large(state);
+    let nested = sweep::load_nested(state);
+    // Two keys: the errors repeat daily, the left-out sets only on a change.
+    let changed = |marker: &str, key: String| {
+        if state.read_marker(marker).unwrap_or_default() == key {
+            return false;
+        }
+        let _ = state.write_marker(marker, &key);
+        true
+    };
+    let errors_new = changed(
+        "mirror-reported",
+        serde_json::to_string(&(
+            errors.iter().map(|e| &e.path).collect::<Vec<_>>(),
+            (!errors.is_empty()).then(today),
+        ))
+        .unwrap_or_default(),
+    );
+    let left_out_new = changed(
+        "left-out-reported",
+        serde_json::to_string(&(large.iter().map(|f| &f.path).collect::<Vec<_>>(), &nested))
+            .unwrap_or_default(),
+    );
+    let errors = if errors_new { errors } else { Vec::new() };
+    let (large, nested) = if left_out_new {
+        (large, nested)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let names = |v: Vec<&str>| {
+        let n = v.len();
+        let mut s = v.into_iter().take(3).collect::<Vec<_>>().join(", ");
+        if n > 3 {
+            s.push_str(", ...");
+        }
+        s
+    };
+    let lines: Vec<String> = [
+        errors.first().map(|first| {
+            format!(
+                "memsaga: {} path{} could not be mirrored, the sweep went on with the rest ({}: {}); see `memsaga status`",
+                errors.len(),
+                if errors.len() == 1 { "" } else { "s" },
+                first.path,
+                cut(&first.error, 200)
+            )
+        }),
+        (!large.is_empty()).then(|| {
+            format!(
+                "memsaga: not mirrored, larger than max_file_mb at the last sweep: {}",
+                names(large.iter().map(|f| f.path.as_str()).collect())
+            )
+        }),
+        (!nested.is_empty()).then(|| {
+            format!(
+                "memsaga: not mirrored, git repositories of their own: {}",
+                names(nested.iter().map(String::as_str).collect())
+            )
+        }),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+fn today() -> String {
+    chrono::Local::now().format("%Y-%m-%d").to_string()
+}
+
+/// At most `max` characters, `...` marking a cut.
+fn cut(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    s.chars().take(max).collect::<String>() + "..."
 }
 
 /// One line when the set of files waiting for `memsaga sync` changed since

@@ -255,6 +255,12 @@ pub fn record_moves(
         let Some(target) = target_of(&c.path) else {
             continue;
         };
+        // Inside a git repository of its own on this machine: the mirror
+        // leaves it alone on both sides, so a change from elsewhere does not
+        // reach its working tree either.
+        if in_nested_live(cfg, &target) {
+            continue;
+        }
         out.changed.push(c.path.clone());
         if incoming.contains_key(&c.path) {
             continue;
@@ -296,6 +302,48 @@ pub fn record_moves(
     drop(cat);
     restore_own_copies(cfg, state, git, to, &out.recorded, &present)?;
     Ok(out)
+}
+
+/// Is the live file of `target` inside a folder that holds `.git`?
+pub(crate) fn in_nested_live(cfg: &Config, target: &sync::Target) -> bool {
+    let sync::Target::Root(loc) = target else {
+        return false;
+    };
+    let live = target.live();
+    // The root the repository path names: roots may nest in one another.
+    let label = loc.repo_rel.components().next().map(|c| c.as_os_str());
+    let Some(root) = cfg
+        .roots
+        .iter()
+        .find(|r| Some(std::ffi::OsStr::new(&r.label)) == label)
+    else {
+        return false;
+    };
+    // Looked for within the mirrored entry only, as `sync_dir` does: a
+    // memory folder's entry is `projects/<slug>/memory`, a folder's its
+    // top-level name.
+    let rel = live.strip_prefix(&root.path).unwrap_or(live);
+    let mut parts = rel.components();
+    let configured = cfg
+        .dirs
+        .iter()
+        .filter(|d| rel.starts_with(d.as_str()))
+        .max_by_key(|d| d.len());
+    let entry = match parts.next().map(|c| c.as_os_str()) {
+        _ if configured.is_some() => root.path.join(configured.unwrap()),
+        Some(first) if first == "projects" => {
+            let (Some(slug), Some(memory)) = (parts.next(), parts.next()) else {
+                return false;
+            };
+            root.path
+                .join("projects")
+                .join(slug.as_os_str())
+                .join(memory.as_os_str())
+        }
+        Some(first) => root.path.join(first),
+        None => return false,
+    };
+    crate::mirror::is_nested_repo(&entry) || crate::mirror::in_nested_repo(&entry, live)
 }
 
 /// Is `path`, deleted at `to`, a second copy of a live file whose own

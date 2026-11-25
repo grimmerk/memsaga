@@ -2956,22 +2956,22 @@ fn a_sweep_that_fails_after_mirroring_leaves_no_false_hand_edit() {
 
 #[test]
 fn a_mirror_that_fails_part_way_still_records_what_it_wrote() {
-    // The first root's copy is written, then the second root cannot be read:
-    // the mirror stops with an error, and the copy it did write must still be
-    // known as memsaga's own.
-    use std::os::unix::fs::PermissionsExt;
+    // The roots' copies are written, then the index cannot be: the mirror
+    // stops with an error, and the copy it did write must still be known as
+    // memsaga's own. (One file that cannot be read no longer stops it.)
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
     let live = fx.claude.join("projects/-h-git-a/memory/one.md");
-    let unreadable = fx.work.join("projects/-h-git-a/memory/w.md");
     let tick = || std::thread::sleep(std::time::Duration::from_millis(1100));
     tick();
     fs::write(&live, "fact v2\n").unwrap();
-    fs::write(&unreadable, "work fact v2\n").unwrap();
-    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+    let index = fx.repo.join("index.md");
+    fs::remove_file(&index).unwrap();
+    write(&index.join("in-the-way"), "x\n");
     let failed = cmd(&fx).args(["sweep"]).output().unwrap();
-    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644)).unwrap();
-    assert!(!failed.status.success(), "the second root should fail");
+    fs::remove_dir_all(&index).unwrap();
+    git(&fx, &["checkout", "-q", "--", "index.md"]);
+    assert!(!failed.status.success(), "writing the index should fail");
     assert_eq!(
         fs::read_to_string(fx.repo.join("claude/memory/-h-git-a/one.md")).unwrap(),
         "fact v2\n",
@@ -5607,4 +5607,669 @@ fn a_write_is_refused_while_a_change_to_the_file_cannot_be_brought_in() {
     let reason = denied(&hook(&fx, &pre_tool("Write", &one, "s1"))).expect("refused");
     assert!(reason.contains("could not bring in"), "{reason}");
     assert_eq!(denied(&hook(&fx, &pre_tool("Read", &one, "s1"))), None);
+}
+
+/// Whether file modes are enforced here. A root user ignores them, so the
+/// permission tests cannot test anything: they fail, unless
+/// `MEMSAGA_TEST_AS_ROOT=1` says to skip them on purpose (a passing test
+/// must not hide that it tested nothing).
+fn modes_enforced(dir: &Path) -> bool {
+    let probe = dir.join(".mode-probe");
+    fs::write(&probe, "x").unwrap();
+    chmod(&probe, 0o000);
+    let enforced = fs::read(&probe).is_err();
+    chmod(&probe, 0o644);
+    fs::remove_file(&probe).unwrap();
+    assert!(
+        enforced || std::env::var_os("MEMSAGA_TEST_AS_ROOT").is_some(),
+        "file modes are not enforced for this user (root?): run as a normal user, or set MEMSAGA_TEST_AS_ROOT=1 to skip the permission tests"
+    );
+    enforced
+}
+
+fn chmod(p: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(p, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// What the reporter prints now (the `systemMessage` text), or "".
+fn report(fx: &Fx) -> String {
+    let out = run(fx, &["report"]);
+    if out.trim().is_empty() {
+        return String::new();
+    }
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    v["systemMessage"].as_str().unwrap_or_default().to_string()
+}
+
+#[test]
+fn a_nested_git_repository_is_mirrored_on_neither_side() {
+    let fx = fixture("turn", "");
+    // Mirrored before it became a repository of its own.
+    write(&fx.claude.join("skills/proj/old.md"), "old\n");
+    run(&fx, &["init", "--no-backfill"]);
+    assert!(head_files(&fx).contains(&"claude/skills/proj/old.md".to_string()));
+    // Now a clone: `.git` (here a file, as in a worktree) and new files.
+    write(&fx.claude.join("skills/proj/.git"), "gitdir: /elsewhere\n");
+    write(&fx.claude.join("skills/proj/new.md"), "new\n");
+    fs::remove_file(fx.claude.join("skills/proj/old.md")).unwrap();
+    // A clone with a real `.git` folder, never mirrored.
+    write(
+        &fx.claude.join("skills/clone/.git/HEAD"),
+        "ref: refs/heads/main\n",
+    );
+    write(&fx.claude.join("skills/clone/a.md"), "a\n");
+    // A configured folder that is a repository itself.
+    write(
+        &fx.claude.join("agents/.git/HEAD"),
+        "ref: refs/heads/main\n",
+    );
+    write(&fx.claude.join("agents/x.md"), "x\n");
+    write(&fx.claude.join("skills/foo/more.md"), "more\n");
+    hook(&fx, &stop("s1"));
+    let files = head_files(&fx);
+    assert!(
+        files.contains(&"claude/skills/foo/more.md".to_string()),
+        "{files:?}"
+    );
+    assert!(
+        !files
+            .iter()
+            .any(|f| f.starts_with("claude/skills/clone") || f.starts_with("claude/agents")),
+        "{files:?}"
+    );
+    // Neither copied into nor deleted from.
+    assert!(
+        files.contains(&"claude/skills/proj/old.md".to_string()),
+        "{files:?}"
+    );
+    assert!(
+        !files.contains(&"claude/skills/proj/new.md".to_string()),
+        "{files:?}"
+    );
+    assert!(!fx.repo.join("claude/skills/proj/.git").exists());
+    let v = status_json(&fx);
+    let nested: Vec<&str> = v["nested_repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        nested,
+        ["claude/agents", "claude/skills/clone", "claude/skills/proj"]
+    );
+    assert!(report(&fx).contains("git repositories of their own"));
+    // Work inside a clone (a fetch, an edit) does not start a sweep.
+    let events = || fs::read_to_string(fx.repo.join(".git/memsaga/events.jsonl")).unwrap();
+    let before = events();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    write(&fx.claude.join("skills/clone/a.md"), "a, edited\n");
+    write(&fx.claude.join("skills/clone/.git/FETCH_HEAD"), "x\n");
+    hook(&fx, &stop("s1"));
+    assert_eq!(events(), before);
+}
+
+#[test]
+fn a_git_copy_left_in_the_repository_is_moved_aside_and_sweeps_go_on() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    // What an older version left: the copy of a clone whose live folder is
+    // gone, with its `.git` (read-only packs included).
+    write(
+        &fx.repo.join("claude/skills/gone/.git/HEAD"),
+        "ref: refs/heads/main\n",
+    );
+    write(
+        &fx.repo.join("claude/skills/gone/.git/objects/pack/p.pack"),
+        "pack\n",
+    );
+    chmod(
+        &fx.repo.join("claude/skills/gone/.git/objects/pack/p.pack"),
+        0o444,
+    );
+    write(&fx.repo.join("claude/skills/gone/f.md"), "f\n");
+    // And the copy of a clone that is still there live.
+    write(
+        &fx.claude.join("skills/kept/.git/HEAD"),
+        "ref: refs/heads/main\n",
+    );
+    write(
+        &fx.repo.join("claude/skills/kept/.git/HEAD"),
+        "ref: refs/heads/main\n",
+    );
+    write(&fx.claude.join("skills/foo/more.md"), "more\n");
+    hook(&fx, &stop("s1"));
+    assert!(head_files(&fx).contains(&"claude/skills/foo/more.md".to_string()));
+    assert!(!fx.repo.join("claude/skills/gone").exists());
+    assert!(!fx.repo.join("claude/skills/kept").exists());
+    let stale = fx.repo.join(".git/memsaga/stale");
+    let moved: Vec<PathBuf> = walk(&stale);
+    for want in [
+        "claude/skills/gone/.git/objects/pack/p.pack",
+        "claude/skills/gone/f.md",
+        "claude/skills/kept/.git/HEAD",
+    ] {
+        assert!(
+            moved.iter().any(|p| p.ends_with(want)),
+            "{want} in {moved:?}"
+        );
+    }
+    let v = status_json(&fx);
+    assert_eq!(v["mirror_errors"].as_array().unwrap().len(), 0, "{v}");
+    assert!(v["sweep_error"].is_null(), "{v}");
+}
+
+#[test]
+fn read_only_files_are_mirrored_and_updated() {
+    let fx = fixture("turn", "");
+    let ro = fx.claude.join("skills/foo/ro.md");
+    write(&ro, "v1\n");
+    chmod(&ro, 0o444);
+    run(&fx, &["init", "--no-backfill"]);
+    let copy = fx.repo.join("claude/skills/foo/ro.md");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&copy).unwrap().permissions().mode();
+        assert_eq!(mode & 0o200, 0o200, "the copy is owner-writable: {mode:o}");
+    }
+    // A copy an older version left read-only, then the live file changes.
+    chmod(&copy, 0o444);
+    chmod(&ro, 0o644);
+    write(&ro, "v2, longer\n");
+    chmod(&ro, 0o444);
+    hook(&fx, &stop("s1"));
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/skills/foo/ro.md"]),
+        "v2, longer\n"
+    );
+    let v = status_json(&fx);
+    assert_eq!(v["mirror_errors"].as_array().unwrap().len(), 0, "{v}");
+}
+
+#[test]
+fn one_file_that_cannot_be_read_does_not_stop_the_sweep() {
+    let fx = fixture("turn", "");
+    if !modes_enforced(fx.repo.parent().unwrap()) {
+        return; // a root user, with MEMSAGA_TEST_AS_ROOT set (see modes_enforced)
+    }
+    write(&fx.claude.join("skills/locked/inside.md"), "inside\n");
+    write(&fx.claude.join("skills/foo/secret.md"), "s\n");
+    run(&fx, &["init", "--no-backfill"]);
+    let locked = fx.claude.join("skills/locked");
+    let secret = fx.claude.join("skills/foo/secret.md");
+    write(&secret, "s, changed\n");
+    chmod(&secret, 0o000);
+    // Its repository copy read-only too: replacing it must not lose it.
+    chmod(&fx.repo.join("claude/skills/foo/secret.md"), 0o444);
+    chmod(&locked, 0o000);
+    write(&fx.claude.join("skills/foo/more.md"), "more\n");
+    hook(&fx, &stop("s1"));
+    let files = head_files(&fx);
+    // The rest is committed; nothing under the unreadable folder reads as deleted.
+    assert!(
+        files.contains(&"claude/skills/foo/more.md".to_string()),
+        "{files:?}"
+    );
+    assert!(
+        files.contains(&"claude/skills/locked/inside.md".to_string()),
+        "{files:?}"
+    );
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/skills/foo/secret.md"]),
+        "s\n"
+    );
+    let v = status_json(&fx);
+    let paths: Vec<&str> = v["mirror_errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        paths,
+        ["claude/skills/foo/secret.md", "claude/skills/locked"],
+        "{v}"
+    );
+    assert!(v["sweep_error"].is_null(), "{v}");
+    let line = report(&fx);
+    assert!(line.contains("2 paths could not be mirrored"), "{line}");
+    assert!(!report(&fx).contains("could not be mirrored"));
+    // Fixed by a chmod, which changes no mtime: the retry finds it.
+    chmod(&secret, 0o644);
+    chmod(&locked, 0o755);
+    hook(&fx, &stop("s1"));
+    assert_eq!(
+        status_json(&fx)["mirror_errors"].as_array().unwrap().len(),
+        2
+    );
+    // Everything live, the config and the repository's own top-level
+    // files older than a marker 700 s old: only
+    // the retry can start this sweep.
+    let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(800);
+    for p in walk(fx.claude.parent().unwrap()).into_iter().chain([
+        fx.claude.parent().unwrap().to_path_buf(),
+        fx.cfg.clone(),
+        fx.repo.join(".gitattributes"),
+    ]) {
+        if p.symlink_metadata()
+            .is_ok_and(|m| !m.file_type().is_symlink())
+        {
+            fs::File::open(&p).unwrap().set_modified(long_ago).unwrap();
+        }
+    }
+    let last = fx.repo.join(".git/memsaga/last-sweep");
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(700);
+    fs::File::options()
+        .write(true)
+        .open(&last)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    hook(&fx, &stop("s1"));
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/skills/foo/secret.md"]),
+        "s, changed\n"
+    );
+    assert_eq!(
+        status_json(&fx)["mirror_errors"].as_array().unwrap().len(),
+        0
+    );
+}
+
+#[test]
+fn a_failing_sweep_is_reported_until_one_succeeds() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    report(&fx);
+    let incoming = fx.repo.join(".git/memsaga/incoming.json");
+    fs::write(&incoming, "{ not json").unwrap();
+    write(&fx.claude.join("skills/foo/more.md"), "more\n");
+    hook(&fx, &stop("s1"));
+    let v = status_json(&fx);
+    let since = v["sweep_error"]["since"].as_str().unwrap().to_string();
+    assert!(
+        v["sweep_error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("incoming"),
+        "{v}"
+    );
+    let line = report(&fx);
+    assert!(line.contains("sweeps have been failing since"), "{line}");
+    assert_eq!(report(&fx), "", "said once");
+    // A second failure keeps the time of the first.
+    hook(&fx, &stop("s1"));
+    assert_eq!(status_json(&fx)["sweep_error"]["since"], since.as_str());
+    fs::remove_file(&incoming).unwrap();
+    hook(&fx, &stop("s1"));
+    assert!(status_json(&fx)["sweep_error"].is_null());
+    assert!(report(&fx).contains("sweeps are committing again"));
+    assert!(head_files(&fx).contains(&"claude/skills/foo/more.md".to_string()));
+    // A failure past the lock (the index cannot be written) is kept too.
+    let index = fx.repo.join("index.md");
+    fs::remove_file(&index).unwrap();
+    write(&index.join("in-the-way"), "x\n");
+    write(&fx.claude.join("skills/foo/more.md"), "more, again\n");
+    hook(&fx, &stop("s1"));
+    assert!(status_json(&fx)["sweep_error"].is_object());
+    fs::remove_dir_all(&index).unwrap();
+    hook(&fx, &stop("s1"));
+    assert!(status_json(&fx)["sweep_error"].is_null());
+}
+
+#[test]
+fn a_file_over_the_size_limit_is_left_out_and_its_repository_copy_kept() {
+    let fx = fixture("turn", "max_file_mb = 1\n");
+    let big = fx.claude.join("skills/foo/big.bin");
+    write(&big, "small\n");
+    run(&fx, &["init", "--no-backfill"]);
+    fs::write(&big, vec![b'x'; (1 << 20) + 1]).unwrap();
+    write(
+        &fx.claude.join("skills/foo/new-big.bin"),
+        &"y".repeat((1 << 20) + 1),
+    );
+    write(&fx.claude.join("skills/foo/more.md"), "more\n");
+    hook(&fx, &stop("s1"));
+    let files = head_files(&fx);
+    assert!(
+        files.contains(&"claude/skills/foo/more.md".to_string()),
+        "{files:?}"
+    );
+    assert!(
+        !files.contains(&"claude/skills/foo/new-big.bin".to_string()),
+        "{files:?}"
+    );
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/skills/foo/big.bin"]),
+        "small\n"
+    );
+    let v = status_json(&fx);
+    let large: Vec<&str> = v["too_large"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        large,
+        ["claude/skills/foo/big.bin", "claude/skills/foo/new-big.bin"]
+    );
+    assert!(report(&fx).contains("larger than max_file_mb"));
+    assert!(!report(&fx).contains("max_file_mb"), "said once");
+}
+
+#[test]
+fn a_change_from_elsewhere_inside_a_nested_repository_is_not_brought_in() {
+    let fx = fixture("turn", "");
+    write(&fx.claude.join("skills/proj/a.md"), "a\n");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    // Here it became a clone; elsewhere the mirrored copy is edited.
+    write(
+        &fx.claude.join("skills/proj/.git/HEAD"),
+        "ref: refs/heads/main\n",
+    );
+    push_from_other(&other, "claude/skills/proj/a.md", Some("from elsewhere\n"));
+    // Recorded by a sweep after a pull by hand: nothing queued.
+    git_at(&fx.repo, &["pull", "-q", "--no-rebase", "origin", "HEAD"]);
+    run(&fx, &["sweep"]);
+    assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
+    run(&fx, &["sync"]);
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("skills/proj/a.md")).unwrap(),
+        "a\n"
+    );
+    let v = status_json(&fx);
+    assert!(v["incoming"].as_object().unwrap().is_empty(), "{v}");
+}
+
+#[test]
+fn a_pull_over_unresolved_conflicts_merges_nothing_and_names_them() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "claude/CLAUDE.md", Some("# from github\n"));
+    // Unresolved conflict entries in the index (what a `git stash pop` that
+    // conflicted leaves), with HEAD where memsaga recorded it, so nothing
+    // but the merge itself meets them.
+    let rel = "claude/skills/foo/SKILL.md";
+    let blob = |text: &str| {
+        let mut c = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&fx.repo)
+            .args(["hash-object", "-w", "--stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        c.stdin.take().unwrap().write_all(text.as_bytes()).unwrap();
+        String::from_utf8(c.wait_with_output().unwrap().stdout)
+            .unwrap()
+            .trim()
+            .to_string()
+    };
+    let info = format!(
+        "0 {zero}\t{rel}\n100644 {} 1\t{rel}\n100644 {} 2\t{rel}\n100644 {} 3\t{rel}\n",
+        blob("base\n"),
+        blob("ours\n"),
+        blob("theirs\n"),
+        zero = "0".repeat(40)
+    );
+    let mut c = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&fx.repo)
+        .args(["update-index", "--index-info"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        c.stdin.take().unwrap().write_all(info.as_bytes()).unwrap();
+    }
+    assert!(c.wait().unwrap().success());
+    assert!(!git(&fx, &["ls-files", "-u"]).is_empty());
+    // `pull` (what the hooks run) merges without sweeping first.
+    let out = cmd(&fx).arg("pull").output().unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("unresolved conflicts"), "{err}");
+    // Nothing merged, and the conflict is left as it was.
+    assert!(!git(&fx, &["ls-files", "-u"]).is_empty());
+    assert!(!git(&fx, &["show", "HEAD:claude/CLAUDE.md"]).contains("# from github"));
+}
+
+#[test]
+fn backfill_refuses_while_the_clone_has_changes_no_sweep_recorded() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let one = live_one(&fx);
+    let rel = "claude/memory/-h-git-a/one.md";
+    fs::write(fx.repo.join(rel), "a hand edit, not committed\n").unwrap();
+    let transcript = format!(
+        "{{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:00.000Z\",\"sessionId\":\"s-old\",\"cwd\":\"/h/git/a\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Write\",\"input\":{{\"file_path\":\"{}\",\"content\":\"v1 fact\\n\"}}}}]}}}}\n",
+        one.display()
+    );
+    write(
+        &fx.claude.join("projects/-h-git-a/0000-session.jsonl"),
+        &transcript,
+    );
+    let out = cmd(&fx).arg("backfill").output().unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("run `memsaga sweep` first"), "{err}");
+    assert_eq!(
+        fs::read_to_string(fx.repo.join(rel)).unwrap(),
+        "a hand edit, not committed\n"
+    );
+}
+
+#[test]
+fn a_backfill_group_that_fails_to_commit_puts_its_files_back() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let one = live_one(&fx);
+    let transcript = format!(
+        "{{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:00.000Z\",\"sessionId\":\"s-old\",\"cwd\":\"/h/git/a\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Write\",\"input\":{{\"file_path\":\"{}\",\"content\":\"v1 fact\\n\"}}}}]}}}}\n",
+        one.display()
+    );
+    write(
+        &fx.claude.join("projects/-h-git-a/0000-session.jsonl"),
+        &transcript,
+    );
+    let hook_path = fx.repo.join(".git/hooks/pre-commit");
+    write(&hook_path, "#!/bin/sh\nexit 1\n");
+    chmod(&hook_path, 0o755);
+    let out = cmd(&fx).arg("backfill").output().unwrap();
+    assert!(!out.status.success());
+    let rel = "claude/memory/-h-git-a/one.md";
+    assert_eq!(fs::read_to_string(fx.repo.join(rel)).unwrap(), "fact\n");
+    assert_eq!(git(&fx, &["status", "--porcelain"]), "");
+}
+
+#[test]
+fn a_folder_replaced_by_a_link_keeps_the_git_copy_inside_it() {
+    let fx = fixture("turn", "");
+    write(&fx.claude.join("agents/a.md"), "a\n");
+    run(&fx, &["init", "--no-backfill"]);
+    // What an older version left deep inside a mirrored folder.
+    write(
+        &fx.repo.join("claude/agents/sub/.git/HEAD"),
+        "ref: refs/heads/main\n",
+    );
+    // The live folder becomes a link (as the second account's skills are).
+    fs::remove_dir_all(fx.claude.join("agents")).unwrap();
+    fs::create_dir_all(fx.claude.join("elsewhere")).unwrap();
+    std::os::unix::fs::symlink(fx.claude.join("elsewhere"), fx.claude.join("agents")).unwrap();
+    hook(&fx, &stop("s1"));
+    assert!(fx
+        .repo
+        .join("claude/agents")
+        .symlink_metadata()
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    let moved = walk(&fx.repo.join(".git/memsaga/stale"));
+    assert!(
+        moved
+            .iter()
+            .any(|p| p.ends_with("claude/agents/sub/.git/HEAD")),
+        "{moved:?}"
+    );
+}
+
+#[test]
+fn a_change_queued_before_its_folder_became_a_repository_is_dropped() {
+    let fx = fixture("turn", "");
+    write(&fx.claude.join("skills/proj/a.md"), "a\n");
+    run(&fx, &["init", "--no-backfill"]);
+    let (_origin, other) = with_origin(&fx);
+    push_from_other(&other, "claude/skills/proj/a.md", Some("from elsewhere\n"));
+    // A pull by hand, recorded by the next sweep: queued for the live side.
+    git_at(&fx.repo, &["pull", "-q", "--no-rebase", "origin", "HEAD"]);
+    run(&fx, &["sweep"]);
+    assert!(status_json(&fx)["incoming"]["claude/skills/proj/a.md"].is_object());
+    // Then the live folder becomes a clone.
+    write(
+        &fx.claude.join("skills/proj/.git/HEAD"),
+        "ref: refs/heads/main\n",
+    );
+    run(&fx, &["sync"]);
+    assert_eq!(
+        fs::read_to_string(fx.claude.join("skills/proj/a.md")).unwrap(),
+        "a\n"
+    );
+    assert!(status_json(&fx)["incoming"].as_object().unwrap().is_empty());
+}
+
+#[test]
+fn backfill_takes_an_edit_over_a_preview_copy_for_a_hand_edit() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let one = live_one(&fx);
+    fs::write(&one, "fact, newer\n").unwrap();
+    run(&fx, &["diff"]); // leaves memsaga's own uncommitted copy
+    let rel = "claude/memory/-h-git-a/one.md";
+    fs::write(fx.repo.join(rel), "edited over the preview\n").unwrap();
+    let transcript = format!(
+        "{{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:00.000Z\",\"sessionId\":\"s-old\",\"cwd\":\"/h/git/a\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Write\",\"input\":{{\"file_path\":\"{}\",\"content\":\"v1 fact\\n\"}}}}]}}}}\n",
+        one.display()
+    );
+    write(
+        &fx.claude.join("projects/-h-git-a/0000-session.jsonl"),
+        &transcript,
+    );
+    let out = cmd(&fx).arg("backfill").output().unwrap();
+    assert!(!out.status.success());
+    assert_eq!(
+        fs::read_to_string(fx.repo.join(rel)).unwrap(),
+        "edited over the preview\n"
+    );
+}
+
+#[test]
+fn a_root_that_cannot_be_listed_deletes_nothing_from_the_repository() {
+    let fx = fixture("turn", "");
+    if !modes_enforced(fx.repo.parent().unwrap()) {
+        return; // a root user, with MEMSAGA_TEST_AS_ROOT set (see modes_enforced)
+    }
+    run(&fx, &["init", "--no-backfill"]);
+    let before = head_files(&fx);
+    chmod(&fx.claude, 0o000);
+    write(
+        &fx.work.join("projects/-h-git-a/memory/w.md"),
+        "work fact, changed\n",
+    );
+    hook(&fx, &stop("s1"));
+    chmod(&fx.claude, 0o755);
+    let after = head_files(&fx);
+    for f in before.iter().filter(|f| f.starts_with("claude/")) {
+        assert!(after.contains(f), "{f} deleted: {after:?}");
+    }
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude-work/memory/-h-git-a/w.md"]),
+        "work fact, changed\n"
+    );
+}
+
+#[test]
+fn a_folder_that_became_a_file_too_large_to_mirror_keeps_its_contents() {
+    let fx = fixture("turn", "max_file_mb = 1\n");
+    write(&fx.claude.join("skills/proj/notes.md"), "notes\n");
+    run(&fx, &["init", "--no-backfill"]);
+    fs::remove_dir_all(fx.claude.join("skills/proj")).unwrap();
+    fs::write(fx.claude.join("skills/proj"), vec![b'x'; (1 << 20) + 1]).unwrap();
+    write(&fx.claude.join("skills/foo/more.md"), "more\n");
+    hook(&fx, &stop("s1"));
+    let files = head_files(&fx);
+    assert!(
+        files.contains(&"claude/skills/foo/more.md".to_string()),
+        "{files:?}"
+    );
+    assert!(
+        files.contains(&"claude/skills/proj/notes.md".to_string()),
+        "{files:?}"
+    );
+}
+
+#[test]
+fn a_memory_folder_that_cannot_be_listed_is_kept_in_the_repository() {
+    let fx = fixture("turn", "");
+    if !modes_enforced(fx.repo.parent().unwrap()) {
+        return; // a root user, with MEMSAGA_TEST_AS_ROOT set (see modes_enforced)
+    }
+    run(&fx, &["init", "--no-backfill"]);
+    let memory = fx.claude.join("projects/-h-git-a/memory");
+    chmod(&memory, 0o000);
+    write(&fx.claude.join("skills/foo/more.md"), "more\n");
+    hook(&fx, &stop("s1"));
+    chmod(&memory, 0o755);
+    let files = head_files(&fx);
+    assert!(
+        files.contains(&"claude/skills/foo/more.md".to_string()),
+        "{files:?}"
+    );
+    assert!(
+        files.contains(&"claude/memory/-h-git-a/one.md".to_string()),
+        "{files:?}"
+    );
+    // A project folder that can be read but not searched (0400): its
+    // memory folder's kind cannot be read.
+    let project = fx.claude.join("projects/-h-git-a");
+    chmod(&project, 0o400);
+    write(&fx.claude.join("skills/foo/more.md"), "more, again\n");
+    hook(&fx, &stop("s1"));
+    chmod(&project, 0o755);
+    let files = head_files(&fx);
+    assert_eq!(
+        git(&fx, &["show", "HEAD:claude/skills/foo/more.md"]),
+        "more, again\n"
+    );
+    assert!(
+        files.contains(&"claude/memory/-h-git-a/one.md".to_string()),
+        "{files:?}"
+    );
+}
+
+#[test]
+fn backfill_refuses_over_a_deletion_staged_by_hand() {
+    let fx = fixture("turn", "");
+    run(&fx, &["init", "--no-backfill"]);
+    let one = live_one(&fx);
+    fs::write(&one, "fact, newer\n").unwrap();
+    run(&fx, &["diff"]); // memsaga's own uncommitted copy
+    let rel = "claude/memory/-h-git-a/one.md";
+    git(&fx, &["rm", "-q", "--cached", rel]);
+    let transcript = format!(
+        "{{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:00.000Z\",\"sessionId\":\"s-old\",\"cwd\":\"/h/git/a\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Write\",\"input\":{{\"file_path\":\"{}\",\"content\":\"v1 fact\\n\"}}}}]}}}}\n",
+        one.display()
+    );
+    write(
+        &fx.claude.join("projects/-h-git-a/0000-session.jsonl"),
+        &transcript,
+    );
+    let out = cmd(&fx).arg("backfill").output().unwrap();
+    assert!(!out.status.success());
+    assert!(!git(&fx, &["ls-files", "--", rel]).contains("one.md"));
 }
