@@ -5820,6 +5820,19 @@ fn one_file_that_cannot_be_read_does_not_stop_the_sweep() {
         status_json(&fx)["mirror_errors"].as_array().unwrap().len(),
         2
     );
+    // Everything live, and the config, older than a marker 700 s old: only
+    // the retry can start this sweep.
+    let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(800);
+    for p in walk(fx.claude.parent().unwrap())
+        .into_iter()
+        .chain([fx.claude.parent().unwrap().to_path_buf(), fx.cfg.clone()])
+    {
+        if p.symlink_metadata()
+            .is_ok_and(|m| !m.file_type().is_symlink())
+        {
+            fs::File::open(&p).unwrap().set_modified(long_ago).unwrap();
+        }
+    }
     let last = fx.repo.join(".git/memsaga/last-sweep");
     let old = std::time::SystemTime::now() - std::time::Duration::from_secs(700);
     fs::File::options()
@@ -5933,7 +5946,7 @@ fn a_change_from_elsewhere_inside_a_nested_repository_is_not_brought_in() {
 }
 
 #[test]
-fn sync_names_unresolved_conflicts_before_merging() {
+fn a_pull_names_unresolved_conflicts_before_merging() {
     let fx = fixture("turn", "");
     run(&fx, &["init", "--no-backfill"]);
     let (_origin, other) = with_origin(&fx);
@@ -5951,7 +5964,8 @@ fn sync_names_unresolved_conflicts_before_merging() {
         .output()
         .unwrap();
     assert!(!git(&fx, &["ls-files", "-u"]).is_empty());
-    let out = cmd(&fx).arg("sync").output().unwrap();
+    // `pull` (what the hooks run) merges without sweeping first.
+    let out = cmd(&fx).arg("pull").output().unwrap();
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("unresolved conflicts"), "{err}");

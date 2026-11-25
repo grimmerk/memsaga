@@ -232,7 +232,20 @@ fn set_aside_git_copies(scope: &Scope, top: &Path, stats: &mut Stats) -> Vec<Pat
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     let base = scope.cfg.state_dir().join("stale").join(stamp);
     for from in found {
-        let rel = from.strip_prefix(&scope.cfg.repo).unwrap_or(&from);
+        // Only inside a root's subtree (`<repo>/<label>/…`): never the data
+        // repository itself, whose own `.git` this would otherwise match.
+        let Some(rel) = from
+            .strip_prefix(&scope.cfg.repo)
+            .ok()
+            .filter(|r| r.components().count() >= 2)
+        else {
+            stats.errors.push((
+                from.clone(),
+                "not inside a root's subtree; left as it is".into(),
+            ));
+            failed.push(from);
+            continue;
+        };
         let mut to = base.join(rel);
         let mut n = 1;
         while to.symlink_metadata().is_ok() {

@@ -236,6 +236,11 @@ pub fn pending(
     // is returned: what it wrote before failing is just as uncommitted.
     crate::sync::record_uncommitted(cfg, &state, &stats.written)?;
     crate::sync::mark_seen(cfg, &state, &stats.present)?;
+    let preview = Attribution {
+        event: "diff".into(),
+        ..Default::default()
+    };
+    log_set_aside(&state, &preview, &stats.set_aside)?;
     refreshed?;
     // Only after a complete mirror: a partial list would drop real entries.
     if let Some(g) = &scope.guard {
