@@ -101,6 +101,13 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
     // The replay writes files and stages everything: a conflicted file would
     // be overwritten, and its markers staged.
     crate::recorded::check_no_conflicts(cfg, &git)?;
+    // A change in the clone that no sweep has seen (a hand edit, a file added
+    // there) is not on the incoming list yet: the replay would write an old
+    // version over it, or commit it under a backfill commit. A sweep first
+    // records it and commits it.
+    if git.has_head() {
+        check_clean(cfg, &git, &state)?;
+    }
     // A file waiting for the live side holds the newer version: a replayed
     // old one over it would be what sync then writes live. Left out, by live
     // file, so an entry kept under an older name of its directory counts.
@@ -161,67 +168,87 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
             latest.insert(rel, content);
             wrote = true;
         }
-        // memsaga's own copies until committed: stopped before the commit,
-        // the next sweep overwrites them with the live files instead of
-        // taking them for hand edits.
-        let own: Vec<PathBuf> = written_now.iter().map(|r| cfg.repo.join(r)).collect();
-        crate::sync::record_uncommitted(cfg, &state, &own)?;
-        let mut changed = wrote && git.add_all_and_check()?;
-        if changed && cfg.scan_secrets {
-            let run = |a: &[&str]| git.run(a);
-            let held = crate::secrets::unstage_held(&run, &cfg.allow_secrets)?;
-            // Every file here is a version the replay wrote: put back the
-            // last committed one, and remember that as the latest version.
-            for h in &held {
-                let rel = PathBuf::from(&h.path);
-                if !written_now.contains(&rel) {
-                    continue;
-                }
-                let dst = cfg.repo.join(&rel);
-                let spec = format!(":(literal){}", h.path);
-                if git.object_type(&format!("HEAD:{}", h.path))?.is_some() {
-                    git.run_ok(&["checkout", "-q", "HEAD", "--", &spec])?;
-                    match std::fs::read_to_string(&dst) {
-                        Ok(c) => {
-                            latest.insert(rel, c);
-                        }
-                        Err(_) => {
-                            latest.remove(&rel);
-                        }
+        // From here to the commit, a failure puts the files this group wrote
+        // back to HEAD: an old version left in the clone without a record
+        // would read as a hand edit, and reach the live file.
+        let finished = (|| -> Result<()> {
+            // memsaga's own copies until committed: stopped before the commit,
+            // the next sweep overwrites them with the live files instead of
+            // taking them for hand edits.
+            let own: Vec<PathBuf> = written_now.iter().map(|r| cfg.repo.join(r)).collect();
+            crate::sync::record_uncommitted(cfg, &state, &own)?;
+            let mut changed = wrote && git.add_all_and_check()?;
+            if changed && cfg.scan_secrets {
+                let run = |a: &[&str]| git.run(a);
+                let held = crate::secrets::unstage_held(&run, &cfg.allow_secrets)?;
+                // Every file here is a version the replay wrote: put back the
+                // last committed one, and remember that as the latest version.
+                for h in &held {
+                    let rel = PathBuf::from(&h.path);
+                    if !written_now.contains(&rel) {
+                        continue;
                     }
-                } else {
-                    std::fs::remove_file(&dst)?;
-                    latest.remove(&rel);
+                    let dst = cfg.repo.join(&rel);
+                    let spec = format!(":(literal){}", h.path);
+                    if git.object_type(&format!("HEAD:{}", h.path))?.is_some() {
+                        git.run_ok(&["checkout", "-q", "HEAD", "--", &spec])?;
+                        match std::fs::read_to_string(&dst) {
+                            Ok(c) => {
+                                latest.insert(rel, c);
+                            }
+                            Err(_) => {
+                                latest.remove(&rel);
+                            }
+                        }
+                    } else {
+                        std::fs::remove_file(&dst)?;
+                        latest.remove(&rel);
+                    }
+                }
+                report.held += held.len();
+                if !held.is_empty() {
+                    changed = git.has_staged_changes()?;
                 }
             }
-            report.held += held.len();
-            if !held.is_empty() {
-                changed = git.has_staged_changes()?;
+            if changed {
+                let last = &ops[end - 1];
+                let name_status = git.staged_name_status()?;
+                let files: Vec<String> = name_status
+                    .lines()
+                    .filter_map(|l| l.split('\t').nth(1).map(|s| s.to_string()))
+                    .collect();
+                let attrib = crate::sweep::Attribution {
+                    event: "backfill".into(),
+                    account: last.label.clone(),
+                    session: last.session.clone(),
+                    cwd: last.cwd.clone(),
+                    agent: String::new(),
+                    transcript: String::new(),
+                };
+                let shortstat = git.staged_shortstat()?;
+                let msg = crate::sweep::commit_message(
+                    cfg,
+                    &attrib,
+                    "",
+                    &files,
+                    &name_status,
+                    &shortstat,
+                );
+                let made = git.commit(&msg, Some(&last.ts))?;
+                if locked.advance_after_commit(&git, &made)? {
+                    crate::sync::clear_uncommitted(&state);
+                }
+                report.commits += 1;
             }
-        }
-        if changed {
-            let last = &ops[end - 1];
-            let name_status = git.staged_name_status()?;
-            let files: Vec<String> = name_status
-                .lines()
-                .filter_map(|l| l.split('\t').nth(1).map(|s| s.to_string()))
-                .collect();
-            let attrib = crate::sweep::Attribution {
-                event: "backfill".into(),
-                account: last.label.clone(),
-                session: last.session.clone(),
-                cwd: last.cwd.clone(),
-                agent: String::new(),
-                transcript: String::new(),
-            };
-            let shortstat = git.staged_shortstat()?;
-            let msg =
-                crate::sweep::commit_message(cfg, &attrib, "", &files, &name_status, &shortstat);
-            let made = git.commit(&msg, Some(&last.ts))?;
-            if locked.advance_after_commit(&git, &made)? {
-                crate::sync::clear_uncommitted(&state);
+            Ok(())
+        })();
+        if let Err(e) = finished {
+            if let Err(undo) = put_back(cfg, &git, &written_now) {
+                return Err(e.context(format!(
+                    "and putting this group's files back to HEAD failed too: {undo:#}"
+                )));
             }
-            report.commits += 1;
+            return Err(e);
         }
     }
 
@@ -244,6 +271,51 @@ pub fn backfill(cfg: &Config, group_window_secs: i64) -> Result<Report> {
         ..Default::default()
     })?;
     Ok(report)
+}
+
+/// Refuse while the clone holds a change to a file with a live side that is
+/// neither memsaga's own uncommitted copy nor on the incoming list. Files
+/// with no live side (`manual/`, `companion/`) are never replayed over.
+fn check_clean(cfg: &Config, git: &Git, state: &State) -> Result<()> {
+    let own = crate::sync::load_uncommitted(state);
+    let incoming = crate::sync::load_incoming(state)?;
+    let out = git.run_ok(&["status", "--porcelain=v1", "-z", "--untracked-files=all"])?;
+    let mut fields = out.split('\0').filter(|f| !f.is_empty());
+    while let Some(f) = fields.next() {
+        let (code, path) = f.split_at(3.min(f.len()));
+        if code.starts_with('R') || code.starts_with('C') {
+            fields.next(); // the old path of a rename
+        }
+        if !own.contains_key(path)
+            && !incoming.contains_key(path)
+            && crate::sync::live_target(cfg, path).is_some()
+        {
+            anyhow::bail!(
+                "the data repository {} has changes no sweep has recorded yet ({path}, …); run `memsaga sweep` first, which commits them (a file the secret check holds back has to be committed or removed by hand)",
+                cfg.repo.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Put `paths` (repository-relative) back to HEAD, index and working tree;
+/// one that HEAD lacks is removed.
+fn put_back(cfg: &Config, git: &Git, paths: &HashSet<PathBuf>) -> Result<()> {
+    for rel in paths {
+        let rel = rel.to_string_lossy();
+        let spec = format!(":(literal){rel}");
+        if git.object_type(&format!("HEAD:{rel}"))?.is_some() {
+            git.run_ok(&["checkout", "-q", "HEAD", "--", &spec])?;
+        } else {
+            git.run_ok(&["rm", "-q", "--cached", "--ignore-unmatch", "--", &spec])?;
+            match std::fs::remove_file(cfg.repo.join(rel.as_ref())) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Per-op "content after this op", from a forward pass anchored on Writes and

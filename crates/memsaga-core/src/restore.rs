@@ -270,7 +270,8 @@ fn live_executable(p: &Path) -> bool {
 /// its older layouts on this machine (`roots::legacy_repo_paths`), then each
 /// name git recorded it under before a rename in this branch's history. The
 /// last covers a memory file renamed by another machine's sweep from that
-/// machine's live name (grimmerk/memsaga-private#25), which this machine cannot compute.
+/// machine's live name (before the home-relative names), which this machine
+/// cannot compute.
 fn historical_paths(cfg: &Config, repo_rel: &Path) -> Vec<PathBuf> {
     let mut out = vec![repo_rel.to_path_buf()];
     let legacy = roots::legacy_repo_paths(repo_rel);

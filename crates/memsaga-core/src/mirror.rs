@@ -31,18 +31,22 @@ pub struct Stats {
     /// Every repository file or link whose live source exists now, changed or
     /// not: what this machine has had (`sync::mark_seen`).
     pub present: Vec<PathBuf>,
+    /// Repository paths the mirror could not copy, link or delete, with the
+    /// reason. The rest of the sweep went on without them, and nothing under
+    /// a folder that could not be read was deleted.
+    pub errors: Vec<(PathBuf, String)>,
+    /// Live files over `max_file_mb`, not copied: repository path and size
+    /// in bytes. A repository copy of an earlier version is left as it is.
+    pub too_large: Vec<(PathBuf, u64)>,
+    /// Live folders holding `.git` (git repositories of their own), not
+    /// mirrored: their repository paths, left as they are.
+    pub nested: Vec<PathBuf>,
+    /// Repository folders holding a `.git` copy (made by versions that copied
+    /// one), moved aside instead of deleted: from, to.
+    pub set_aside: Vec<(PathBuf, PathBuf)>,
 }
 
 impl Stats {
-    fn add(&mut self, o: Stats) {
-        self.copied += o.copied;
-        self.deleted += o.deleted;
-        self.linked += o.linked;
-        self.restat.extend(o.restat);
-        self.written.extend(o.written);
-        self.present.extend(o.present);
-    }
-
     fn count(&mut self, c: Copied, dst: &Path) {
         match c {
             Copied::No => {}
@@ -106,22 +110,60 @@ pub fn extra_repo_rel(p: &Path) -> PathBuf {
 pub fn sync_self_and_extras(scope: &Scope, stats: &mut Stats) -> Result<()> {
     let cfg = scope.cfg;
     let own = crate::config::config_path();
-    if own.is_file() {
-        let dst = cfg.repo.join("memsaga/config.toml");
-        if scope.may_write(&dst, Some(&own)) {
-            stats.count(copy_if_changed(&own, &dst)?, &dst);
-        }
-    }
+    let mut sources = vec![(own.clone(), cfg.repo.join("memsaga/config.toml"))];
     for src in cfg.extra_files() {
-        if !src.is_file() {
+        let dst = cfg.repo.join(extra_repo_rel(&src));
+        sources.push((src, dst));
+    }
+    for (src, dst) in sources {
+        let Ok(meta) = fs::metadata(&src) else {
+            continue;
+        };
+        if !meta.is_file() || over_limit(scope, &dst, meta.len(), stats) {
             continue;
         }
-        let dst = cfg.repo.join(extra_repo_rel(&src));
         if scope.may_write(&dst, Some(&src)) {
-            stats.count(copy_if_changed(&src, &dst)?, &dst);
+            match copy_if_changed(&src, &dst) {
+                Ok(c) => stats.count(c, &dst),
+                Err(e) => stats.errors.push((dst, format!("{e:#}"))),
+            }
         }
     }
     Ok(())
+}
+
+/// Is a live file of `len` bytes over `max_file_mb`? Then it is listed and
+/// not copied (`max_file_mb = 0` turns the limit off).
+fn over_limit(scope: &Scope, dst: &Path, len: u64, stats: &mut Stats) -> bool {
+    let max = scope.cfg.max_file_mb;
+    if max == 0 || len <= max.saturating_mul(1 << 20) {
+        return false;
+    }
+    stats.too_large.push((dst.to_path_buf(), len));
+    true
+}
+
+/// A folder holding `.git` (a folder, or a file as in a worktree or a
+/// submodule): a git repository of its own. The mirror leaves it out on both
+/// sides (docs/architecture.md, invariant 8).
+pub fn is_nested_repo(dir: &Path) -> bool {
+    dir.join(".git").symlink_metadata().is_ok()
+}
+
+/// Is `live`, a path under `root`, inside a nested repository: does a folder
+/// between `root` (not included) and `live` hold `.git`?
+pub fn in_nested_repo(root: &Path, live: &Path) -> bool {
+    let mut cur = live.parent();
+    while let Some(d) = cur {
+        if d == root || !d.starts_with(root) {
+            return false;
+        }
+        if is_nested_repo(d) {
+            return true;
+        }
+        cur = d.parent();
+    }
+    false
 }
 
 /// Mirror every entry of `root` into `repo/<label>/`, then prune project
@@ -135,28 +177,84 @@ pub fn sync_root(scope: &Scope, root: &Root, repo: &Path, stats: &mut Stats) -> 
     }
     // Files/dirs in the allowlist that disappeared from the root: remove copies.
     let base = repo.join(&root.label);
-    for f in &scope.cfg.files {
-        let src = root.path.join(f);
+    for name in scope.cfg.files.iter().chain(&scope.cfg.dirs) {
+        let src = root.path.join(name);
         if src.symlink_metadata().is_err() {
-            let dst = base.join(f);
+            let dst = base.join(name);
             if dst.symlink_metadata().is_ok() && scope.may_remove(&dst) {
-                remove_any(&dst)?;
-                stats.deleted += 1;
+                remove_path(scope, &dst, stats);
             }
         }
     }
-    for d in &scope.cfg.dirs {
-        let src = root.path.join(d);
-        if src.symlink_metadata().is_err() {
-            let dst = base.join(d);
-            if dst.symlink_metadata().is_ok() && scope.may_remove(&dst) {
-                remove_any(&dst)?;
-                stats.deleted += 1;
-            }
-        }
-    }
-    stats.add(prune_memory(scope, root, repo, &entries)?);
+    prune_memory(scope, root, repo, &entries, stats);
     Ok(())
+}
+
+/// Remove a repository file or folder for the mirror, counting it; a
+/// failure is recorded for that path and the mirror goes on. A folder
+/// holding a `.git` copy inside goes aside first, never deleted.
+fn remove_path(scope: &Scope, p: &Path, stats: &mut Stats) {
+    if !set_aside_git_copies(scope, p, stats).is_empty() {
+        return; // recorded; what is left of the folder stays
+    }
+    if p.symlink_metadata().is_err() {
+        stats.deleted += 1; // the folder itself went aside
+        return;
+    }
+    match remove_any(p) {
+        Ok(()) => stats.deleted += 1,
+        Err(e) => stats.errors.push((p.to_path_buf(), format!("{e:#}"))),
+    }
+}
+
+/// Move every repository folder at or under `top` that holds a `.git` copy
+/// to `<state>/stale/<time>/<repository path>`. git would take such a folder
+/// for a repository of its own (a gitlink, or `git add` failing when it has
+/// no commit yet), and its `.git` may hold the only copy of commits.
+/// Returns the folders that could not be moved (recorded in `stats.errors`).
+fn set_aside_git_copies(scope: &Scope, top: &Path, stats: &mut Stats) -> Vec<PathBuf> {
+    let mut failed = Vec::new();
+    if !top.symlink_metadata().is_ok_and(|m| m.is_dir()) {
+        return failed;
+    }
+    let mut found: Vec<PathBuf> = Vec::new();
+    let mut walk = WalkDir::new(top).follow_links(false).into_iter();
+    while let Some(item) = walk.next() {
+        let Ok(item) = item else { continue };
+        if item.file_type().is_dir() && is_nested_repo(item.path()) {
+            found.push(item.path().to_path_buf());
+            walk.skip_current_dir();
+        }
+    }
+    if found.is_empty() {
+        return failed;
+    }
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let base = scope.cfg.state_dir().join("stale").join(stamp);
+    for from in found {
+        let rel = from.strip_prefix(&scope.cfg.repo).unwrap_or(&from);
+        let mut to = base.join(rel);
+        let mut n = 1;
+        while to.symlink_metadata().is_ok() {
+            to = base.join(format!("{}.{n}", rel.display()));
+            n += 1;
+        }
+        let moved = to
+            .parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| fs::rename(&from, &to));
+        match moved {
+            Ok(()) => stats.set_aside.push((from, to)),
+            Err(e) => {
+                stats.errors.push((
+                    from.clone(),
+                    format!("moving its .git copy aside to {}: {e}", to.display()),
+                ));
+                failed.push(from);
+            }
+        }
+    }
+    failed
 }
 
 fn sync_entry(
@@ -175,25 +273,28 @@ fn sync_entry(
     if meta.file_type().is_symlink() {
         stats.present.push(dst.clone());
         if scope.may_write(&dst, None) {
-            stats.linked += mirror_symlink(scope, &src, &dst, repo)?;
+            match mirror_symlink(scope, &src, &dst, repo) {
+                Ok(n) => stats.linked += n,
+                Err(e) => stats.errors.push((dst, format!("{e:#}"))),
+            }
         }
         return Ok(());
     }
     if meta.is_file() {
         stats.present.push(dst.clone());
-        if let Some(p) = dst.parent() {
-            fs::create_dir_all(p)?;
-        }
-        if !scope.may_write(&dst, Some(&src)) {
+        if over_limit(scope, &dst, meta.len(), stats) || !scope.may_write(&dst, Some(&src)) {
             return Ok(());
         }
         let is_settings = matches!(entry, Entry::File { rel } if rel == "settings.json");
         let copied = if is_settings && !scope.cfg.settings_ignore_keys.is_empty() {
-            copy_settings_stripped(&src, &dst, &scope.cfg.settings_ignore_keys)?
+            copy_settings_stripped(&src, &dst, &scope.cfg.settings_ignore_keys)
         } else {
-            copy_if_changed(&src, &dst)?
+            copy_if_changed(&src, &dst)
         };
-        stats.count(copied, &dst);
+        match copied {
+            Ok(c) => stats.count(c, &dst),
+            Err(e) => stats.errors.push((dst, format!("{e:#}"))),
+        }
         return Ok(());
     }
     if meta.is_dir() {
@@ -231,10 +332,14 @@ pub fn count_mirrored(scope: &Scope, src: &Path, prefix: &Path) -> usize {
     {
         return 1;
     }
+    if is_nested_repo(src) {
+        return 0;
+    }
     WalkDir::new(src)
         .follow_links(false)
         .min_depth(1)
         .into_iter()
+        .filter_entry(|e| !(e.file_type().is_dir() && is_nested_repo(e.path())))
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file() || e.file_type().is_symlink())
         .filter(|e| {
@@ -247,6 +352,12 @@ pub fn count_mirrored(scope: &Scope, src: &Path, prefix: &Path) -> usize {
 
 /// Recursive directory mirror with delete. `prefix` is `src` relative to its
 /// root, so root-relative `exclude_paths` can be applied while walking.
+///
+/// One path that cannot be copied, linked or deleted is recorded in
+/// `stats.errors` and the rest goes on; a folder that cannot be read keeps
+/// everything under its repository copy (its contents are unknown, so
+/// nothing there may read as deleted). A folder holding `.git` is a
+/// repository of its own: neither side of it is touched.
 pub fn sync_dir(
     scope: &Scope,
     src: &Path,
@@ -267,13 +378,37 @@ pub fn sync_dir(
     if scope.through_link(dst) {
         return Ok(());
     }
+    // A repository copy holding `.git` goes aside before anything else, so
+    // git never sees it and the deletion pass never has to delete in it.
+    let stuck = set_aside_git_copies(scope, dst, stats);
+    if is_nested_repo(src) {
+        stats.nested.push(dst.to_path_buf());
+        return Ok(());
+    }
     fs::create_dir_all(dst)?;
     let mut keep: BTreeSet<PathBuf> = BTreeSet::new();
     // Repository links found where the live side has a folder: nothing under
     // them is mirrored or counted as had.
-    let mut blocked: Vec<PathBuf> = Vec::new();
-    for item in WalkDir::new(src).follow_links(false).min_depth(1) {
-        let item = item?;
+    let mut blocked: Vec<PathBuf> = stuck.clone();
+    // Repository folders whose contents stay as they are: a nested
+    // repository's, a folder's that could not be read, and a `.git` copy's
+    // that could not be moved aside.
+    let mut untouched: Vec<PathBuf> = stuck;
+    let mut walk = WalkDir::new(src)
+        .follow_links(false)
+        .min_depth(1)
+        .into_iter();
+    while let Some(item) = walk.next() {
+        let item = match item {
+            Ok(item) => item,
+            Err(e) => {
+                let at = e.path().unwrap_or(src);
+                let target = dst.join(at.strip_prefix(src).unwrap_or(Path::new("")));
+                stats.errors.push((target.clone(), e.to_string()));
+                untouched.push(target);
+                continue;
+            }
+        };
         let rel = item.path().strip_prefix(src)?;
         if excluded_in_dir(scope, prefix, rel) {
             continue;
@@ -293,31 +428,49 @@ pub fn sync_dir(
             blocked.push(target);
             continue;
         }
+        if ft.is_dir() && is_nested_repo(item.path()) {
+            stats.nested.push(target.clone());
+            untouched.push(target.clone());
+            blocked.push(target);
+            walk.skip_current_dir();
+            continue;
+        }
         if !ft.is_dir() {
             stats.present.push(target.clone());
         }
-        if ft.is_dir() {
-            fs::create_dir_all(&target)?;
-        } else if ft.is_symlink() {
-            // A link that stays inside the mirrored tree keeps its relative text;
-            // one that escapes it (e.g. skills/foo -> ../../.agents/skills/foo)
-            // is rewritten to the absolute target so the copy is not dangling.
-            let link = fs::read_link(item.path())?;
-            let resolved = if link.is_absolute() {
-                link.clone()
-            } else {
-                normalize(&item.path().parent().unwrap_or(src).join(&link))
-            };
-            let link = if resolved.starts_with(src) {
-                link
-            } else {
-                resolved
-            };
-            if scope.may_write(&target, None) && replace_symlink(&target, &link)? {
-                stats.linked += 1;
+        let done = (|| -> Result<()> {
+            if ft.is_dir() {
+                fs::create_dir_all(&target)?;
+            } else if ft.is_symlink() {
+                // A link that stays inside the mirrored tree keeps its relative text;
+                // one that escapes it (e.g. skills/foo -> ../../.agents/skills/foo)
+                // is rewritten to the absolute target so the copy is not dangling.
+                let link = fs::read_link(item.path())?;
+                let resolved = if link.is_absolute() {
+                    link.clone()
+                } else {
+                    normalize(&item.path().parent().unwrap_or(src).join(&link))
+                };
+                let link = if resolved.starts_with(src) {
+                    link
+                } else {
+                    resolved
+                };
+                if scope.may_write(&target, None) && replace_symlink(&target, &link)? {
+                    stats.linked += 1;
+                }
+            } else if ft.is_file() {
+                let len = item.metadata()?.len();
+                if !over_limit(scope, &target, len, stats)
+                    && scope.may_write(&target, Some(item.path()))
+                {
+                    stats.count(copy_if_changed(item.path(), &target)?, &target);
+                }
             }
-        } else if ft.is_file() && scope.may_write(&target, Some(item.path())) {
-            stats.count(copy_if_changed(item.path(), &target)?, &target);
+            Ok(())
+        })();
+        if let Err(e) = done {
+            stats.errors.push((target, format!("{e:#}")));
         }
     }
     // Delete what is no longer in the source. Deepest first so dirs empty out.
@@ -328,13 +481,12 @@ pub fn sync_dir(
         .into_iter()
         .filter_map(|e| e.ok())
         .map(|e| e.path().to_path_buf())
-        .filter(|p| !keep.contains(p))
+        .filter(|p| !keep.contains(p) && !untouched.iter().any(|u| p.starts_with(u)))
         .collect();
     extra.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
     for p in extra {
         if p.symlink_metadata().is_ok() && scope.may_remove(&p) {
-            remove_any(&p)?;
-            stats.deleted += 1;
+            remove_path(scope, &p, stats);
         }
     }
     Ok(())
@@ -355,14 +507,17 @@ fn copy_settings_stripped(src: &Path, dst: &Path, ignore: &[String]) -> Result<C
         if dm.is_file() && fs::read_to_string(dst).map(|d| d == out).unwrap_or(false) {
             return Ok(Copied::No);
         }
-        if !dm.is_file() {
+        if !dm.is_file() || read_only(dm) {
             remove_any(dst)?;
         }
+    }
+    if let Some(p) = dst.parent() {
+        fs::create_dir_all(p)?;
     }
     fs::write(dst, out).with_context(|| format!("writing {}", dst.display()))?;
     // Keep the source's mode (a private settings file stays private).
     if let Ok(sm) = fs::metadata(src) {
-        let _ = fs::set_permissions(dst, sm.permissions());
+        owner_writable(dst, &sm)?;
     }
     Ok(Copied::of(before.as_ref(), dst))
 }
@@ -404,7 +559,9 @@ fn copy_if_changed(src: &Path, dst: &Path) -> Result<Copied> {
                 return Ok(Copied::No);
             }
         }
-        if !dm.is_file() {
+        // A copy of a read-only file (a git clone's packs are 0444): it
+        // cannot be opened for writing, but it can be replaced.
+        if !dm.is_file() || read_only(dm) {
             remove_any(dst)?;
         }
     }
@@ -413,11 +570,28 @@ fn copy_if_changed(src: &Path, dst: &Path) -> Result<Copied> {
     }
     fs::copy(src, dst)
         .with_context(|| format!("copying {} -> {}", src.display(), dst.display()))?;
+    owner_writable(dst, &sm)?;
     if let Ok(t) = sm.modified() {
         let f = fs::OpenOptions::new().write(true).open(dst)?;
         let _ = f.set_modified(t);
     }
     Ok(Copied::of(before.as_ref(), dst))
+}
+
+/// Is `m` a file its owner may not write?
+fn read_only(m: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    m.permissions().mode() & 0o200 == 0
+}
+
+/// Give a mirror copy the source's mode plus owner-write: git keeps only the
+/// executable bit, and a read-only copy would stop the next copy and its
+/// mtime from being written.
+fn owner_writable(dst: &Path, src: &fs::Metadata) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = src.permissions().mode() | 0o200;
+    fs::set_permissions(dst, fs::Permissions::from_mode(mode))
+        .with_context(|| format!("setting the mode of {}", dst.display()))
 }
 
 fn has_subsecond(t: Option<std::time::SystemTime>) -> bool {
@@ -526,17 +700,15 @@ fn replace_symlink(dst: &Path, link: &Path) -> Result<bool> {
 /// empty, or excluded. Also removes `<label>/projects/`, the layout used
 /// before 2026-09-18: the same files are re-synced under `memory/`, so the
 /// next commit is a pure rename and `git log --follow` crosses it.
-fn prune_memory(scope: &Scope, root: &Root, repo: &Path, entries: &[Entry]) -> Result<Stats> {
-    let mut stats = Stats::default();
+fn prune_memory(scope: &Scope, root: &Root, repo: &Path, entries: &[Entry], stats: &mut Stats) {
     let legacy = repo.join(&root.label).join("projects");
     if legacy.symlink_metadata().is_ok() && scope.may_remove_moved(&legacy) {
-        remove_any(&legacy)?;
-        stats.deleted += 1;
+        remove_path(scope, &legacy, stats);
     }
     let projects = repo.join(&root.label).join(crate::roots::MEMORY_DIR);
-    // Repository names: a directory under an older name (a live name, before
-    // grimmerk/memsaga-private#25) is removed here once its new name is written, which git
-    // records as a rename.
+    // Repository names: a directory under an older name (its live name, as
+    // versions before the home-relative names stored it) is removed here
+    // once its new name is written, which git records as a rename.
     let live: BTreeSet<String> = entries
         .iter()
         .filter_map(|e| match e {
@@ -559,12 +731,10 @@ fn prune_memory(scope: &Scope, root: &Root, repo: &Path, entries: &[Entry]) -> R
                 scope.may_remove(&e.path())
             };
             if allowed {
-                remove_any(&e.path())?;
-                stats.deleted += 1;
+                remove_path(scope, &e.path(), stats);
             }
         }
     }
-    Ok(stats)
 }
 
 /// Remove a file, symlink, or directory tree. Refuses anything named `.git`.

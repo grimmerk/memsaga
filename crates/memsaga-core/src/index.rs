@@ -121,8 +121,8 @@ pub fn write_index(cfg: &Config) -> Result<()> {
             };
             let s = crate::roots::slug_of_repo_name(&name);
             // The previous map may be keyed by the repository name, or by
-            // the live name it had before grimmerk/memsaga-private#25, whose values were
-            // absolute: shorten those too.
+            // the live name it had before the home-relative names, whose
+            // values were absolute: shorten those too.
             let prev = previous.get(&root.label);
             let real = prev
                 .and_then(|m| m.get(&name).or_else(|| m.get(&s)))

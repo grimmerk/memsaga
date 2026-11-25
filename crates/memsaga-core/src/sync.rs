@@ -60,7 +60,7 @@ pub fn load_incoming(state: &State) -> Result<Incoming> {
 }
 
 /// Rewrite entries recorded under a memory directory's live name to its
-/// repository name (grimmerk/memsaga-private#25), so the sweep that renames the directory
+/// home-relative repository name, so the sweep that renames the directory
 /// protects and settles the same files. The waiting repository file moves
 /// with its entry: the mirror never writes a protected path, and it prunes
 /// the old directory, so a file left there would be lost and settle would
@@ -830,6 +830,9 @@ pub fn integrate_remote_within(cfg: &Config, wait: Duration) -> Result<Integrate
     if let Some(reason) = crate::recorded::blocker(cfg) {
         bail!(reason);
     }
+    // Unresolved conflicts (a `git stash pop` by hand): git refuses the
+    // merge anyway; say why instead of git's message.
+    crate::recorded::check_no_conflicts(cfg, &git)?;
     let merge = git.run(&["merge", "--no-edit", "-q", "-m", &message, &remote])?;
     if !merge.status.success() {
         let conflicted: Vec<String> = git

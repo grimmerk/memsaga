@@ -255,6 +255,12 @@ pub fn record_moves(
         let Some(target) = target_of(&c.path) else {
             continue;
         };
+        // Inside a git repository of its own on this machine: the mirror
+        // leaves it alone on both sides, so a change from elsewhere does not
+        // reach its working tree either.
+        if in_nested_live(cfg, &target) {
+            continue;
+        }
         out.changed.push(c.path.clone());
         if incoming.contains_key(&c.path) {
             continue;
@@ -296,6 +302,18 @@ pub fn record_moves(
     drop(cat);
     restore_own_copies(cfg, state, git, to, &out.recorded, &present)?;
     Ok(out)
+}
+
+/// Is the live file of `target` inside a folder that holds `.git`?
+fn in_nested_live(cfg: &Config, target: &sync::Target) -> bool {
+    let sync::Target::Root(_) = target else {
+        return false;
+    };
+    let live = target.live();
+    cfg.roots
+        .iter()
+        .find(|r| live.starts_with(&r.path))
+        .is_some_and(|r| crate::mirror::in_nested_repo(&r.path, live))
 }
 
 /// Is `path`, deleted at `to`, a second copy of a live file whose own

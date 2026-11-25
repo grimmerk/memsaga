@@ -9,7 +9,7 @@ use crate::mirror;
 use crate::roots::{Entry, Scope};
 use crate::state::{self, Event, State};
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 use walkdir::WalkDir;
 
@@ -48,6 +48,13 @@ pub fn needs_sweep(cfg: &Config, scope: &Scope, state: &State) -> bool {
         Some(m) => m,
         None => return true, // never swept
     };
+    // Files the last sweep could not mirror: tried again every
+    // `MIRROR_RETRY`, since fixing one (a `chmod`) need not change its mtime.
+    if !load_mirror_errors(state).is_empty()
+        && marker.elapsed().is_ok_and(|age| age >= MIRROR_RETRY)
+    {
+        return true;
+    }
     // The scope itself changed (a file or dir added to the config, an env
     // override), or the config file was edited: the old marker says nothing
     // about files that were not in scope when it was set.
@@ -72,8 +79,8 @@ pub fn needs_sweep(cfg: &Config, scope: &Scope, state: &State) -> bool {
         {
             return true;
         }
-        // A memory directory still under its live name (before grimmerk/memsaga-private#25):
-        // rename it even when nothing live changed.
+        // A memory directory still under its live name (the names before
+        // the home-relative ones): rename it even when nothing live changed.
         if memory_renames_pending(cfg, root) > 0 {
             return true;
         }
@@ -123,10 +130,9 @@ pub fn needs_sweep(cfg: &Config, scope: &Scope, state: &State) -> bool {
 }
 
 /// Memory directories of `root` in the repository still under a live name
-/// that now maps to a home-relative one (grimmerk/memsaga-private#25).
-/// Memory directories of `root` still under a live name. A root missing on
-/// this machine counts none: the mirror skips it, so nothing could rename
-/// them, and counting them would sweep on every Stop.
+/// that now maps to a home-relative one. A root missing on this machine
+/// counts none: the mirror skips it, so nothing could rename them, and
+/// counting them would sweep on every Stop.
 fn memory_renames_pending(cfg: &Config, root: &crate::config::Root) -> usize {
     if !root.path.is_dir() {
         return 0;
@@ -145,16 +151,24 @@ fn memory_renames_pending(cfg: &Config, root: &crate::config::Root) -> usize {
 
 /// Any file or directory under `dir` (following the top-level symlink, not
 /// inner ones) modified after `marker`. Directory mtimes change on create and
-/// delete, so removals are caught too.
+/// delete, so removals are caught too. A nested git repository is not
+/// mirrored, so nothing inside one is looked at (a `git fetch` in a clone
+/// would otherwise start a sweep).
 fn tree_newer_than(dir: &Path, marker: SystemTime) -> bool {
     // Follow a symlinked top-level dir (the 2nd account links skills/).
     let start = match std::fs::canonicalize(dir) {
         Ok(p) => p,
         Err(_) => return false,
     };
+    if mirror::is_nested_repo(&start) {
+        return false;
+    }
     for item in WalkDir::new(&start)
         .follow_links(false)
         .into_iter()
+        .filter_entry(|e| {
+            !(e.depth() > 0 && e.file_type().is_dir() && mirror::is_nested_repo(e.path()))
+        })
         .filter_map(|e| e.ok())
     {
         if let Ok(m) = item.metadata() {
@@ -292,7 +306,19 @@ pub fn pending(
 }
 
 /// Mirror, index, commit. Returns what happened. Never writes into a root.
+/// A failure is kept in `sweep-error` until a sweep succeeds, so the reporter
+/// and `status` say so: a hook's error otherwise reaches only memsaga.log.
 pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
+    let state = State::new(cfg.state_dir());
+    let result = sweep_once(cfg, attrib);
+    match &result {
+        Ok(_) => state.remove(SWEEP_ERROR),
+        Err(e) => record_sweep_error(&state, e),
+    }
+    result
+}
+
+fn sweep_once(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     let started = Instant::now();
     let git = Git::new(&cfg.repo);
     if !git.is_repo() {
@@ -343,6 +369,7 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
     // What exists live now, this machine has had: from here on its absence
     // is a deletion (grimmerk/memsaga#22).
     crate::sync::mark_seen(cfg, &state, &stats.present)?;
+    log_set_aside(&state, attrib, &stats.set_aside)?;
     refreshed?;
     if let Some(g) = &scope.guard {
         if crate::sync::record_hand_edits(&mut incoming, g.take_found()) > 0 {
@@ -351,6 +378,7 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         crate::sync::save_absent(&state, &g.take_absent())?;
     }
     crate::sync::save_link_over_folder(&state, &scope.take_link_over_folder())?;
+    save_mirror_lists(cfg, &state, attrib, &stats)?;
     git.add_renormalize(&stats.restat)?;
     let mut changed = git.add_all_and_check()?;
     let mut out = Outcome {
@@ -405,9 +433,7 @@ pub fn sweep(cfg: &Config, attrib: &Attribution) -> Result<Outcome> {
         if renames > 0 {
             // The one-time rename gets a subject that says what it is.
             let body = msg.split_once('\n').map(|(_, b)| b).unwrap_or_default();
-            msg = format!(
-                "layout: {renames} memory directories renamed home-relative (grimmerk/memsaga-private#25)\n{body}"
-            );
+            msg = format!("layout: {renames} memory directories renamed home-relative\n{body}");
         }
         let made = git.commit(&msg, None)?;
         // Recorded before the uncommitted record is cleared below: stopped in
@@ -531,6 +557,181 @@ fn record_held(state: &State, attrib: &Attribution, held: &[crate::secrets::Hit]
 
 /// Files the last sweep held back, under `.git/memsaga/`.
 const HELD: &str = "held.json";
+
+/// Why the last sweep failed, and since when sweeps fail (`SweepError`);
+/// removed by the next sweep that succeeds.
+const SWEEP_ERROR: &str = "sweep-error";
+
+/// Repository paths the last sweep could not mirror, with the reason.
+const MIRROR_ERRORS: &str = "mirror-errors.json";
+
+/// Live files the last sweep left out for `max_file_mb`, with their size.
+const TOO_LARGE: &str = "too-large.json";
+
+/// Live folders the last sweep left out as git repositories of their own.
+const NESTED: &str = "nested.json";
+
+/// How often a sweep runs again while files could not be mirrored.
+const MIRROR_RETRY: Duration = Duration::from_secs(600);
+
+/// A failing sweep, as `status` and the reporter show it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SweepError {
+    /// When the first of the failures in a row happened (RFC 3339).
+    pub since: String,
+    /// The latest failure's message (file names, never file contents).
+    pub message: String,
+}
+
+pub fn load_sweep_error(state: &State) -> Option<SweepError> {
+    state
+        .read_marker(SWEEP_ERROR)
+        .and_then(|t| serde_json::from_str(&t).ok())
+}
+
+/// Keep the failure, and the time of the first one in a row. Not for a
+/// sweep that waited for another one's lock (that one is running), nor for
+/// the secret check's own failure (`held-error` already says it).
+fn record_sweep_error(state: &State, e: &anyhow::Error) {
+    let message = format!("{e:#}");
+    if message.contains("could not acquire sweep lock")
+        || load_held_error(state).as_deref() == Some(message.as_str())
+    {
+        return;
+    }
+    let since = load_sweep_error(state)
+        .map(|old| old.since)
+        .unwrap_or_else(state::now_rfc3339);
+    if let Ok(text) = serde_json::to_string(&SweepError { since, message }) {
+        let _ = state.write_marker(SWEEP_ERROR, &text);
+    }
+}
+
+/// One mirror problem, as `status` shows it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MirrorError {
+    pub path: String,
+    pub error: String,
+}
+
+/// One file over `max_file_mb`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TooLarge {
+    pub path: String,
+    pub bytes: u64,
+}
+
+pub fn load_mirror_errors(state: &State) -> Vec<MirrorError> {
+    load_json(state, MIRROR_ERRORS)
+}
+
+pub fn load_too_large(state: &State) -> Vec<TooLarge> {
+    load_json(state, TOO_LARGE)
+}
+
+pub fn load_nested(state: &State) -> Vec<String> {
+    load_json(state, NESTED)
+}
+
+fn load_json<T: serde::de::DeserializeOwned + Default>(state: &State, name: &str) -> T {
+    std::fs::read_to_string(state.marker(name))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+/// Written as the last complete mirror found it; removed when empty.
+fn save_json<T: serde::Serialize>(state: &State, name: &str, list: &[T]) -> Result<()> {
+    if list.is_empty() {
+        state.remove(name);
+        return Ok(());
+    }
+    state.write_marker(name, &serde_json::to_string(list)?)
+}
+
+/// Save what the mirror left out (errors, files over the limit, nested
+/// repositories) for `status` and the reporter; an event when the set of
+/// paths that could not be mirrored changed.
+fn save_mirror_lists(
+    cfg: &Config,
+    state: &State,
+    attrib: &Attribution,
+    stats: &mirror::Stats,
+) -> Result<()> {
+    let rel = |p: &Path| {
+        p.strip_prefix(&cfg.repo)
+            .unwrap_or(p)
+            .to_string_lossy()
+            .to_string()
+    };
+    let mut errors: Vec<MirrorError> = stats
+        .errors
+        .iter()
+        .map(|(p, e)| MirrorError {
+            path: rel(p),
+            error: e.clone(),
+        })
+        .collect();
+    errors.sort_by(|a, b| a.path.cmp(&b.path));
+    let before: Vec<String> = load_mirror_errors(state)
+        .into_iter()
+        .map(|e| e.path)
+        .collect();
+    let now: Vec<String> = errors.iter().map(|e| e.path.clone()).collect();
+    save_json(state, MIRROR_ERRORS, &errors)?;
+    if before != now {
+        state.append_event(&Event {
+            ts: state::now_rfc3339(),
+            kind: "mirror-error".into(),
+            event: attrib.event.clone(),
+            session: attrib.session.clone(),
+            files: now,
+            message: errors
+                .iter()
+                .map(|e| format!("{}: {}", e.path, e.error))
+                .collect::<Vec<_>>()
+                .join("; "),
+            ..Default::default()
+        })?;
+    }
+    let mut large: Vec<TooLarge> = stats
+        .too_large
+        .iter()
+        .map(|(p, n)| TooLarge {
+            path: rel(p),
+            bytes: *n,
+        })
+        .collect();
+    large.sort_by(|a, b| a.path.cmp(&b.path));
+    save_json(state, TOO_LARGE, &large)?;
+    let mut nested: Vec<String> = stats.nested.iter().map(|p| rel(p)).collect();
+    nested.sort();
+    save_json(state, NESTED, &nested)
+}
+
+/// An event for repository folders holding a `.git` copy that the mirror
+/// moved aside (where to, in `message`).
+fn log_set_aside(state: &State, attrib: &Attribution, moved: &[(PathBuf, PathBuf)]) -> Result<()> {
+    if moved.is_empty() {
+        return Ok(());
+    }
+    state.append_event(&Event {
+        ts: state::now_rfc3339(),
+        kind: "set-aside".into(),
+        event: attrib.event.clone(),
+        session: attrib.session.clone(),
+        files: moved
+            .iter()
+            .map(|(from, _)| from.display().to_string())
+            .collect(),
+        message: moved
+            .iter()
+            .map(|(from, to)| format!("{} -> {}", from.display(), to.display()))
+            .collect::<Vec<_>>()
+            .join("; "),
+        ..Default::default()
+    })
+}
 
 /// Why the last sweep committed nothing because the secret check failed
 /// closed; removed by the next sweep that gets past the check.

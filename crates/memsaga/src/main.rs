@@ -1145,6 +1145,44 @@ fn cmd_status(n: usize, json: bool) -> Result<()> {
     if let Some(e) = &st.held_error {
         println!("nothing committed by the last sweep: {e}");
     }
+    if let Some(e) = &st.sweep_error {
+        println!(
+            "sweeps are failing since {}, nothing is committed: {}",
+            e.since, e.message
+        );
+    }
+    if !st.mirror_errors.is_empty() {
+        println!(
+            "could not be mirrored by the last sweep, which committed the rest ({} path(s); tried again every 10 minutes):",
+            st.mirror_errors.len()
+        );
+        for e in &st.mirror_errors {
+            println!("  {}: {}", e.path, e.error);
+        }
+    }
+    if !st.too_large.is_empty() {
+        println!(
+            "not mirrored, larger than max_file_mb = {} ({} file(s)):",
+            cfg.max_file_mb,
+            st.too_large.len()
+        );
+        for f in &st.too_large {
+            println!(
+                "  {}  ({:.1} MB)",
+                f.path,
+                f.bytes as f64 / (1u64 << 20) as f64
+            );
+        }
+    }
+    if !st.nested_repos.is_empty() {
+        println!(
+            "not mirrored, git repositories of their own (a folder holding .git; {}):",
+            st.nested_repos.len()
+        );
+        for f in &st.nested_repos {
+            println!("  {f}");
+        }
+    }
     if !st.held.is_empty() {
         println!(
             "held back, not committed: a new line looks like a secret ({} file(s)); remove it, add `{}` to the line, or add the fingerprint to `allow_secrets`:",

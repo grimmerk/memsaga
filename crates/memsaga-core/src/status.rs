@@ -48,6 +48,16 @@ pub struct Status {
     /// Set when the last sweep committed nothing because the secret check
     /// failed closed (a held file it could not take out of the commit).
     pub held_error: Option<String>,
+    /// Set while sweeps fail: since when, and the latest error. Removed by
+    /// the next sweep that succeeds.
+    pub sweep_error: Option<crate::sweep::SweepError>,
+    /// Repository paths the last sweep could not mirror (it committed the
+    /// rest): path and reason. Tried again every 10 minutes.
+    pub mirror_errors: Vec<crate::sweep::MirrorError>,
+    /// Live files over `max_file_mb`, not mirrored: repository path and size.
+    pub too_large: Vec<crate::sweep::TooLarge>,
+    /// Live folders holding `.git`, not mirrored: their repository paths.
+    pub nested_repos: Vec<String>,
     /// Repository files in scope that this machine never had live, kept by
     /// the last sweep instead of being deleted (grimmerk/memsaga#22).
     pub absent: Vec<String>,
@@ -235,6 +245,10 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
             repo_blocked: None,
             held: Vec::new(),
             held_error: None,
+            sweep_error: None,
+            mirror_errors: Vec::new(),
+            too_large: Vec::new(),
+            nested_repos: Vec::new(),
             absent: Vec::new(),
             link_over_folder: Vec::new(),
             uncovered: Vec::new(),
@@ -287,6 +301,10 @@ pub fn collect(cfg: &Config, n_events: usize) -> Status {
         }),
         held: crate::sweep::load_held(&state),
         held_error: crate::sweep::load_held_error(&state),
+        sweep_error: crate::sweep::load_sweep_error(&state),
+        mirror_errors: crate::sweep::load_mirror_errors(&state),
+        too_large: crate::sweep::load_too_large(&state),
+        nested_repos: crate::sweep::load_nested(&state),
         absent: crate::sync::load_absent(&state),
         link_over_folder: crate::sync::load_link_over_folder(&state),
         uncovered: crate::differences::uncovered(cfg, "HEAD"),

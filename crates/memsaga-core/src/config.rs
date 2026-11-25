@@ -113,6 +113,10 @@ pub struct Config {
     /// in the notice and in `memsaga status`, or a repository path
     /// (`claude/settings.json`) never to check.
     pub allow_secrets: Vec<String>,
+    /// Live files larger than this many megabytes (MiB) are not mirrored;
+    /// 0 turns the limit off. GitHub refuses a push holding a file over
+    /// 100 MB, and one such file stops every push after it.
+    pub max_file_mb: u64,
 }
 
 impl Default for Config {
@@ -168,6 +172,7 @@ impl Default for Config {
             push_on_session_end: true,
             scan_secrets: true,
             allow_secrets: Vec::new(),
+            max_file_mb: 50,
         }
     }
 }

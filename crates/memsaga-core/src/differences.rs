@@ -186,8 +186,16 @@ pub fn stale(cfg: &Config, rev: &str) -> Result<Vec<Stale>> {
             // item: walkdir would follow it into the folder it points at.
             if matches!(entry, Entry::File { .. }) || is_link {
                 found.push(prefix.clone());
-            } else {
-                for item in WalkDir::new(&src).follow_links(false).min_depth(1) {
+            } else if !crate::mirror::is_nested_repo(&src) {
+                // A nested repository is not mirrored: nothing in it is stale.
+                let walk = WalkDir::new(&src)
+                    .follow_links(false)
+                    .min_depth(1)
+                    .into_iter()
+                    .filter_entry(|e| {
+                        !(e.file_type().is_dir() && crate::mirror::is_nested_repo(e.path()))
+                    });
+                for item in walk {
                     let item = item?;
                     if item.file_type().is_dir() {
                         continue;

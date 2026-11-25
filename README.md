@@ -684,7 +684,8 @@ a new hook. Try it, read the diff, keep it or roll it back.
   runs in the background. Asking GitHub whether the repository moved costs
   about half a second ([timing](#timing)).
 - **Safety.** One lock serialises concurrent sessions. A hook never fails a
-  turn: errors go to a log and to `memsaga status`.
+  turn: errors go to a log and to `memsaga status`, and the one-line notice
+  at the end of a turn says when sweeps fail or a file could not be mirrored.
 
 More: [`docs/architecture.md`](docs/architecture.md).
 
@@ -714,6 +715,16 @@ Claude reads or writes that file.
   scripts that `settings.json` runs but this machine lacks, and files held
   back because a new line looks like a key
   ([if a file is held back](#if-a-file-is-held-back)).
+- When sweeps fail, nothing is committed until the cause is fixed. The
+  notice at the end of a turn says so (once per error, and again once a
+  day while it lasts), and `memsaga status` shows since when and why.
+- A file that cannot be copied (no permission to read it, for example) does
+  not stop the sweep: the rest is committed, the file is listed in
+  `memsaga status`, and the sweep tries it again every ten minutes. Nothing
+  under a folder that cannot be read is deleted from the repository.
+- A file larger than `max_file_mb` (50 MB by default) is not mirrored, and
+  a folder holding `.git` (a git repository of its own) is not mirrored at
+  all; `status` lists both ([what is mirrored](#what-is-mirrored)).
 - A hook never stops a turn. Its errors go to
   `<data repository>/.git/memsaga/memsaga.log`,
   and every sweep, push and merge to `events.jsonl` next to it.
@@ -744,7 +755,7 @@ Claude reads or writes that file.
 | Command | What it does |
 |---|---|
 | `memsaga init [--dry-run] [--repo <path>] [--no-backfill]` | Create the data repository, replay history from session transcripts, import the current state; records the location in the config file. `--dry-run` only prints the location, what would be imported and how much can be replayed |
-| `memsaga status [--json]` | Last sweep, pending dirty marker, push state (including a failing or deferred push), a missing config file, where this machine differs from the repository (files it never had, a folder where the repository has a link, folders its config does not mirror, missing hook scripts), recent events; `--json` prints the same as one object for scripts and tools. Read-only |
+| `memsaga status [--json]` | Last sweep, pending dirty marker, push state (including a failing or deferred push), failing sweeps, files the last sweep could not mirror or left out (over `max_file_mb`, inside a nested git repository), a missing config file, where this machine differs from the repository (files it never had, a folder where the repository has a link, folders its config does not mirror, missing hook scripts), recent events; `--json` prints the same as one object for scripts and tools. Read-only |
 | `memsaga log [-n <count>]` | Recent commits |
 | `memsaga diff [--stat]` | What the next sweep would commit (refreshes the mirror, commits nothing) |
 | `memsaga restore <path> [--at <rev>] [-y]` | Copy one file from history back to its live location, diff first |
@@ -782,6 +793,20 @@ and each machine keeps its own values of both. With `settings_ignore_keys =
 []` the file is stored as it is, hook paths included. Never:
 transcripts, `~/.claude.json`, caches, `file-history`, plugins, and Claude
 Code's own synced skills under `skills/synced/` and `skills/.trash/`.
+
+Two limits apply everywhere:
+
+- A folder holding `.git` (a folder, or a file as in a worktree or a
+  submodule) is a git repository of its own, such as a clone kept in
+  `drafts/`. It is not mirrored, and memsaga touches neither the folder nor
+  what the repository may already hold under its name; `memsaga status`
+  lists it. Use the clone's own remote for its history. A copy of `.git`
+  that an older version of memsaga put in the repository is moved to
+  `<data repository>/.git/memsaga/stale/<time>/`, never deleted.
+- A file larger than `max_file_mb` (default 50 MB; `0` turns the limit off)
+  is not mirrored. GitHub refuses a push with a file over 100 MB, and such a
+  file would stop every push after it. A version already in the repository
+  stays as it is; `status` lists the file.
 
 Repository layout:
 
@@ -845,6 +870,8 @@ push_on_session_end = true
 scan_secrets = true
 # fingerprints from the notice, or repository paths, the check lets through
 allow_secrets = []
+# live files larger than this (in MB) are not mirrored; 0 turns it off
+max_file_mb = 50
 
 [[roots]]
 path = "~/.claude"

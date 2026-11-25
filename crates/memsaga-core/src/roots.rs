@@ -61,7 +61,7 @@ impl Entry {
 /// stored as `HOME-git-webapp`, so the same project shares one directory on
 /// machines whose home differs (another user name, Linux's `/home/...`).
 /// A live name always starts with `-` (an absolute path starts with `/`), so
-/// a name starting with the token is never a live one. grimmerk/memsaga-private#25.
+/// a name starting with the token is never a live one.
 pub const HOME_TOKEN: &str = "HOME";
 
 struct HomeNames {
@@ -190,7 +190,7 @@ pub fn repo_rel_of_live(rel: &Path) -> PathBuf {
 }
 
 /// Inverse of `repo_rel_of_live`: `memory/<name>/x.md` -> `projects/<slug>/memory/x.md`.
-/// A name stored before grimmerk/memsaga-private#25 (a live name) maps to itself.
+/// A name stored before the home-relative names (a live name) maps to itself.
 pub fn live_rel_of_repo(rel: &Path) -> PathBuf {
     let parts: Vec<_> = rel.iter().collect();
     if parts.len() >= 2 && parts[0] == MEMORY_DIR {
@@ -204,8 +204,8 @@ pub fn live_rel_of_repo(rel: &Path) -> PathBuf {
 }
 
 /// Where a memory file was stored in older layouts, so revisions from before
-/// a change can still be read: under its live name (before grimmerk/memsaga-private#25), and
-/// at `<label>/projects/<slug>/memory/x.md` (before 2026-09-18). Empty for
+/// a change can still be read: under its live name (before the home-relative
+/// names), and at `<label>/projects/<slug>/memory/x.md` (before 2026-09-18). Empty for
 /// anything that is not memory.
 pub fn legacy_repo_paths(repo_rel: &Path) -> Vec<PathBuf> {
     let parts: Vec<_> = repo_rel.iter().collect();
